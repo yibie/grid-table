@@ -2,7 +2,7 @@
 
 ## grid-table
 
-![](pictures/figure1.png)
+![](pictures/figure1.jpg)
 
 grid-table 是一个用于 Emacs 的通用网格表格组件，支持富文本与图片渲染、公式计算、交互编辑、排序、持久化与插件扩展。可在 Org/Markdown 中以“静态预览 + 激活编辑”的方式嵌入。
 

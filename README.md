@@ -2,7 +2,7 @@
 
 ## grid-table
 
-![](pictures/figure1.png)
+![](pictures/figure1.jpg)
 
 grid-table is a general grid table component for Emacs, supporting rich text and image rendering, formula calculation, interactive editing, sorting, persistence, and plugin extension. It can be embedded in Org/Markdown as "static preview + active editing".
 
