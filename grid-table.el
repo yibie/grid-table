@@ -56,6 +56,19 @@
   :type 'integer
   :group 'grid-table)
 
+(defcustom grid-table-title-align 'center
+  "Title alignment above the table: left, center, or right."
+  :type '(choice (const :tag "Left" left)
+                 (const :tag "Center" center)
+                 (const :tag "Right" right))
+  :group 'grid-table)
+
+(defcustom grid-table-title-decoration 'none
+  "Title decoration style above the table. When 'rule, draw a horizontal rule under the title."
+  :type '(choice (const :tag "None" none)
+                 (const :tag "Rule" rule))
+  :group 'grid-table)
+
 (defvar-local grid-table--data-source nil
   "Buffer-local variable to hold the current data source instance.")
 
@@ -248,6 +261,47 @@ Returns the valid, existing path if found, otherwise nil."
   (message "Display environment optimized for perfect height matching"))
 
 ;;----------------------------------------------------------------------
+;; Title rendering helpers
+;;----------------------------------------------------------------------
+
+(defun grid-table--compute-table-width (data-source)
+  "Compute the total table width for DATA-SOURCE, for title alignment."
+  (let* ((get-col-count-fn (gethash :get-column-count data-source))
+         (get-row-count-fn (gethash :get-row-count data-source))
+         (get-computed-fn (gethash :get-computed-value-at data-source))
+         (get-header-fn (gethash :get-header-value data-source))
+         (num-rows (funcall get-row-count-fn data-source))
+         (num-cols (funcall get-col-count-fn data-source))
+         (headers (cl-loop for c from 0 below num-cols
+                           collect (funcall get-header-fn data-source c)))
+         (all-rows (cl-loop for r from 0 below num-rows
+                            collect (cl-loop for c from 0 below num-cols
+                                             collect (funcall get-computed-fn data-source r c))))
+         (widths (grid-table--calculate-column-widths headers all-rows)))
+    (let* ((max-row-number-width (string-width (number-to-string num-rows)))
+           (row-header-width (max 3 (+ 1 max-row-number-width)))
+           (full-widths (cons row-header-width widths))
+           (sep-line (grid-table--draw-separator full-widths "┌" "┬" "┐" t)))
+      (string-width sep-line))))
+
+(defun grid-table--render-title-line (data-source)
+  "Render title line above the table according to alignment/decoration settings."
+  (when grid-table--title
+    (let* ((table-width (grid-table--compute-table-width data-source))
+           (title-text (format "Title: %s" grid-table--title))
+           (title-width (string-width title-text))
+           (left-pad (pcase grid-table-title-align
+                       ('left 0)
+                       ('center (max 0 (floor (/ (max 0 (- table-width title-width)) 2))))
+                       ('right (max 0 (- table-width title-width)))
+                       (_ 0)))
+           (padding (make-string left-pad ?\s))
+           (result (concat padding title-text "\n")))
+      (when (eq grid-table-title-decoration 'rule)
+        (setq result (concat result (make-string table-width ?─) "\n")))
+      (concat result "\n"))))
+
+;;----------------------------------------------------------------------
 ;; Draw Row
 ;;----------------------------------------------------------------------
 
@@ -388,13 +442,31 @@ HAS-ROW-HEADER indicates if this separator should include a row header column."
             (message "Cell updated."))))))))
 
 (defun grid-table-edit-title ()
-  "Edit the title of the current grid."
+  "Edit the title of the current grid with alignment and decoration options."
   (interactive)
-  (let ((new-title (read-string (format "Edit Title: %s -> " (or grid-table--title "")) (or grid-table--title ""))))
-    (unless (string= new-title grid-table--title)
+  (let* ((new-title (read-string (format "Edit Title: %s -> " (or grid-table--title "")) (or grid-table--title "")))
+         (new-align (when (not (string-empty-p new-title))
+                      (intern (completing-read "Title alignment: " 
+                                               '("left" "center" "right") 
+                                               nil t 
+                                               (symbol-name grid-table-title-align)))))
+         (new-decoration (when (not (string-empty-p new-title))
+                           (intern (completing-read "Title decoration: " 
+                                                    '("none" "rule") 
+                                                    nil t 
+                                                    (symbol-name grid-table-title-decoration))))))
+    (unless (and (string= new-title (or grid-table--title ""))
+                 (eq new-align grid-table-title-align)
+                 (eq new-decoration grid-table-title-decoration))
       (setq-local grid-table--title new-title)
+      (when new-align
+        (setq-local grid-table-title-align new-align))
+      (when new-decoration
+        (setq-local grid-table-title-decoration new-decoration))
       (grid-table-refresh)
-      (message "Grid title updated."))))
+      (message "Grid title updated (align: %s, decoration: %s)." 
+               (or new-align grid-table-title-align) 
+               (or new-decoration grid-table-title-decoration)))))
 
 (defun grid-table-sort-column ()
   "Sort the table by the current column or a user-specified column.
@@ -687,9 +759,9 @@ Assumes `grid-table-mode` is already active."
     (erase-buffer)
     (setq-local grid-table--data-source data-source)
     (grid-table--setup-perfect-display-environment)
-    ;; Display title if available
-    (when grid-table--title
-      (insert (format "Title: %s\n\n" grid-table--title)))
+    ;; Display title with alignment and decoration
+    (when-let ((title-content (grid-table--render-title-line data-source)))
+      (insert title-content))
     (grid-table--insert-table-from-data-source)
     (goto-char (point-min))
     (when (> (grid-get-row-count data-source) 0)
@@ -720,6 +792,9 @@ When called interactively, automatically saves and restores the current cursor p
             (setq restore-row-idx (plist-get current-coords :display-row-idx))
             (setq restore-col-idx (plist-get current-coords :display-col-idx)))))
       (erase-buffer)
+      ;; Render title with alignment and decoration, same as initial render
+      (when-let ((title-content (grid-table--render-title-line grid-table--data-source)))
+        (insert title-content))
       (grid-table--insert-table-from-data-source)
       ;; Restore cursor position if coordinates are provided
       (when (and restore-row-idx restore-col-idx)
