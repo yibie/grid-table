@@ -656,7 +656,7 @@ If called interactively, deletes the current column."
         (setq file-path (concat file-path ".grid")))
       ;; Update the title in the data source before saving
       (puthash :title grid-table--title grid-table--data-source)
-      (grid-table-persistence-save-to-file grid-table--data-source file-path)
+      (grid-table-persistence--save-to-file grid-table--data-source file-path)
       (setq-local grid-table--file-path file-path)
       (rename-buffer (file-name-nondirectory file-path))
       (set-visited-file-name file-path)

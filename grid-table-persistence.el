@@ -6,10 +6,9 @@
 ;;; Public API
 ;;;----------------------------------------------------------------------
 
-(defun grid-table-persistence-save-to-file (data-source file-path)
+(defun grid-table-persistence--save-to-file (data-source file-path)
   "Save the DATA-SOURCE to FILE-PATH using Lisp's S-expression format.
 This saves the headers and all raw cell values (including formulas)."
-  (interactive)
   (when-let ((get-col-count-fn (gethash :get-column-count data-source))
              (get-row-count-fn (gethash :get-row-count data-source))
              (get-header-fn (gethash :get-header-value data-source))
