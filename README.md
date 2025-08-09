@@ -49,6 +49,12 @@ Note: inserting column is on the "current column right"; grid-table-insert-colum
 - Start with =: =B2*C2, =SUM(D2:D4), =IF(A1>0, "Yes", "No")
 - Reference: cell A1, range A1:B5
 - Built-in: SUM/AVERAGE/COUNT/MAX/MIN/IF
+- **Elisp formulas**: =elisp:(+ 1 2 3), =elisp:(format-time-string "%Y-%m-%d")
+  - Full Elisp programming power in cells
+  - Access other cells with (cell "A1") function
+  - **⚠️ Warning**: Only use in trusted files! I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues.
+
+More details about Elisp formulas, please refer to [ELISP_FORMULA_GUIDE.md](docs/ELISP_FORMULA_GUIDE.md).
 
 ### Sorting
 

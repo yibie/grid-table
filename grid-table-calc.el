@@ -48,6 +48,13 @@ FORMULA: The formula string to set."
 MODEL: The grid data model, used for cell references.
 AST: The Abstract Syntax Tree to evaluate."
   (pcase ast
+    ;; Elisp code execution
+    (`(ELISP-CODE ,code-str)
+     (let ((cell (lambda (ref) (grid-calc-get-cell-value model ref))))
+       (condition-case err
+           (eval (read code-str))
+         (error (format "Elisp Error: %s" (error-message-string err))))))
+
     ;; Number literal
     (`(NUMBER ,value) value)
     

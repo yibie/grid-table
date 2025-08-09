@@ -446,10 +446,14 @@
 ;;; Main Parser Function
 ;;;----------------------------------------------------------------------
 
+(defconst grid-ast-type-elisp-code 'ELISP-CODE)
+
 (defun grid-parser-parse (formula-str)
   "Parse a formula string into an AST."
-  (let ((tokens (grid-parser-tokenize formula-str)))
-    (car (grid-parser-parse-expression tokens))))
+  (if (string-prefix-p "elisp:" formula-str)
+      (list grid-ast-type-elisp-code (substring formula-str 6))
+    (let ((tokens (grid-parser-tokenize formula-str)))
+      (car (grid-parser-parse-expression tokens)))))
 
 ;;;----------------------------------------------------------------------
 ;;; AST Evaluator (Moved to grid-table-calc.el)
