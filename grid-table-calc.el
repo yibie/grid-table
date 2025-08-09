@@ -50,10 +50,13 @@ AST: The Abstract Syntax Tree to evaluate."
   (pcase ast
     ;; Elisp code execution
     (`(ELISP-CODE ,code-str)
-     (let ((cell (lambda (ref) (grid-calc-get-cell-value model ref))))
-       (condition-case err
-           (eval (read code-str))
-         (error (format "Elisp Error: %s" (error-message-string err))))))
+     ;; only if user opted-in to elisp evaluation
+     (if grid-table-allow-elisp
+         (let ((cell (lambda (ref) (grid-calc-get-cell-value model ref))))
+           (condition-case err
+               (eval (read code-str))
+             (error (format "Elisp Error: %s" (error-message-string err)))))
+       (error "Elisp disabled: see `grid-calc-allow-elisp'")))
 
     ;; Number literal
     (`(NUMBER ,value) value)
