@@ -69,12 +69,21 @@
                  (const :tag "Rule" rule))
   :group 'grid-table)
 
+
 (defvar-local grid-table-allow-elisp nil
   "Buffer-local variable to enable elisp evaluation in table cells.
 
 If this is nil, elisp formulas are ignored. Set it to non-nil to enable evaluation of elisp formulas in tables.
 Warning: Only set this in trusted files! I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues.")
 (put 'grid-table-allow-elisp 'risky-local-variable t)
+
+
+(defcustom grid-table-default-save-directory nil
+  "The default directory to save new grid files.
+If nil, uses the `default-directory` of the current buffer."
+  :type '(choice (const :tag "None (use current directory)" nil)
+                 (directory :tag "Specify directory"))
+  :group 'grid-table)
 
 (defvar-local grid-table--data-source nil
   "Buffer-local variable to hold the current data source instance.")
@@ -92,7 +101,7 @@ Warning: Only set this in trusted files! I am not responsible for any issues, da
   "Special column index for the 1, 2, 3... row header column.")
 
 (defface grid-table-highlight-face
-  '((t :background "gray20"))
+  '((t :background "gray10"))
   "Face for highlighting the current grid cell."
   :group 'grid-table)
 
@@ -102,10 +111,6 @@ Warning: Only set this in trusted files! I am not responsible for any issues, da
   :group 'grid-table)
 
 (defvar-local grid-table--highlight-overlay nil)
-
-;;----------------------------------------------------------------------
-;; Helpful functions
-;;----------------------------------------------------------------------
 
 ;;;----------------------------------------------------------------------
 ;;; Rendering
@@ -638,16 +643,25 @@ If called interactively, deletes the current column."
 (defun grid-table-write-file ()
   "Save the current grid to its associated file, or prompt for a new one."
   (interactive)
-  (let ((file-path (or grid-table--file-path ; Use existing path if available
-                       (read-file-name "Save Grid As: " nil nil t nil ".grid")))) ; Prompt for new path, suggest .grid
+  (let ((file-path (or (buffer-file-name) ; Use existing path if available
+                       (let* ((default-dir (or grid-table-default-save-directory default-directory))
+                              (prompt (format "Save Grid in %s as: " (file-name-as-directory default-dir))))
+                         (read-file-name prompt default-dir nil nil)))))
     (when file-path
+      ;; If user provides a relative path, make it absolute based on the default dir
+      (unless (file-name-absolute-p file-path)
+        (setq file-path (expand-file-name file-path (or grid-table-default-save-directory default-directory))))
+      ;; Add .grid extension if not present
+      (when (not (string-equal ".grid" (file-name-extension file-path t)))
+        (setq file-path (concat file-path ".grid")))
       ;; Update the title in the data source before saving
       (puthash :title grid-table--title grid-table--data-source)
       (grid-table-persistence-save-to-file grid-table--data-source file-path)
       (setq-local grid-table--file-path file-path)
       (rename-buffer (file-name-nondirectory file-path))
       (set-visited-file-name file-path)
-      (set-buffer-modified-p nil))))
+      (set-buffer-modified-p nil)
+      (message "Grid saved to %s" file-path))))
 
 (defun grid-table-find-file (file-path)
   "Open a grid from a file."

@@ -26,29 +26,45 @@ grid-table 是一个用于 Emacs 的通用网格表格组件，支持富文本�
    ;; (require 'grid-table-csv)
    ;; (require 'grid-table-org)
    ;; (require 'grid-table-markdown)
+   ;; (require 'grid-table-rst) ; 加载 rST 导出功能
+
+### 配置（可选）
+
+你可以通过在 Emacs 配置中设置 `grid-table-default-save-directory` 变量，来自定义新建 `.grid` 文件的默认保存目录：
+
+```elisp
+;; 示例：将所有新表格保存到 ~/Documents/grids/ 目录下
+(setq grid-table-default-save-directory "~/Documents/grids/")
+```
 
 ### 快速开始
 
 - 新建：M-x grid-table-create
-- 打开 .grid：M-x grid-table-find-file
-- 保存为 .grid：在表格 buffer 中 C-c C-w 或 M-x grid-table-write-file
+- 打开 .grid：M-x grid-open 或 M-x grid-table-find-file
+- 保存：在表格 buffer 中按 C-c C-w。如果是新文件，会提示输入路径。
 - 打开 CSV：M-x grid-table-find-file-csv
+- 导出为 rST：在 grid-table 缓冲区中，运行 `M-x grid-table-export-as-rst`。
+- 作为 rST 插入：在文本文档（如 .rst 文件）中，运行 `M-x grid-table-rst-insert-table-from-file`，选择一个 `.grid` 文件，即可将其作为 rST 表格插入。
 
 ### 常用快捷键（grid-table-mode）
 
 - 导航：n/p 上下，TAB/S-TAB 左右，g 刷新
 - 编辑：e 编辑单元格，C-c t 编辑标题
-- 行列：C-c r a / C-c r d 插入/删除行；C-c c a / C-c c d 插入/删除列
+- 行列：C-c r a (向下插入行), C-c r d (删除当前行)；C-c c a (向右插入列), C-c c d (删除当前列)
 - 排序：C-c s 按当前列升/降序
-- 文件：C-c C-w 保存为 .grid，C-c C-f 打开 .grid
+- 文件：C-c C-w (保存/另存为), C-c C-f (打开 .grid 文件)
 
-说明：插入列在“当前列右侧”；grid-table-insert-column-left 支持左侧插入。删除第 0 行（用户自定义表头）被保护；删除末行后光标保持在表内。
+说明：`grid-table-insert-column-left` 命令支持在左侧插入列。删除第 0 行（用户自定义表头）的操作是被保护的。
 
 ### 公式
 
 - 以 = 开头：=B2*C2、=SUM(D2:D4)、=IF(A1>0, "Yes", "No")
 - 引用：单元格 A1，区域 A1:B5
 - 内置：SUM/AVERAGE/COUNT/MAX/MIN/IF
+- **Elisp 公式**：`=elisp:(+ 1 2)` 或 `=elisp:(+ (cell "A1") (cell "B2"))`
+  - 在单元格内直接执行任意 Elisp 代码。
+  - 使用辅助函数 `(cell "A1")` 来获取其他单元格的值。
+  - **⚠️ 安全警告**：从文件中执行任意 Elisp 代码存在巨大安全风险，请仅在完全信任的文件中使用此功能。
 
 ### 排序
 
