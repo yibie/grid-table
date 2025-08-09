@@ -9,6 +9,11 @@
 ;;   <static preview content>
 ;;   #+END_GRID_VIEW
 
+(defface grid-table-org-preview-face
+  '((t (:inherit fixed-pitch)))
+  "Face for grid-table previews in Org mode."
+  :group 'grid-table)
+
 (defun grid-table-org--render-preview-from-file (file-path)
   "Render a static preview string for FILE-PATH (.grid)."
   (unless (and file-path (file-exists-p file-path))
@@ -16,24 +21,25 @@
   (let* ((data-source (grid-table-persistence-create-data-source-from-file file-path))
          (preview ""))
     (with-temp-buffer
-      ;; Reuse the core table builder to generate the static text
       (let ((grid-table--data-source data-source))
         (grid-table--insert-table-from-data-source))
       (setq preview (buffer-string)))
-    preview))
+    (propertize preview 'face 'grid-table-org-preview-face)))
 
 (defun grid-table-org-insert-block (file-path)
   "Insert a GRID_VIEW org block with preview for FILE-PATH."
   (interactive "fGrid file: ")
-  (let ((preview (grid-table-org--render-preview-from-file file-path)))
-    (insert (format "#+BEGIN_GRID_VIEW :file %s\n" (expand-file-name file-path)))
-    (let ((content-start (point)))
+  (let ((inhibit-read-only t)) ; Allow writing to read-only buffers.
+    (let* ((fpath (expand-file-name file-path))
+           (preview (grid-table-org--render-preview-from-file fpath)))
+      ;; Insert the block header
+      (insert (format "#+BEGIN_GRID_VIEW :file %s\n" fpath))
+      ;; Insert the preview content.
       (insert preview)
+      ;; Insert the block footer
       (unless (string-suffix-p "\n" preview)
         (insert "\n"))
-      (let ((content-end (point)))
-        (add-text-properties content-start content-end '(read-only t))))
-    (insert "#+END_GRID_VIEW\n")))
+      (insert "#+END_GRID_VIEW\n"))))
 
 (defun grid-table-org--find-current-block ()
   "Return (BEGIN-POS . END-POS) for current GRID_VIEW block, or nil."
