@@ -26,6 +26,7 @@ grid-table is a general grid table component for Emacs, supporting rich text and
    ;; (require 'grid-table-csv)
    ;; (require 'grid-table-org)
    ;; (require 'grid-table-markdown)
+   ;; (require 'grid-table-rst) ; For rST export functionality
 
 ### Configuration (Optional)
 
@@ -42,6 +43,8 @@ You can customize the default directory for saving new `.grid` files by setting 
 - Open .grid: M-x grid-open or M-x grid-table-find-file
 - Save: In the grid buffer, press C-c C-w. It will prompt for a path if the file is new.
 - Open CSV: M-x grid-table-find-file-csv
+- Export to rST: From a grid buffer, run `M-x grid-table-export-as-rst`.
+- Insert as rST: From a text buffer (e.g.,  .org file), run `M-x grid-table-rst-insert-table-from-file` and select a `.grid` file to insert it as an rST table.
 
 ### Common Key Bindings (grid-table-mode)
 

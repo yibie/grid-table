@@ -26,6 +26,7 @@ grid-table 是一个用于 Emacs 的通用网格表格组件，支持富文本�
    ;; (require 'grid-table-csv)
    ;; (require 'grid-table-org)
    ;; (require 'grid-table-markdown)
+   ;; (require 'grid-table-rst) ; 加载 rST 导出功能
 
 ### 配置（可选）
 
@@ -42,6 +43,8 @@ grid-table 是一个用于 Emacs 的通用网格表格组件，支持富文本�
 - 打开 .grid：M-x grid-open 或 M-x grid-table-find-file
 - 保存：在表格 buffer 中按 C-c C-w。如果是新文件，会提示输入路径。
 - 打开 CSV：M-x grid-table-find-file-csv
+- 导出为 rST：在 grid-table 缓冲区中，运行 `M-x grid-table-export-as-rst`。
+- 作为 rST 插入：在文本文档（如 .rst 文件）中，运行 `M-x grid-table-rst-insert-table-from-file`，选择一个 `.grid` 文件，即可将其作为 rST 表格插入。
 
 ### 常用快捷键（grid-table-mode）
 
