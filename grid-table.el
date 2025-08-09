@@ -825,6 +825,8 @@ When called interactively, automatically saves and restores the current cursor p
 (define-derived-mode grid-table-mode special-mode "Grid Table"
   "Major mode for displaying and editing grid data."
   :group 'grid-table
+  ;; Ensure the buffer is always displayed with a fixed-pitch font.
+  (face-remap-add-relative 'default 'fixed-pitch)
   (setq truncate-lines nil)
   (setq buffer-read-only t)
   (setq header-line-format
