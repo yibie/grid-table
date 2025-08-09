@@ -69,6 +69,15 @@
                  (const :tag "Rule" rule))
   :group 'grid-table)
 
+
+(defvar-local grid-table-allow-elisp nil
+  "Buffer-local variable to enable elisp evaluation in table cells.
+
+If this is nil, elisp formulas are ignored. Set it to non-nil to enable evaluation of elisp formulas in tables.
+Warning: Only set this in trusted files! I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues.")
+(put 'grid-table-allow-elisp 'risky-local-variable t)
+
+
 (defcustom grid-table-default-save-directory nil
   "The default directory to save new grid files.
 If nil, uses the `default-directory` of the current buffer."
