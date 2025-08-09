@@ -2,13 +2,13 @@
 
 ## ⚠️ Warning
 
-**Before using this feature, please note that directly executing any Elisp code in a table is a huge security risk. If you open a .grid file containing malicious Elisp formulas, it may damage your system. Please only use this feature on files you fully trust.**
+**Before using this feature, please note that directly executing any Elisp code in a table is a huge security risk. If you open a .grid file containing malicious Elisp formulas, and enable the elisp feature, it may damage your system. Please only use this feature on files you fully trust.**
 
 **I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues. Please use this feature at your own risk. And eat your dog food.**
 
 ## Introduction
 
-Grid Table now supports executing Elisp code in cells, which provides infinite possibilities for table calculations. By using the `elisp:` prefix, you can run any Elisp expression in a cell.
+Grid Table now supports executing Elisp code in cells, which provides infinite possibilities for table calculations. By using the `elisp:` prefix, you can run any Elisp expression in a cell. This is only enabled in buffers with the variable `grid-table-allow-elisp` set to a non-nil value.
 
 ## Basic Syntax
 
