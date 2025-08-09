@@ -27,32 +27,41 @@ grid-table is a general grid table component for Emacs, supporting rich text and
    ;; (require 'grid-table-org)
    ;; (require 'grid-table-markdown)
 
+### Configuration (Optional)
+
+You can customize the default directory for saving new `.grid` files by setting the `grid-table-default-save-directory` variable in your Emacs config:
+
+```elisp
+;; Example: Save all new grids to ~/Documents/grids/
+(setq grid-table-default-save-directory "~/Documents/grids/")
+```
+
 ### Quick Start
 
 - New: M-x grid-table-create
- - Open .grid: M-x grid-open (or M-x grid-table-find-file)
-- Save as .grid: in grid-table buffer, C-c C-w or M-x grid-table-write-file
+- Open .grid: M-x grid-open or M-x grid-table-find-file
+- Save: In the grid buffer, press C-c C-w. It will prompt for a path if the file is new.
 - Open CSV: M-x grid-table-find-file-csv
 
 ### Common Key Bindings (grid-table-mode)
 
 - Navigation: n/p up/down, TAB/S-TAB left/right, g refresh
 - Editing: e edit cell, C-c t edit title
-- Row/column: C-c r a / C-c r d insert/delete row; C-c c a / C-c c d insert/delete column
+- Row/column: C-c r a (add row below), C-c r d (delete row); C-c c a (add column right), C-c c d (delete column)
 - Sorting: C-c s sort current column ascending/descending
-- File: C-c C-w save as .grid, C-c C-f open .grid; M-x grid-open open .grid directly
+- File: C-c C-w (save/save as), C-c C-f (open .grid file)
 
-Note: inserting column is on the "current column right"; grid-table-insert-column-left supports left insertion. Deleting the 0th row (user-defined header) is protected; after deleting the last row, the cursor remains in the table.
+Note: `grid-table-insert-column-left` supports left insertion. Deleting the 0th row (user-defined header) is protected.
 
 ### Formula
 
 - Start with =: =B2*C2, =SUM(D2:D4), =IF(A1>0, "Yes", "No")
 - Reference: cell A1, range A1:B5
 - Built-in: SUM/AVERAGE/COUNT/MAX/MIN/IF
-- **Elisp formulas**: =elisp:(+ 1 2 3), =elisp:(format-time-string "%Y-%m-%d")
-  - Full Elisp programming power in cells
-  - Access other cells with (cell "A1") function
-  - **⚠️ Warning**: Only use in trusted files! I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues.
+- **Elisp formulas**: `=elisp:(+ 1 2)` or `=elisp:(+ (cell "A1") (cell "B2"))`
+  - Execute any Elisp code directly within a cell.
+  - Access other cells using the `(cell "A1")` helper function.
+  - **⚠️ Security Warning**: Executing arbitrary Elisp from a file is a major security risk. Only use this feature in files you fully trust.
 
 More details about Elisp formulas, please refer to [ELISP_FORMULA_GUIDE.md](docs/ELISP_FORMULA_GUIDE.md).
 
