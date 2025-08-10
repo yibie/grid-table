@@ -820,15 +820,13 @@ When called interactively, automatically saves and restores the current cursor p
       ;; Restore cursor position if coordinates are provided
       (when (and restore-row-idx restore-col-idx)
         (grid-table--move-to-cell restore-row-idx restore-col-idx)
-        (grid-table--highlight-cell restore-row-idx restore-col-idx))))))
+        (grid-table--highlight-cell restore-row-idx restore-col-idx)))))
 
 (defun grid-table--fontify-buffer-jit (beg end)
   "Apply `fixed-pitch' face to the region from BEG to END.
 This is registered with `jit-lock` to ensure the table is always
 rendered with a fixed-pitch font, even in hostile environments."
   (add-face-text-property beg end 'fixed-pitch 'append))
-
-(define-derived-mode grid-table-mode special-mode "Grid Table"
 
 (define-derived-mode grid-table-mode special-mode "Grid Table"
   "Major mode for displaying and editing grid data."
