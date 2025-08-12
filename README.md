@@ -280,6 +280,14 @@ grid-table/                    # Project root directory
 └── pictures/                  # Product screenshots and demos
 ```
 
+## 📜 CHANGELOG
+
+- 0.2.0 (2025-08-12)
+  - Enhanced environment adaptability - the table now displays properly regardless of user font configuration
+  - Added over 20 major Excel formulas
+- 0.1.0 (2025-08-11)
+  - Initial release
+
 ## 🤝 How to Contribute
 
 ### ⚡ Plugin Development Quick Start

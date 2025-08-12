@@ -391,6 +391,27 @@ condition that evaluates to true. If no conditions are met, raises an error."
       (error "No match found in VLOOKUP"))))
 
 ;;;----------------------------------------------------------------------
+;;; Function Registration System
+;;;----------------------------------------------------------------------
+
+(defvar grid-calc-functions '())
+
+(defmacro grid-calc-defun (name args &rest body)
+  "Defines a built-in calculation function and registers it."
+  (declare (indent defun))
+  `(push (cons ,(symbol-name name)
+               (lambda (args)
+                 (apply (lambda ,args ,@body) args)))
+         grid-calc-functions))
+
+(defun grid-calc-call-function (model func-name args)
+  "Calls a built-in function."
+  (let ((func (cdr (assoc (upcase func-name) grid-calc-functions))))
+    (if func
+        (funcall func args)
+      (error "Unknown function: %s" func-name))))
+
+;;;----------------------------------------------------------------------
 ;;; Built-in Function Library
 ;;;----------------------------------------------------------------------
 
@@ -471,22 +492,6 @@ Uses grid-calc-to-number for consistent conversion."
         (when (and num (not (= num 0)) (or (numberp v) (and (stringp v) (string-match "^-?[0-9]+\\.?[0-9]*$" v))))
           (push num numbers))))
     (nreverse numbers)))
-
-(defvar grid-calc-functions (make-hash-table :test 'equal))
-
-(defmacro grid-calc-defun (name args &rest body)
-  "Defines a built-in calculation function and registers it."
-  `(puthash ,(symbol-name name)
-            (lambda (model . ,args) ; All functions receive model as first arg
-              ,@body)
-            grid-calc-functions))
-
-(defun grid-calc-call-function (model func-name args)
-  "Calls a built-in function."
-  (let ((func (gethash (upcase func-name) grid-calc-functions)))
-    (if func
-        (apply func model args) ; Pass model as first arg
-      (error "Unknown function: %s" func-name))))
 
 ;; Math functions
 (grid-calc-defun SUM (range-values)
@@ -706,10 +711,6 @@ NOTE: instance_num is not yet supported; all instances are replaced."
         (old (grid-calc-to-string old_text))
         (new (grid-calc-to-string new_text)))
     (replace-regexp-in-string (regexp-quote old) new str t t)))
-
-(grid-calc-defun LEN (string)
-  "Returns the length of a string."
-  (length (grid-calc-to-string string)))
 
 ;; Date/Time functions
 (grid-calc-defun NOW ()
