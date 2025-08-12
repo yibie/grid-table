@@ -773,14 +773,17 @@ If called interactively, deletes the current column."
     (insert (grid-table--draw-separator widths "└" "┴" "┘" t) "\n") ; Bottom border, 't' for row header
     ))
 
-(defun grid-table--show-grid-in-current-buffer (data-source)
-  "Render the grid from DATA-SOURCE in the current buffer.
-Assumes `grid-table-mode` is already active."
+(defun grid-table--show-grid-in-current-buffer (data-source &optional title)
+  "Display the grid table in the current buffer.
+
+DATA-SOURCE is a hash table containing the data source functions.
+TITLE is an optional title for the grid."
+  (interactive)
   (let ((inhibit-read-only t))
     (erase-buffer)
-    (setq-local grid-table--data-source data-source)
-    (grid-table--setup-perfect-display-environment)
-    ;; Display title with alignment and decoration
+    (setq grid-table--data-source data-source)
+    (when title
+      (setq grid-table--title title))
     (when-let ((title-content (grid-table--render-title-line data-source)))
       (insert title-content))
     (grid-table--insert-table-from-data-source)
@@ -800,37 +803,25 @@ Assumes `grid-table-mode` is already active."
       (grid-table--show-grid-in-current-buffer data-source))
     (switch-to-buffer buffer)))
 
-(defun grid-table-refresh (&optional restore-row-idx restore-col-idx)
-  "Refresh the grid view by re-generating its content from the data source.
-If RESTORE-ROW-IDX and RESTORE-COL-IDX are provided, move cursor to that position after refresh.
-When called interactively, automatically saves and restores the current cursor position."
+(defun grid-table-refresh ()
+  "Refresh the current grid table."
   (interactive)
-  (let ((inhibit-read-only t))
-    (when (and grid-table--data-source (current-buffer)) ; Ensure data source and buffer exist
-      ;; If called interactively and no coordinates provided, save current position
-      (when (and (called-interactively-p 'interactive) (not restore-row-idx) (not restore-col-idx))
-        (let ((current-coords (grid-table-get-cell-at-point)))
-          (when current-coords
-            (setq restore-row-idx (plist-get current-coords :display-row-idx))
-            (setq restore-col-idx (plist-get current-coords :display-col-idx)))))
+  (when grid-table--data-source
+    (let ((inhibit-read-only t)
+          (restore-point (point))
+          (restore-coords (grid-table-get-cell-at-point))
+          (restore-row-idx (when restore-coords (plist-get restore-coords :display-row-idx)))
+          (restore-col-idx (when restore-coords (plist-get restore-coords :display-col-idx))))
       (erase-buffer)
-      ;; Render title with alignment and decoration, same as initial render
       (when-let ((title-content (grid-table--render-title-line grid-table--data-source)))
         (insert title-content))
       (grid-table--insert-table-from-data-source)
       (grid-table--fontify-text)
       ;; Restore cursor position if coordinates are provided
       (when (and restore-row-idx restore-col-idx)
-        (grid-table--move-to-cell restore-row-idx restore-col-idx)
-        (grid-table--highlight-cell restore-row-idx restore-col-idx)))))
+        (grid-table--move-to-cell restore-row-idx restore-col-idx))
+        (grid-table--highlight-cell restore-row-idx restore-col-idx))))
 
-<<<<<<< HEAD
-(defun grid-table--fontify-buffer-jit (beg end)
-  "Apply `fixed-pitch' face to the region from BEG to END.
-This is registered with `jit-lock` to ensure the table is always
-rendered with a fixed-pitch font, even in hostile environments."
-  (add-face-text-property beg end 'fixed-pitch 'append))
-=======
 (defun grid-table--fontify-text ()
   "Apply `fixed-pitch' face to all text in the buffer,
 skipping regions with a `display' property (like images)."
@@ -842,17 +833,12 @@ skipping regions with a `display' property (like images)."
         (unless (get-text-property pos 'display)
           (add-face-text-property pos next-change 'fixed-pitch 'append))
         (setq pos next-change)))))
->>>>>>> 983cbba (fix: Improve table rendering)
 
 (define-derived-mode grid-table-mode special-mode "Grid Table"
   "Major mode for displaying and editing grid data."
   :group 'grid-table
-  ;; Ensure the buffer is always displayed with a fixed-pitch font.
-  (face-remap-add-relative 'default 'fixed-pitch)
   (setq truncate-lines nil)
   (setq buffer-read-only t)
-  ;; Use the robust jit-lock mechanism to ensure a fixed-pitch font.
-  (jit-lock-register #'grid-table--fontify-buffer-jit)
   (setq header-line-format
         (propertize " Grid Table" 'face '(:weight bold)))
   (setq-local font-lock-defaults '(grid-table--font-lock-keywords))
