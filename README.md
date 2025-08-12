@@ -111,88 +111,15 @@
 | `PRODUCT` Product | `COUNT` Count | `AND/OR` Logical | `LEFT/RIGHT` Slice |
 | `MOD` Modulus | `MAX/MIN` Extremes | `NOT` Invert | `LEN` Length |
 
-### 🎯 Complete Formula Function Library (Based on grid-table-calc.el)
-
-The engine supports **30+ Excel-compatible functions**, organized by category as follows:
-
-#### 📊 **Math Functions**
-| Function | Example | Function Description |
-|------|------|----------|
-| `SUM` | `=SUM(A1:A10)` | Sum all values in the range |
-| `AVERAGE` | `=AVERAGE(B2:B10)` | Calculate average |
-| `ROUND` | `=ROUND(3.1415, 2)` | Round to 2 decimal places |
-| `MOD` | `=MOD(A1, B2)` | Modulus operation |
-| `POWER` | `=POWER(2, 3)` | Power operation |
-| `SQRT` | `=SQRT(16)` | Square root |
-| `ABS` | `=ABS(-5)` | Absolute value |
-
-#### 🔍 **Advanced Query Functions**
-| Function | Example | Function Description |
-|------|------|----------|
-| `VLOOKUP` | `=VLOOKUP("苹果", A2:C6, 2)` | Exact vertical lookup |
-| `INDEX` | `=INDEX(A1:C3, 2, 3)` | Return the value of the 2nd row and 3rd column |
-| `MATCH` | `=MATCH(100, A1:A10)` | Find the position of the value (1-based) |
-
-#### 🎯 **Conditional Statistics Functions (Essential for Smart Use)**
-| Function | Example | Function Description |
-|------|------|----------|
-| `COUNTIF` | `=COUNTIF(A1:A10, ">50")` | Count based on condition |
-| `SUMIF` | `=SUMIF(A1:A10, ">=60", B1:B10)` | Sum based on condition |
-| `COUNTA` | `=COUNTA(A1:A10)` | Count non-empty cells |
-| `ISBLANK` | `=ISBLANK(A1)` | Check for empty values |
-
-#### 📅 **Date Functions**
-| Function | Example | Function Description |
-|------|------|----------|
-| `TODAY()` | `=TODAY()` | Current date |
-| `NOW()` | `=NOW()` | Current date + time |
-| `YEAR` | `=YEAR(A1)` | Extract year |
-| `MONTH` | `=MONTH(A1)` | Extract month (1-12) |
-| `WEEKDAY` | `=WEEKDAY(TODAY())` | Day of the week (1-based, Sunday=1) |
-| `EOMONTH` | `=EOMONTH(A1, 3)` | End of month 3 months later |
-
-#### 📝 **Text Processing Functions**
-| Function | Example | Function Description |
-|------|------|----------|
-| `LEN` | `=LEN(A1)` | String length |
-| `LEFT` | `=LEFT("Hello", 3)` | Extract first 3 characters: "Hel" |
-| `MID` | `=MID("World", 2, 2)` | Extract 2 characters starting from the 2nd position: "or" |
-| `FIND` | `=FIND("World", A1)` | Find the position of the substring |
-| `SUBSTITUTE` | `=SUBSTITUTE(A1, "World", "Hello")` | Replace substring |
-
-#### 🔄 **Conditional Judgment Scenarios**
-```excel
-=IF(A1>=90, "优秀", IF(A1>=80, "良好", IF(A1>=60, "及格", "不及格")))
-=IFS(A1>100, "超高", A1>=80, "高", A1>=60, "中", TRUE, "低")
-=IFERROR(复杂公式, "计算错误")
-```
-
-#### ❌ **Error Handling System**
-- **Zero Division Protection**: Avoid division by zero
-- **Type Conversion**: Text "123" automatically converted to a number
-- **Empty Value Handling**: Empty strings are treated as 0 in math
-
-#### 💡 **Absolute/Relative References** (Advanced Usage)
-| Symbol | Meaning | Example |
-|------|------|------|
-|  `$A$1`  | Absolute row and column | Fixed reference |
-|  `A$1`   | Absolute row, relative column | Row fixed | 
-|  `$A1`   | Relative row, absolute column | Column fixed |
-
 ### Elisp Formula Advanced Techniques (Expert Level)
 ```elisp
-=elisp:(+ 1 2 3)                                ; 📍 Basic calculation
-=elisp:(+ (cell "A1") (cell "B2"))              ; 📍 Cell reference
-=elisp:(let ((total (+ (cell "A1") A2 A3)))      ; 📍 Three numbers sum
-          (if (> total 100) "Over budget" total))
-
-=elisp:(format "%.1f%%" (* 100 (cell "占比")))   ; 📍 Percentage format
-=elisp:(concat "This quarter total: "                     ; 📍 String concatenation 
-          (number-to-string (cell "C2")))
-=elisp:(+ (reduce #'+ A1:A10) (reduce #'+ B1:B5)) ; 📍 Multiple area sum
+=elisp:(+ 1 2 3)                      ; 🎯 Basic calculation
+=elisp:(+ (cell "A1") (cell "B2"))     ; 📍 Cell reference
+=elisp:(format "%.2f%%" (* 100 (cell "完成率"))) ; 🎨 Formatted string
+=elisp:(let ((x (cell "B2"))) (* x x)) ; 🔧 Complex logic
 ```
 
-For more detailed guidance, please refer to [ELISP_FORMULA_GUIDE.md](docs/ELISP_FORMULA_GUIDE.md).
+*This feature is turned off by default.* For more detailed guidance, please refer to [ELISP_FORMULA_GUIDE.md](docs/ELISP_FORMULA_GUIDE.md).
 
 > ⚠️ **Security Warning**: `=elisp:` executes arbitrary Elisp code! **Only use in fully trusted documents**  
 > 🔒 **Suggestion**: Verify external files are safe and reliable through `M-x checkdoc`
@@ -202,118 +129,110 @@ For more detailed guidance, please refer to [ELISP_FORMULA_GUIDE.md](docs/ELISP_
 ### Org Mode Deep Integration
 ```org
 #+BEGIN: grid-table
-#+OPTIONS: :file "~/project/data.grid" :width 800 :height 400
+#+OPTIONS: :file "~/项目/数据.grid" :width 800 :height 400
 
-**Here is the table preview** (static read-only)
+**这里显示表格预览** (静态只读)
 
 #+END:
 ```
 
-**Three steps**:
-1. `M-x grid-table-org-insert-block` - Insert special block
-2. `M-x grid-table-org-refresh-block` - Re-render preview 
-3. `M-x grid-table-org-open-block` - Open edit window (hide preview)
+**三步操作**:
+1. `M-x grid-table-org-insert-block` - 插入专用区块
+2. `M-x grid-table-org-refresh-block` - 重新渲染预览 
+3. `M-x grid-table-org-open-block` - 打开编辑窗口 (隐藏预览)
 
-### Markdown GitHub Style
+### Markdown GitHub风格
 ```markdown
 ```grid-table
-:file ~/project/data.grid
+:file ~/项目/数据.grid
 :width 100%
 ```
-**Special preview area** (safe read-only)
+**专用预览区域** (安全只读)
 ```
 ```
 </markdown>
 
-### reStructuredText Support
-| 🎯 Scenario | 📝 Command | 📤 Result |
+### reStructuredText支持
+| 🎯 场景 | 📝 命令 | 📤 结果 |
 |---------|---------|---------|
-| Export from grid | `M-x grid-table-export-as-rst` | 📄 Standard RST format |
-| Insert existing file | `M-x grid-table-rst-insert-table-from-file` | 🔗 Smart path recognition |
+| 从grid导出 | `M-x grid-table-export-as-rst` | 📄 标准RST格式 |
+| 插入现有机构文件 | `M-x grid-table-rst-insert-table-from-file` | 🔗 智能路径识别 |
 
-## Core Technical Principles
+##  核心技术原理
 
-### Data Flow Architecture Diagram
+### 数据流架构图
 ```
-User Interface ←→ grid-table.el ←→ Core Engine
-                     ↓                ↓
-             data-source API ←→ grid-data-model
-                     ↓                ↓
-         CSV Plugin ←→ Org Plugin ←→ Custom Data Source
+用户界面 ←→ grid-table.el ←→ 核心引擎
+                ↓                ↓
+          data-source API ← grid-data-model
+                ↓                ↓
+        CSV插件 ←→ Org插件 ←→ 自定义数据源
 ```
 
-### 🔑 Core API Quick Reference
-| 🤝 Interface Type | 🔗 Key | 📝 Return Type | 💡 Key Usage |
+### 🔑 核心API速查表
+| 🤝 接口类型 | 🔗 键值 | 📝 返回值类型 | 💡 关键用途 |
 |-------------|----------|---------------|-------------|
-| **Data Retrieval** | | | |
-| Raw Value | `:get-raw-value-at` | String | Value before formula |
-| Computed Value | `:get-computed-value-at` | Any | Formula calculation result |
-| **Structure Management** | | | |
-| Dimension Query | `:get-row-count` | Integer | Import data statistics |
-| Add Unit | `:add-row` / `:add-column` | Boolean | Success/Failure |
-| **Extension Interface** | | | |
-| Load Interface | `:load-from-file` | Object | Custom file support |
-| Save Interface | `:save-to-file` | Boolean | Format export logic |
+| **数据获取** | | | |
+| 原始值 | `:get-raw-value-at` | String | 公式前的值 |
+| 计算值 | `:get-computed-value-at` | Any | 公式计算结果 |
+| **结构管理** | | | |
+| 维度查询 | `:get-row-count` | Integer | 导入数据统计 |
+| 新增单元 | `:add-row` / `:add-column` | Boolean | 成功/失败 |
+| **扩展接口** | | | |
+| 加载接口 | `:load-from-file` | Object | 自定义文件支持 |
+| 保存接口 | `:save-to-file` | Boolean | 格式导出逻辑 |
 
-## 📁 Code Organization Structure
+## 📁 代码组织结构
 
 ```
-grid-table/                    # Project root directory
-├── core/                      # Core engine collection
-│   ├── grid-table.el          # Main entry + UI rendering
-│   ├── grid-data-model.el     # Data model core
-│   ├── grid-data-source.el    # Data source abstraction
-│   ├── grid-table-api.el      # Public API
-│   ├── grid-table-calc.el     # Formula calculation engine
-│   ├── grid-table-nav.el      # Navigation control logic
-│   ├── grid-table-parser.el   # Text parsing tool
-│   └── grid-table-persistence.el # Persistence support
-├── plugins/                   # Plugin extension system
-│   ├── grid-table-csv.el      # CSV format support
-│   ├── grid-table-org.el      # Org mode integration
-│   ├── grid-table-markdown.el # Markdown integration
-│   ├── grid-table-rst.el      # reStructuredText export
-│   └── grid-table-example-plugin.el # Plugin development example
-├── docs/                      # Technical documentation
-│   ├── ELISP_FORMULA_GUIDE.md     # Formula development guide
-│   └── PLUGIN_DEVELOPMENT.md      # Plugin development manual
-└── pictures/                  # Product screenshots and demos
+grid-table/                    # 项目根目录
+├── core/                      # 核心引擎集合
+│   ├── grid-table.el          # 主入口 + UI渲染
+│   ├── grid-data-model.el     # 数据模型核心
+│   ├── grid-data-source.el    # 数据源抽象
+│   ├── grid-table-api.el      # 公开API
+│   ├── grid-table-calc.el     # 公式计算引擎
+│   ├── grid-table-nav.el      # 导航控制逻辑
+│   ├── grid-table-parser.el   # 文本解析工具
+│   └── grid-table-persistence.el # 持久化支持
+├── plugins/                   # 插件扩展系统
+│   ├── grid-table-csv.el      # CSV格式支持
+│   ├── grid-table-org.el      # Org模式集成
+│   ├── grid-table-markdown.el # Markdown集成
+│   ├── grid-table-rst.el      # reStructuredText导出
+│   └── grid-table-example-plugin.el # 插件开发示例
+├── docs/                      # 技术文档
+│   ├── ELISP_FORMULA_GUIDE.md     # 公式开发指南
+│   └── PLUGIN_DEVELOPMENT.md      # 插件开发手册
+└── pictures/                  #  产品截图和演示
 ```
 
-## 📜 CHANGELOG
+## 🤝 如何贡献力量
 
-- 0.2.0 (2025-08-12)
-  - Enhanced environment adaptability - the table now displays properly regardless of user font configuration
-  - Added over 20 major Excel formulas
-- 0.1.0 (2025-08-11)
-  - Initial release
+### ⚡ 插件开发快速入门
 
-## 🤝 How to Contribute
+#### 3种插件类型（1分钟掌握）
 
-### ⚡ Plugin Development Quick Start
-
-#### 3 Types of Plugins (1 Minute to Master)
-
-| 🎯 Type | 📝 Function Description | 🎯 Applicable Scenarios |
+| 🎯 类型 | 📝 功能说明 | 🎯 适用场景 |
 |---------|-------------|-----------|
-| 🎨 **Cell Renderer** | Custom cell display appearance | Progress bars, currency formats, etc. |
-| 📊 **Data Source Plugin** | Support new file formats | JSON, Excel reading |
-| ⚡ **Feature Plugin** | Add new commands | Data export, chart generation |
+| 🎨 **单元格渲染器** | 自定义单元格显示外观 | 进度条、货币格式等 |
+| 📊 **数据源插件** | 支持新的文件格式 | JSON、Excel读取 |
+| ⚡ **功能插件** | 添加新功能命令 | 数据导出、图表生成 |
 
-#### Quick Start Template (Copy and Use)
+#### 快速开始模板（复制即可用）
 ```elisp
-;;; my-plugin.el --- Quick template -*- lexical-binding: t -*-
+;;; my-plugin.el --- 快速模板 -*- lexical-binding: t -*-
 (require 'grid-table-plugins)
 
-;; Simple currency format renderer
+;; 简单的货币格式化渲染器
 (defun my-currency-renderer (value &optional cell-props)
-  "Currency format renderer, convert numbers to ¥XX.XX format"
+  "货币格式化渲染器，将数字转为 ¥XX.XX 格式"
   (if (and value (stringp value))
       (let ((num (string-to-number value)))
         (format "¥%.2f" num))
     ""))
 
-;; Register renderer (done!)
+;; 注册渲染器（完成！）
 (defun my-plugin-init ()
   (grid-table-register-cell-renderer 'currency #'my-currency-renderer)
   (grid-table-register-plugin 'my-plugin))
@@ -322,30 +241,30 @@ grid-table/                    # Project root directory
 (provide 'my-plugin)
 ```
 
-> 📚 **Complete Development Guide** → [Plugin Development Manual](docs/PLUGIN_DEVELOPMENT.md) (From Beginner to Expert)
+> 📚 **完整开发指南**→ [插件开发手册](docs/PLUGIN_DEVELOPMENT.md) (从入门到专家级)
 
-### 🐛 Quick Feedback Path
-- 📧 **Bug Report** → [GitHub Issues](https://github.com/your-repo/issues)  
-- ✨ **Feature Suggestion** → [Discussion Forum](https://github.com/your-repo/discussions)  
-- 🔧 **Plugin Contribution** → [Plugin Development Manual](docs/PLUGIN_DEVELOPMENT.md)
+### 🐛 快速反馈路径
+- 📧 **Bug报告** → [GitHub Issues](https://github.com/your-repo/issues)  
+- ✨ **功能建议** → [讨论论坛](https://github.com/your-repo/discussions)  
+- 🔧 **插件贡献** → [插件开发手册](docs/PLUGIN_DEVELOPMENT.md)
 
-### 🎯 Community Contribution Directions
+### 🎯 社区贡献方向
 | 🎯 类型 | 📋 需求描述 | 🏷️ 标签 |
 |---------|-------------|----------|
-| **Data Source Plugin** | Excel/JSON/Database Data Source | `enhancement`, `plugin` |
-| **Format Export** | LaTeX/ASCII/HTML/JSON Export | `extending`, `format` |
-| **Theme Plugin** | Dark Mode | `UI/UX`, `theme` |
-| **Chart Plugin** | Data Visualization | `visualization` |
+| **数据源插件** | Excel/JSON/数据库数据源 | `enhancement`, `plugin` |
+| **格式导出** | LaTeX/ASCII/HTML/JSON 导出 | `extending`, `format` |
+| **主题插件** | 深色模式 | `UI/UX`, `theme` |
+| **图表插件** | 数据可视化 | `visualization` |
 
 
 ---
 
 <div align="center">
 
-**Built with ❤️ for the Emacs community**  
+**用 ❤️ 为 Emacs 社区打造**  
 
-*Supporting efficient production workflows since 2025*  
+*自 2025 年来支持高效生产力工作流*  
 
-🤝 **[→ Join Developer Community ←](https://github.com/yibie/grid-table/discussions)**
+🤝 **[→ 加入开发者社区 ←](https://github.com/yibie/grid-table/discussions)**
 
 </div>
