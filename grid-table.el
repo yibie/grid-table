@@ -784,6 +784,7 @@ Assumes `grid-table-mode` is already active."
     (when-let ((title-content (grid-table--render-title-line data-source)))
       (insert title-content))
     (grid-table--insert-table-from-data-source)
+    (grid-table--fontify-text)
     (goto-char (point-min))
     (when (> (grid-get-row-count data-source) 0)
       (grid-table--move-to-cell 0 1) ; Move to first user-defined header cell (row header is 0, first data column is 1)
@@ -817,16 +818,31 @@ When called interactively, automatically saves and restores the current cursor p
       (when-let ((title-content (grid-table--render-title-line grid-table--data-source)))
         (insert title-content))
       (grid-table--insert-table-from-data-source)
+      (grid-table--fontify-text)
       ;; Restore cursor position if coordinates are provided
       (when (and restore-row-idx restore-col-idx)
         (grid-table--move-to-cell restore-row-idx restore-col-idx)
         (grid-table--highlight-cell restore-row-idx restore-col-idx)))))
 
+<<<<<<< HEAD
 (defun grid-table--fontify-buffer-jit (beg end)
   "Apply `fixed-pitch' face to the region from BEG to END.
 This is registered with `jit-lock` to ensure the table is always
 rendered with a fixed-pitch font, even in hostile environments."
   (add-face-text-property beg end 'fixed-pitch 'append))
+=======
+(defun grid-table--fontify-text ()
+  "Apply `fixed-pitch' face to all text in the buffer,
+skipping regions with a `display' property (like images)."
+  (interactive)
+  (let ((inhibit-read-only t)
+        (pos (point-min)))
+    (while (< pos (point-max))
+      (let ((next-change (next-single-property-change pos 'display nil (point-max))))
+        (unless (get-text-property pos 'display)
+          (add-face-text-property pos next-change 'fixed-pitch 'append))
+        (setq pos next-change)))))
+>>>>>>> 983cbba (fix: Improve table rendering)
 
 (define-derived-mode grid-table-mode special-mode "Grid Table"
   "Major mode for displaying and editing grid data."
