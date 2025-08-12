@@ -111,12 +111,10 @@ FILE-PATH is the source .grid file, PIC-DIR is the image reference base director
         (let ((params (match-string 1 line)))
           (setf result (list :file nil :pic-dir nil))
           ;; Parse :file parameter
-          (when (string-match ":file\\s-+\\([^\\s-][^:
-]*?\\)\\(?:\\s-\\|$\.*\)?" params)
+          (when (string-match ":file\\s-+\\([^\\s-][^:]*?\\)\\(?:\\s-\\|$\.*\)?" params)
             (setf (plist-get result :file) (expand-file-name (match-string 1 params))))
           ;; Parse :pic-dir parameter
-          (when (string-match ":pic-dir\\s-+\\([^\\s-][^:
-]*?\\)\\(?:\\s-\\|$\.*\)?" params)
+          (when (string-match ":pic-dir\\s-+\\([^\\s-][^:]*?\\)\\(?:\\s-\\|$\.*\)?" params)
             (setf (plist-get result :pic-dir) (expand-file-name (match-string 1 params))))
           result))))))
 
