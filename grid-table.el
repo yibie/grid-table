@@ -806,21 +806,24 @@ TITLE is an optional title for the grid."
 (defun grid-table-refresh ()
   "Refresh the current grid table."
   (interactive)
-  (when grid-table--data-source
-    (let ((inhibit-read-only t)
-          (restore-point (point))
-          (restore-coords (grid-table-get-cell-at-point))
-          (restore-row-idx (when restore-coords (plist-get restore-coords :display-row-idx)))
-          (restore-col-idx (when restore-coords (plist-get restore-coords :display-col-idx))))
+  (let* ((inhibit-read-only t)
+         (restore-coords (grid-table-get-cell-at-point))
+         (restore-row-idx (plist-get restore-coords :display-row-idx))
+         (restore-col-idx (plist-get restore-coords :display-col-idx)))
+    (when (and grid-table--data-source (current-buffer))
+      (when (and (called-interactively-p 'interactive) (not restore-row-idx) (not restore-col-idx))
+        (let ((current-coords (grid-table-get-cell-at-point)))
+          (when current-coords
+            (setq restore-row-idx (plist-get current-coords :display-row-idx))
+            (setq restore-col-idx (plist-get current-coords :display-col-idx)))))
       (erase-buffer)
       (when-let ((title-content (grid-table--render-title-line grid-table--data-source)))
         (insert title-content))
       (grid-table--insert-table-from-data-source)
       (grid-table--fontify-text)
-      ;; Restore cursor position if coordinates are provided
       (when (and restore-row-idx restore-col-idx)
-        (grid-table--move-to-cell restore-row-idx restore-col-idx))
-        (grid-table--highlight-cell restore-row-idx restore-col-idx))))
+        (grid-table--move-to-cell restore-row-idx restore-col-idx)
+        (grid-table--highlight-cell restore-row-idx restore-col-idx)))))
 
 (defun grid-table--fontify-text ()
   "Apply `fixed-pitch' face to all text in the buffer,
@@ -837,7 +840,9 @@ skipping regions with a `display' property (like images)."
 (define-derived-mode grid-table-mode special-mode "Grid Table"
   "Major mode for displaying and editing grid data."
   :group 'grid-table
-  (setq truncate-lines nil)
+  ;; Setup perfect display environment to eliminate image gaps
+  (grid-table--setup-perfect-display-environment)
+  (setq truncate-lines t)  ; Changed from nil to t to prevent line wrapping
   (setq buffer-read-only t)
   (setq header-line-format
         (propertize " Grid Table" 'face '(:weight bold)))
