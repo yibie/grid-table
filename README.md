@@ -129,38 +129,37 @@
 ### Org Mode Deep Integration
 ```org
 #+BEGIN: grid-table
-#+OPTIONS: :file "~/项目/数据.grid" :width 800 :height 400
+#+OPTIONS: :file "~/project/data.grid" 
 
-**这里显示表格预览** (静态只读)
+here display table preview (static preview)
 
 #+END:
 ```
 
-**三步操作**:
-1. `M-x grid-table-org-insert-block` - 插入专用区块
-2. `M-x grid-table-org-refresh-block` - 重新渲染预览 
-3. `M-x grid-table-org-open-block` - 打开编辑窗口 (隐藏预览)
+**three steps**:
+1. `M-x grid-table-org-insert-block` - insert grid-table block (static preview)
+2. `M-x grid-table-org-refresh-block` - refresh grid-table block (dynamic preview)
+3. `M-x grid-table-org-open-block` - open grid-table block (edit mode)
 
-### Markdown GitHub风格
+### Markdown GitHub-style
 ```markdown
 ```grid-table
-:file ~/项目/数据.grid
-:width 100%
+:file ~/project/data.grid
 ```
-**专用预览区域** (安全只读)
+here display table preview (static preview)
 ```
 ```
 </markdown>
 
-### reStructuredText支持
-| 🎯 场景 | 📝 命令 | 📤 结果 |
+### reStructuredText support
+| 🎯 scenario | 📝 command | 📤 result |
 |---------|---------|---------|
-| 从grid导出 | `M-x grid-table-export-as-rst` | 📄 标准RST格式 |
-| 插入现有机构文件 | `M-x grid-table-rst-insert-table-from-file` | 🔗 智能路径识别 |
+| from grid export | `M-x grid-table-export-as-rst` | 📄 standard RST format |
+| insert existing grid file | `M-x grid-table-rst-insert-table-from-file` | 🔗 smart path recognition |
 
-##  核心技术原理
+## Core Technology Principles
 
-### 数据流架构图
+### Data Flow Architecture Diagram
 ```
 用户界面 ←→ grid-table.el ←→ 核心引擎
                 ↓                ↓
@@ -169,70 +168,70 @@
         CSV插件 ←→ Org插件 ←→ 自定义数据源
 ```
 
-### 🔑 核心API速查表
-| 🤝 接口类型 | 🔗 键值 | 📝 返回值类型 | 💡 关键用途 |
+### Core API Quick Reference Table
+| 🤝 interface type | 🔗 key | 📝 return value type | 💡 key purpose |
 |-------------|----------|---------------|-------------|
-| **数据获取** | | | |
-| 原始值 | `:get-raw-value-at` | String | 公式前的值 |
-| 计算值 | `:get-computed-value-at` | Any | 公式计算结果 |
-| **结构管理** | | | |
-| 维度查询 | `:get-row-count` | Integer | 导入数据统计 |
-| 新增单元 | `:add-row` / `:add-column` | Boolean | 成功/失败 |
-| **扩展接口** | | | |
-| 加载接口 | `:load-from-file` | Object | 自定义文件支持 |
-| 保存接口 | `:save-to-file` | Boolean | 格式导出逻辑 |
+| **data acquisition** | | | |
+| raw value | `:get-raw-value-at` | String | value before formula |
+| computed value | `:get-computed-value-at` | Any | formula calculation result |
+| **structure management** | | | |
+| dimension query | `:get-row-count` | Integer | import data statistics |
+| new unit | `:add-row` / `:add-column` | Boolean | success/failure |
+| **extension interface** | | | |
+| load interface | `:load-from-file` | Object | custom file support |
+| save interface | `:save-to-file` | Boolean | format export logic |
 
-## 📁 代码组织结构
+## 📁 code organization structure
 
 ```
-grid-table/                    # 项目根目录
-├── core/                      # 核心引擎集合
-│   ├── grid-table.el          # 主入口 + UI渲染
-│   ├── grid-data-model.el     # 数据模型核心
-│   ├── grid-data-source.el    # 数据源抽象
-│   ├── grid-table-api.el      # 公开API
-│   ├── grid-table-calc.el     # 公式计算引擎
-│   ├── grid-table-nav.el      # 导航控制逻辑
-│   ├── grid-table-parser.el   # 文本解析工具
-│   └── grid-table-persistence.el # 持久化支持
-├── plugins/                   # 插件扩展系统
-│   ├── grid-table-csv.el      # CSV格式支持
-│   ├── grid-table-org.el      # Org模式集成
-│   ├── grid-table-markdown.el # Markdown集成
-│   ├── grid-table-rst.el      # reStructuredText导出
-│   └── grid-table-example-plugin.el # 插件开发示例
-├── docs/                      # 技术文档
-│   ├── ELISP_FORMULA_GUIDE.md     # 公式开发指南
-│   └── PLUGIN_DEVELOPMENT.md      # 插件开发手册
-└── pictures/                  #  产品截图和演示
+grid-table/                    # project root directory
+├── core/                      # core engine collection
+│   ├── grid-table.el          # main entry + UI rendering
+│   ├── grid-data-model.el     # data model core
+│   ├── grid-data-source.el    # data source abstraction
+│   ├── grid-table-api.el      # public API
+│   ├── grid-table-calc.el     # formula calculation engine
+│   ├── grid-table-nav.el      # navigation control logic
+│   ├── grid-table-parser.el   # text parsing tool
+│   └── grid-table-persistence.el # persistence support
+├── plugins/                   # plugin extension system
+│   ├── grid-table-csv.el      # CSV format support
+│   ├── grid-table-org.el      # Org mode integration
+│   ├── grid-table-markdown.el # Markdown integration
+│   ├── grid-table-rst.el      # reStructuredText export
+│   └── grid-table-example-plugin.el # plugin development example
+├── docs/                      # technical documentation
+│   ├── ELISP_FORMULA_GUIDE.md     # formula development guide
+│   └── PLUGIN_DEVELOPMENT.md      # plugin development manual
+└── pictures/                  # product screenshots and demonstrations
 ```
 
-## 🤝 如何贡献力量
+## 🤝 how to contribute
 
-### ⚡ 插件开发快速入门
+### ⚡ plugin development quick start
 
-#### 3种插件类型（1分钟掌握）
+#### 3 types of plugins (1 minute to master)
 
-| 🎯 类型 | 📝 功能说明 | 🎯 适用场景 |
+| 🎯 type | 📝 function description | 🎯 applicable scenario |
 |---------|-------------|-----------|
-| 🎨 **单元格渲染器** | 自定义单元格显示外观 | 进度条、货币格式等 |
-| 📊 **数据源插件** | 支持新的文件格式 | JSON、Excel读取 |
-| ⚡ **功能插件** | 添加新功能命令 | 数据导出、图表生成 |
+| 🎨 **cell renderer** | custom cell display appearance | progress bar, currency format, etc. |
+| 📊 **data source plugin** | support new file formats | JSON, Excel reading |
+| ⚡ **function plugin** | add new function commands | data export, chart generation |
 
-#### 快速开始模板（复制即可用）
+#### quick start template (copy and use)
 ```elisp
-;;; my-plugin.el --- 快速模板 -*- lexical-binding: t -*-
+;;; my-plugin.el --- quick template -*- lexical-binding: t -*-
 (require 'grid-table-plugins)
 
-;; 简单的货币格式化渲染器
+;; simple currency formatter
 (defun my-currency-renderer (value &optional cell-props)
-  "货币格式化渲染器，将数字转为 ¥XX.XX 格式"
+  "Currency formatter, convert number to ¥XX.XX format"
   (if (and value (stringp value))
       (let ((num (string-to-number value)))
         (format "¥%.2f" num))
     ""))
 
-;; 注册渲染器（完成！）
+;; register renderer (done!)  
 (defun my-plugin-init ()
   (grid-table-register-cell-renderer 'currency #'my-currency-renderer)
   (grid-table-register-plugin 'my-plugin))
@@ -241,30 +240,30 @@ grid-table/                    # 项目根目录
 (provide 'my-plugin)
 ```
 
-> 📚 **完整开发指南**→ [插件开发手册](docs/PLUGIN_DEVELOPMENT.md) (从入门到专家级)
+> 📚 **complete development guide**→ [plugin development manual](docs/PLUGIN_DEVELOPMENT.md) (from入门 to expert level)
 
-### 🐛 快速反馈路径
-- 📧 **Bug报告** → [GitHub Issues](https://github.com/your-repo/issues)  
-- ✨ **功能建议** → [讨论论坛](https://github.com/your-repo/discussions)  
-- 🔧 **插件贡献** → [插件开发手册](docs/PLUGIN_DEVELOPMENT.md)
+### 🐛 quick feedback path
+- 📧 **bug report** → [GitHub Issues](https://github.com/your-repo/issues)  
+- ✨ **feature suggestion** → [discussion forum](https://github.com/your-repo/discussions)  
+- 🔧 **plugin contribution** → [plugin development manual](docs/PLUGIN_DEVELOPMENT.md)
 
-### 🎯 社区贡献方向
-| 🎯 类型 | 📋 需求描述 | 🏷️ 标签 |
+### 🎯 community contribution direction
+| 🎯 type | 📋 demand description | 🏷️ tag |
 |---------|-------------|----------|
-| **数据源插件** | Excel/JSON/数据库数据源 | `enhancement`, `plugin` |
-| **格式导出** | LaTeX/ASCII/HTML/JSON 导出 | `extending`, `format` |
-| **主题插件** | 深色模式 | `UI/UX`, `theme` |
-| **图表插件** | 数据可视化 | `visualization` |
+| **data source plugin** | Excel/JSON/Multiple data sources | `enhancement`, `plugin` |
+| **format export** | LaTeX/ASCII/HTML/JSON export | `extending`, `format` |
+| **theme plugin** | dark mode | `UI/UX`, `theme` |
+| **chart plugin** | data visualization | `visualization` |
 
 
 ---
 
 <div align="center">
 
-**用 ❤️ 为 Emacs 社区打造**  
+**Built with   ❤️ for the Emacs community**  
 
-*自 2025 年来支持高效生产力工作流*  
+*Since 2025, supporting efficient productivity workflows*  
 
-🤝 **[→ 加入开发者社区 ←](https://github.com/yibie/grid-table/discussions)**
+🤝 **[→ Join the developer community ←](https://github.com/yibie/grid-table/discussions)**
 
 </div>
