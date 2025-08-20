@@ -1,5 +1,7 @@
 ;;; grid-table-parser.el --- AST parser for grid formulas -*- lexical-binding: t -*-
 
+(require 'eieio)
+
 ;;;----------------------------------------------------------------------
 ;;; Token Definitions
 ;;;----------------------------------------------------------------------
