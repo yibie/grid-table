@@ -105,7 +105,7 @@ AST: The Abstract Syntax Tree to evaluate."
     ;; Function call
     (`(FUNCTION-CALL ,func-name ,args-ast-list)
      (let ((arg-values (mapcar (lambda (arg-ast)
-                               (grid-calc-eval-ast model arg-ast))
+                                (grid-calc-eval-ast model arg-ast))
                              args-ast-list)))
        (grid-calc-call-function model func-name arg-values)))
     
@@ -238,9 +238,9 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
   (cond
         ;; Absolute reference $A$1
      ((string-match "^\\$\\([A-Z]+\\)\\$\\([0-9]+\\)$" ref-str) ; Excel row 1 is user-defined header (data row 0)
-       (list :col (grid-calc-col-letter-to-number (match-string 1 ref-str))
-             :row (- (string-to-number (match-string 2 ref-str)) 1) ; Adjust for 0-based data model
-             :absolute-col t :absolute-row t))
+      (list :col (grid-calc-col-letter-to-number (match-string 1 ref-str))
+            :row (- (string-to-number (match-string 2 ref-str)) 1) ; Adjust for 0-based data model
+            :absolute-col t :absolute-row t))
      ;; Mixed reference $A1 or A$1
      ((string-match "^\\(\\$?\\)\\([A-Z]+\\)\\(\\$?\\)\\([0-9]+\\)$" ref-str)
       (list :col (grid-calc-col-letter-to-number (match-string 2 ref-str))
