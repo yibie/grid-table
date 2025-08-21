@@ -788,6 +788,7 @@ TITLE is an optional title for the grid."
       (insert title-content))
     (grid-table--insert-table-from-data-source)
     (grid-table--fontify-text)
+    (redisplay) ; Force redisplay to ensure text properties are applied
     (goto-char (point-min))
     (when (> (grid-get-row-count data-source) 0)
       (grid-table--move-to-cell 0 1) ; Move to first user-defined header cell (row header is 0, first data column is 1)

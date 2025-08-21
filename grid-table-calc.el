@@ -237,24 +237,24 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
   (message "CALLING grid-calc-parse-cell-ref with: %s" ref-str)
   (cond
         ;; Absolute reference $A$1
-     ((string-match "^\\$\\([A-Z]+\\)\\$\\([0-9]+\\)$" ref-str) ; Excel row 1 is A,B,C header, Excel row 2 is user-defined header (data row 0)
-      (list :col (grid-calc-col-letter-to-number (match-string 1 ref-str))
-            :row (- (string-to-number (match-string 2 ref-str)) 2) ; Adjust for A,B,C header row and 0-based data model
-            :absolute-col t :absolute-row t))
+     ((string-match "^\\$\\([A-Z]+\\)\\$\\([0-9]+\\)$" ref-str) ; Excel row 1 is user-defined header (data row 0)
+       (list :col (grid-calc-col-letter-to-number (match-string 1 ref-str))
+             :row (- (string-to-number (match-string 2 ref-str)) 1) ; Adjust for 0-based data model
+             :absolute-col t :absolute-row t))
      ;; Mixed reference $A1 or A$1
      ((string-match "^\\(\\$?\\)\\([A-Z]+\\)\\(\\$?\\)\\([0-9]+\\)$" ref-str)
       (list :col (grid-calc-col-letter-to-number (match-string 2 ref-str))
-            :row (- (string-to-number (match-string 4 ref-str)) 2) ; Adjust for A,B,C header row and 0-based data model
+            :row (- (string-to-number (match-string 4 ref-str)) 1) ; Adjust for 0-based data model
             :absolute-col (not (string-empty-p (match-string 1 ref-str)))
             :absolute-row (not (string-empty-p (match-string 3 ref-str)))))
    ;; Single cell reference (e.g., A1)
-   ;; Excel row 1 is A,B,C header. Excel row 2 is the first data row (user-defined headers).
-   ;; So, Excel row N maps to our data model index (N-2).
+   ;; Excel row 1 is the first data row (user-defined headers).
+   ;; So, Excel row N maps to our data model index (N-1).
    ((string-match "^\\([A-Z]+\\)\\([0-9]+\\)$" ref-str)
     (let* ((col-str (match-string 1 ref-str))
            (row-str (match-string 2 ref-str))
            (row-num (string-to-number row-str))
-           (model-row (- row-num 2)))
+           (model-row (- row-num 1)))
       (message "DEBUG: %s -> col=%s, row=%s, model-row=%s" ref-str col-str row-str model-row)
       (list :col (grid-calc-col-letter-to-number col-str)
             :row model-row
@@ -288,17 +288,17 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
          (values '()))
     
     (when (and start-ref end-ref (plist-get start-ref :row) (plist-get end-ref :row))
-      (let ((start-row (plist-get start-ref :row)) (start-col (plist-get start-ref :col))
-            (end-row (plist-get end-ref :row)) (end-col (plist-get end-ref :col)))
-        (dotimes (r (1+ (- end-row start-row)))
-          (let ((current-row (+ start-row r)))
-            (dotimes (c (1+ (- end-col start-col)))
-              (let ((current-col (+ start-col c)))
-                (when (and (>= current-row 0) (>= current-col 0)
-                           (< current-row (grid-data-model-rows model))
-                           (< current-col (grid-data-model-cols model)))
-                  (push (grid-model-get-computed-value model current-row current-col) values)))))))
-    (nreverse values))))
+      (let* ((row-start (min (plist-get start-ref :row) (plist-get end-ref :row)))
+             (row-end   (max (plist-get start-ref :row) (plist-get end-ref :row)))
+             (col-start (min (plist-get start-ref :col) (plist-get end-ref :col)))
+             (col-end   (max (plist-get start-ref :col) (plist-get end-ref :col))))
+        (cl-loop for r from row-start to row-end do
+                 (cl-loop for c from col-start to col-end do
+                          (when (and (>= r 0) (>= c 0)
+                                     (< r (grid-data-model-rows model))
+                                     (< c (grid-data-model-cols model)))
+                            (push (grid-model-get-computed-value model r c) values))))))
+    (nreverse values)))
 
 (defun grid-calc-eval-index-function (model args-ast-list)
   "Special evaluator for the INDEX function.
