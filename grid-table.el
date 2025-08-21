@@ -178,8 +178,8 @@ Returns a list of integers representing the calculated width for each column."
                       (if (grid-table--extract-image-path cell-content)
                          ;; Use configured width for images
                          grid-table-image-column-width
-                       ;; Raw text width calculation is now correct
-                       (string-width cell-content))))
+                       ;; Calculate width considering newlines - use the longest line
+                       (apply #'max 0 (mapcar #'string-width (split-string cell-content "\n" t ""))))))
               ;; Also consider the A, B, C... headers for width
               (let ((col-letter-width (string-width (grid-table--col-number-to-letter i))))
                 (setf (nth i widths) (max (nth i widths) col-letter-width)))
@@ -197,23 +197,35 @@ Returns a list of integers representing the calculated width for each column."
       widths)))
 
 (defun grid-table--wrap-text (text width)
-  "Wrap TEXT into a list of strings, each fitting within WIDTH."
-  (if (<= (string-width text) width)
-      (list text)
-    (let ((lines '())
-          (remaining-text text))
-      (while (> (string-width remaining-text) width)
-        (let* ((break-pos (or (cl-loop for i from (min (length remaining-text) width) downto 1
-                                       when (<= (string-width remaining-text 0 i) width)
-                                       return i)
-                              1))
-               ;; Try to find a natural break point (space)
-               (space-pos (or (cl-position ?\s remaining-text :from-end t :end break-pos)
-                              break-pos)))
-          (push (substring remaining-text 0 space-pos) lines)
-          (setq remaining-text (string-trim (substring remaining-text space-pos)))))
-      (push remaining-text lines)
-      (nreverse lines))))
+  "Wrap TEXT into a list of strings, each fitting within WIDTH.
+Always breaks at newlines. If a newline coincides with where the text
+would break anyway, only makes one break. Newlines reset line length to 0."
+  (let ((result-lines '()))
+    ;; First, split by explicit newlines
+    (dolist (line-segment (split-string text "\n" t ""))
+      ;; Handle each segment separately
+      (if (<= (string-width line-segment) width)
+          ;; Segment fits within width, add it directly
+          (push line-segment result-lines)
+        ;; Segment needs wrapping
+        (let ((remaining-text line-segment))
+          (while (> (string-width remaining-text) width)
+            (let* ((break-pos (or (cl-loop for i from (min (length remaining-text) width) downto 1
+                                           when (<= (string-width remaining-text 0 i) width)
+                                           return i)
+                                  1))
+                   ;; Try to find a natural break point (space)
+                   (space-pos (or (cl-position ?\s remaining-text :from-end t :end break-pos)
+                                  break-pos)))
+              (push (substring remaining-text 0 space-pos) result-lines)
+              (setq remaining-text (string-trim (substring remaining-text space-pos)))))
+          ;; Add the remaining part of this segment
+          (when (not (string-empty-p remaining-text))
+            (push remaining-text result-lines)))))
+    ;; Handle case where original text was empty or contained only newlines
+    (if (null result-lines)
+        (list "")
+      (nreverse result-lines))))
 
 (defun grid-table--pad-string (text width)
   "Pad TEXT with spaces to fit WIDTH."
@@ -900,6 +912,24 @@ ROWS is a list of lists of strings."
     (setq-local grid-table--title "New Grid Table") ; Set default title for new grids
     (grid-table--show-grid data-source (generate-new-buffer-name "*grid*"))))
 
+
+(defun grid-table--test-newline-wrapping ()
+  "Test function to verify newline-aware text wrapping."
+  (interactive)
+  (let ((test-cases
+         '(("Short text" 20)
+           ("This is a very long line that should be wrapped" 15)
+           ("Line 1\nLine 2\nLine 3" 20)
+           ("Short\nVery long line that needs to be wrapped at spaces" 15)
+           ("First\nSecond line that is way too long and should wrap\nThird" 20))))
+    (dolist (test-case test-cases)
+      (let* ((text (car test-case))
+             (width (cadr test-case))
+             (result (grid-table--wrap-text text width)))
+        (message "Text: %S, Width: %d" text width)
+        (message "Result: %S" result)
+        (message "Max line width: %d" (apply #'max (mapcar #'string-width result)))
+        (message "")))))
 
 (provide 'grid-table)
 
