@@ -75,7 +75,7 @@ AST: The Abstract Syntax Tree to evaluate."
            (condition-case err
                (eval (read code-str))
              (error (format "Elisp Error: %s" (error-message-string err)))))
-       (error "Elisp disabled: see `grid-calc-allow-elisp'")))
+       (error "Elisp disabled: see `grid-table-allow-elisp'")))
 
     ;; Number literal
     (`(NUMBER ,value) value)
