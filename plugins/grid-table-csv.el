@@ -97,7 +97,7 @@
             (dotimes (c num-cols)
               (push (grid-cell-raw-input (grid-model-get-cell rows r c)) row))
             (push (nreverse row) row-data)))
-        (grid-table-create headers (nreverse row-data))))))
+        (grid-table-api-create :data-source (make-default-data-source headers (nreverse row-data)))))))
 
 (defun grid-table-csv-save (file-path)
   "Save the current grid-table data back to a CSV file."

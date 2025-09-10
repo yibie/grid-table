@@ -165,7 +165,7 @@ TITLE is an optional string for the grid title."
                   (("Name" . "Bob") ("Email" . "bob@example.com") ("Phone" . "555-5678"))
                   (("Name" . "Charlie") ("Email" . "charlie@example.com") ("Phone" . "555-9012"))))
          (data-source (grid-table-example-create-data-source data "Example Demo")))
-    (grid-table-create
+    (grid-table-api-create
      :data-source data-source
      :columns (grid-table-create-columns
                (grid-table-define-column "Name" :type 'enhanced-text :width 20)
@@ -181,7 +181,7 @@ TITLE is an optional string for the grid title."
                  ("Mouse" "25.99" "90")
                  ("Keyboard" "75.00" "45")))
          (data-source (make-default-data-source headers data "Currency Demo")))
-    (grid-table-create
+    (grid-table-api-create
      :data-source data-source
      :columns (grid-table-create-columns
                (grid-table-define-column "Item" :type 'text :width 15)

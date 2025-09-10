@@ -187,15 +187,14 @@
 
 ```
 grid-table/                    # 项目根目录
-├── core/                      # 核心引擎集合
-│   ├── grid-table.el          # 主入口 + UI渲染
-│   ├── grid-data-model.el     # 数据模型核心
-│   ├── grid-data-source.el    # 数据源抽象
-│   ├── grid-table-api.el      # 公开API
-│   ├── grid-table-calc.el     # 公式计算引擎
-│   ├── grid-table-nav.el      # 导航控制逻辑
-│   ├── grid-table-parser.el   # 文本解析工具
-│   └── grid-table-persistence.el # 持久化支持
+├── grid-table.el          # 主入口 + UI渲染
+├── grid-data-model.el     # 数据模型核心
+├── grid-data-source.el    # 数据源抽象
+├── grid-table-api.el      # 公开API
+├── grid-table-calc.el     # 公式计算引擎
+├── grid-table-nav.el      # 导航控制逻辑
+├── grid-table-parser.el   # 文本解析工具
+└── grid-table-persistence.el # 持久化支持
 ├── plugins/                   # 插件扩展系统
 │   ├── grid-table-csv.el      # CSV格式支持
 │   ├── grid-table-org.el      # Org模式集成

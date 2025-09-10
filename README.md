@@ -57,9 +57,9 @@
 ;; 🎯 Load on demand
 (require 'grid-table)          ;; Core functionality
 (require 'grid-table-plugins)  ;; Plugin system
-(require 'grid-table-csv)      ;; CSV支持
-(require 'grid-table-org)      ;; Org集成
-(require 'grid-table-markdown) ;; Markdown集成
+(require 'grid-table-csv)      ;; CSV support
+(require 'grid-table-org)      ;; Org integration
+(require 'grid-table-markdown) ;; Markdown integration
 ```
 
 ## 📋 Operation Quick Reference
@@ -185,15 +185,14 @@ here display table preview (static preview)
 
 ```
 grid-table/                    # project root directory
-├── core/                      # core engine collection
-│   ├── grid-table.el          # main entry + UI rendering
-│   ├── grid-data-model.el     # data model core
-│   ├── grid-data-source.el    # data source abstraction
-│   ├── grid-table-api.el      # public API
-│   ├── grid-table-calc.el     # formula calculation engine
-│   ├── grid-table-nav.el      # navigation control logic
-│   ├── grid-table-parser.el   # text parsing tool
-│   └── grid-table-persistence.el # persistence support
+├── grid-table.el              # main entry + UI rendering
+├── grid-data-model.el         # data model core
+├── grid-data-source.el        # data source abstraction
+├── grid-table-api.el          # public API
+├── grid-table-calc.el         # formula calculation engine
+├── grid-table-nav.el          # navigation control logic
+├── grid-table-parser.el       # text parsing tool
+└── grid-table-persistence.el  # persistence support
 ├── plugins/                   # plugin extension system
 │   ├── grid-table-csv.el      # CSV format support
 │   ├── grid-table-org.el      # Org mode integration

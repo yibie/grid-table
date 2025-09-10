@@ -67,7 +67,7 @@ Properties can include :type, :width, :renderer, etc."
 ;;; Main API Functions
 ;;;----------------------------------------------------------------------
 
-(defun grid-table-create (&rest args)
+(defun grid-table-api-create (&rest args)
   "Create a grid table with ARGS.
 Supported arguments:
   :data-source - The data source instance
@@ -172,7 +172,7 @@ Supported arguments:
                  ("Bob" "30" "London")
                  ("Charlie" "35" "Paris")))
          (data-source (make-default-data-source headers data "Basic Example")))
-    (grid-table-create
+    (grid-table-api-create
      :data-source data-source
      :columns (grid-table-create-columns
                (grid-table-define-column "Name" :type 'text :width 20)
@@ -184,7 +184,7 @@ Supported arguments:
   "Example of CSV grid table usage."
   (interactive "fCSV file: ")
   (when-let ((data-source (grid-table-csv-create-data-source file-path)))
-    (grid-table-create
+    (grid-table-api-create
      :data-source data-source
      :plugins '("csv")
      :title (file-name-nondirectory file-path)
