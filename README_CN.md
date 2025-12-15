@@ -186,8 +186,7 @@
 ## 📁 代码组织结构
 
 ```
-grid-table/                    # 项目根目录
-├── grid-table.el          # 主入口 + UI渲染
+grid-table/                    # 项目根目录 ├── grid-table.el          # 主入口 + UI渲染
 ├── grid-data-model.el     # 数据模型核心
 ├── grid-data-source.el    # 数据源抽象
 ├── grid-table-api.el      # 公开API
