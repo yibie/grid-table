@@ -1,4 +1,5 @@
 ;;; grid-table.el --- Grid table for displaying and editing tabular data -*- lexical-binding: t -*-
+;; Version: 0.2.0
 
 (require 'cl-lib)
 (require 'cl-macs)
@@ -9,6 +10,9 @@
 (require 'grid-table-nav)
 (require 'grid-table-chart)
 (require 'grid-table-plugins)
+
+;; Public version identifier.
+(defconst grid-table-version "0.2.0")
 
 ;;;----------------------------------------------------------------------
 ;;; Helper functions for data source access
@@ -1061,4 +1065,3 @@ ROWS is a list of lists of strings."
 (provide 'grid-table)
 
 ;;; grid-table.el ends here 
-
