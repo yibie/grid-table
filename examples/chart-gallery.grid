@@ -1,0 +1,24 @@
+(:title "YouPlot Style Chart Gallery"
+ :headers ("Type" "Data1" "Data2" "Data3" "Data4" "Data5" "Chart")
+ :rows (
+        ;; Basic Charts
+        ("Revenue" "100" "150" "120" "200" "" "=BARPLOT(B1:E1, B2:E2, \"Revenue by Quarter\")")
+        ("Profit" "20" "40" "30" "50" "" "=LINEPLOT(B1:E1, B3:E3, \"Profit Trend\")")
+        ("Users" "500" "550" "600" "700" "" "=SCATTER(B1:E1, B4:E4, \"User Growth\")")
+        ("Mini" "10" "12" "11" "15" "18" "=SPARKLINE(B5:F5)")
+
+        ;; New Chart Types
+        ("Histogram" "5" "8" "12" "8" "5" "=HISTOGRAM(B6:F6, 3, \"Distribution\")")
+        ("Count" "Apple" "Banana" "Apple" "Orange" "Apple" "=COUNT(B7:F7, \"Fruit Count\")")
+
+        ;; Multi-series
+        ("Series1" "10" "20" "15" "25" "" "=MULTILINE(B1:E1, B8:E8, B9:E9, \"Multi-Line\")")
+        ("Series2" "15" "18" "22" "20" "" "")
+
+        ;; Density (1D KDE curve - shows data distribution)
+        ("Density" "1" "2" "2" "3" "3" "=DENSITY(B10:F10, \"Distribution\")")
+
+        ;; Boxplot
+        ("Box1" "10" "15" "20" "25" "30" "=BOXPLOT(B12:F12, B13:F13, \"Box Comparison\")")
+        ("Box2" "12" "18" "22" "28" "35" "")
+        ))

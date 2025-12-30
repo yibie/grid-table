@@ -1,0 +1,9 @@
+(:title "Histogram Demo - Student Scores"
+ :headers ("ID" "Score1" "Score2" "Score3" "Score4" "Score5" "Score6" "Score7" "Score8" "Score9" "Score10" "Chart")
+ :rows (
+        ;; Row 1: 30 student scores (spanning across 3 rows for display)
+        ("ClassA" "65" "72" "78" "85" "90" "92" "68" "75" "82" "88" "=HISTOGRAM(B2:K4, 4, \"Exam Score Distribution\")")
+        ("ClassB" "95" "70" "76" "84" "89" "91" "93" "66" "74" "80" "")
+        ("ClassC" "86" "94" "67" "73" "81" "87" "96" "69" "77" "83" "")
+        ))
+

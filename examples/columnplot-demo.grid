@@ -1,0 +1,6 @@
+(:title "Column Plot Demo - Vertical Bar Chart"
+ :headers ("Category" "Q1" "Q2" "Q3" "Q4" "Chart")
+ :rows (
+        ("Revenue" "100" "150" "120" "200" "=COLUMNPLOT(B1:E1, B2:E2, \"Quarterly Revenue\", 40, 15)")
+        ("Profit" "20" "40" "30" "50" "=COLUMNPLOT(B1:E1, B3:E3, \"Quarterly Profit\", 40, 15)")
+        ))
