@@ -4,3 +4,12 @@ dev-note/
 .yoyo/
 
 .vscode/
+
+tp/
+
+# Local agent artifacts
+.cursor/
+.gemini-clipboard/
+
+# Emacs byte-compiled files
+*.elc
