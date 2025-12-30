@@ -141,6 +141,26 @@
         (grid-table--move-to-cell target-row target-col)
         (grid-table--highlight-cell target-row target-col)))))
 
+(defun grid-table-scroll-left ()
+  "Scroll the table view left by a few columns."
+  (interactive)
+  (scroll-left 5))
+
+(defun grid-table-scroll-right ()
+  "Scroll the table view right by a few columns."
+  (interactive)
+  (scroll-right 5))
+
+(defun grid-table-move-beginning-of-line ()
+  "Move point to the beginning of the visual line (accounting for horizontal scroll)."
+  (interactive)
+  (move-beginning-of-line nil))
+
+(defun grid-table-move-end-of-line ()
+  "Move point to the end of the visual line (accounting for horizontal scroll)."
+  (interactive)
+  (move-end-of-line nil))
+
 (provide 'grid-table-nav)
 
 ;;; grid-table-nav.el ends here

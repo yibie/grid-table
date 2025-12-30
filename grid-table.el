@@ -7,6 +7,7 @@
 (require 'grid-table-parser)
 (require 'grid-table-persistence)
 (require 'grid-table-nav)
+(require 'grid-table-chart)
 (require 'grid-table-plugins)
 
 ;;;----------------------------------------------------------------------
@@ -363,8 +364,12 @@ This version does not use condition-case for error handling."
   (let* (;; Phase 1: Process all cells into a list of lists (lines per cell)
          (processed-cells
           (cl-loop for cell in rowData for width in (cdr widths) ; FIX 1: Use CDR to skip row-header width
-                   collect (let* ((computed-value (if (stringp cell) cell (format "%s" cell)))
-                                  (content (if (stringp computed-value) computed-value (format "%s" computed-value)))
+                   collect (let* ((computed-value (if (stringp cell) cell cell)) ; cell might be a plist now
+                                  (content (cond
+                                            ((and (listp computed-value) (plist-get computed-value :grid-chart))
+                                             "[Chart]")
+                                            ((stringp computed-value) computed-value)
+                                            (t (format "%s" computed-value))))
                                   (image-path (grid-table--extract-image-path content)))
                              (if image-path
                                  (with-temp-buffer
@@ -856,6 +861,9 @@ skipping regions with a `display' property (like images)."
   ;; Setup perfect display environment to eliminate image gaps
   (grid-table--setup-perfect-display-environment)
   (setq truncate-lines t)  ; Changed from nil to t to prevent line wrapping
+  (setq auto-hscroll-mode t)  ; Enable automatic horizontal scrolling
+  (setq hscroll-margin 0)  ; Allow cursor to reach window edge before scrolling
+  (setq hscroll-step 1)  ; Smooth horizontal scrolling
   (setq buffer-read-only t)
   (setq header-line-format
         (propertize " Grid Table" 'face '(:weight bold)))
@@ -876,8 +884,127 @@ skipping regions with a `display' property (like images)."
     (define-key map (kbd "C-c C-w") 'grid-table-write-file)
     (define-key map (kbd "C-c C-f") 'grid-table-find-file)
     (define-key map (kbd "C-c s") 'grid-table-sort-column) ; New keybinding for sorting
+     (define-key map (kbd "C-c v") 'grid-table-view-chart)
+     (define-key map (kbd "C-c i") 'grid-table-insert-chart)
+     ;; Horizontal scrolling and navigation
+     (define-key map (kbd "C-x <") 'scroll-left)
+     (define-key map (kbd "C-x >") 'scroll-right)
+     (define-key map (kbd "<right>") 'forward-char)
+     (define-key map (kbd "<left>") 'backward-char)
+     (define-key map (kbd "C-f") 'forward-char)
+     (define-key map (kbd "C-b") 'backward-char)
+     (define-key map (kbd "C-a") 'grid-table-move-beginning-of-line)
+     (define-key map (kbd "C-e") 'grid-table-move-end-of-line)
+     (define-key map (kbd "M-<") 'beginning-of-buffer)
+     (define-key map (kbd "M->") 'end-of-buffer)
 
-    (use-local-map map)))
+     (use-local-map map)))
+
+(defun grid-table--chart-type-defaults (type)
+  "Return default parameters for chart TYPE."
+  (pcase type
+    ('bar '(:width 50 :height 10 :grid nil))
+    ('column '(:width 40 :height 15 :grid nil))
+    ('line '(:width 60 :height 20 :grid t))
+    ('scatter '(:width 60 :height 20 :grid t))
+    ('histogram '(:width 50 :height 10 :grid nil))
+    ('boxplot '(:width 50 :height 8 :grid nil))
+    ('multiline '(:width 70 :height 25 :grid t))
+    ('density '(:width 50 :height 20 :grid nil))
+    ('count '(:width 50 :height 10 :grid nil))
+    (_ '(:width 60 :height 20 :grid t))))
+
+(defun grid-table-view-chart ()
+  "View the chart in the current cell in a separate buffer."
+  (interactive)
+  (when-let* ((coords (grid-table-get-cell-at-point))
+              (row (plist-get coords :display-row-idx))
+              (col (plist-get coords :display-col-idx))
+              ;; Adjust col for data source (0-based data cols start at display col 1)
+              (data-col (1- col))
+              (val (grid-get-computed-value-at grid-table--data-source row data-col)))
+    (if (and (listp val) (plist-get val :grid-chart))
+        (let* ((type (plist-get val :type))
+               (data (plist-get val :data))
+               (options (plist-get val :options))
+               (defaults (grid-table--chart-type-defaults type))
+               (params (grid-chart--options-to-params options defaults))
+               (chart-content
+                (cond
+                 ((eq type 'bar)
+                  (grid-chart-barplot (plist-get data :labels)
+                                      (plist-get data :values)
+                                      params))
+                 ((eq type 'column)
+                  (grid-chart-columnplot (plist-get data :labels)
+                                         (plist-get data :values)
+                                         params))
+                 ((eq type 'line)
+                  (grid-chart-lineplot (plist-get data :x)
+                                       (plist-get data :y)
+                                       params
+                                       'line))
+                 ((eq type 'scatter)
+                  (grid-chart-lineplot (plist-get data :x)
+                                       (plist-get data :y)
+                                       params
+                                       'scatter))
+                 ((eq type 'histogram)
+                  (grid-chart-histogram (plist-get data :values)
+                                        params))
+                 ((eq type 'boxplot)
+                  (grid-chart-boxplot (plist-get data :series)
+                                      params))
+                 ((eq type 'multiline)
+                  (grid-chart-multiline (plist-get data :x)
+                                        (plist-get data :series)
+                                        params))
+                ((eq type 'density)
+                 (grid-chart-density (plist-get data :data)
+                                     nil  ; unused parameter for API compatibility
+                                     params))
+                 ((eq type 'count)
+                  (grid-chart-count (plist-get data :values)
+                                    params))
+                 (t (format "Unknown chart type: %s" type)))))
+          (with-current-buffer (get-buffer-create "*Grid Plot*")
+            (read-only-mode -1)
+            (erase-buffer)
+            (insert chart-content)
+            (goto-char (point-min))
+            (special-mode)
+            (display-buffer (current-buffer))))
+      (message "No chart found in this cell."))))
+
+(defun grid-table-insert-chart ()
+  "Insert a chart formula into the current cell."
+  (interactive)
+  (let* ((type (completing-read "Chart Type: " '("BARPLOT" "LINEPLOT" "SCATTER")))
+         (formula
+          (cond
+           ((string= type "BARPLOT")
+            (let ((labels (read-string "Labels Range (e.g., A1:A5): "))
+                  (values (read-string "Values Range (e.g., B1:B5): "))
+                  (title (read-string "Title: ")))
+              (format "=BARPLOT(%s, %s, \"%s\")" labels values title)))
+           ((or (string= type "LINEPLOT") (string= type "SCATTER"))
+            (let ((x (read-string "X Range (e.g., A1:A10): "))
+                  (y (read-string "Y Range (e.g., B1:B10): "))
+                  (title (read-string "Title: ")))
+              (format "=%s(%s, %s, \"%s\")" type x y title))))))
+    (when formula
+      (grid-table-edit-cell-with-value formula))))
+
+(defun grid-table-edit-cell-with-value (value)
+  "Helper to set cell value directly."
+  (when-let* ((coords (grid-table-get-cell-at-point))
+              (display-row-idx (plist-get coords :display-row-idx))
+              (display-col-idx (plist-get coords :display-col-idx)))
+    (let ((set-raw-fn (gethash :set-raw-value-at grid-table--data-source)))
+      (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) value)
+      (grid-table-refresh)
+      (grid-table--move-to-cell display-row-idx display-col-idx)
+      (grid-table--highlight-cell display-row-idx display-col-idx))))
 
 (defun grid-table--open-demo ()
   "Open a grid-table buffer with a demonstration table for internal testing."
