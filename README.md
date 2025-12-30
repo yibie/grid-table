@@ -290,11 +290,11 @@ here display table preview (static preview)
 ### Data Flow Architecture Diagram
 
 ```
-用户界面 ←→ grid-table.el ←→ 核心引擎
+User Interface ←→ grid-table.el ←→ Core Engine
                 ↓                ↓
           data-source API ← grid-data-model
                 ↓                ↓
-        CSV插件 ←→ Org插件 ←→ 自定义数据源
+        CSV Plugin ←→ Org Plugin ←→ Custom Data Sources
 ```
 
 ### Core API Quick Reference Table
