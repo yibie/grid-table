@@ -1,6 +1,7 @@
 ;;; grid-table-persistence.el --- Save and load grid-table data -*- lexical-binding: t -*-
 
 (require 'grid-data-source)
+(require 'cl-lib)
 
 ;;;----------------------------------------------------------------------
 ;;; Public API
@@ -34,13 +35,34 @@ Returns a new data source instance, or nil on error."
       (error "File not found: %s" file-path)
     (with-temp-buffer
       (insert-file-contents file-path)
-              (let* ((data (read (current-buffer)))
-               (headers (plist-get data :headers))
-               (rows (plist-get data :rows)) ; These are the actual data rows (excluding the first row which is user-defined headers)
-               (title (plist-get data :title)))
-        (if (and (listp headers) (listp rows))
-            (make-default-data-source headers (append (list headers) rows) title) ; Prepend user-defined headers to rows
-          (error "Invalid grid file format in %s" file-path))))))
+      (let ((data (read (current-buffer))))
+        (let (headers rows title)
+          (cond
+           ;; Case 1: Plist format (saved by this tool)
+           ((keywordp (car data))
+            (setq headers (plist-get data :headers)
+                  rows (plist-get data :rows)
+                  title (plist-get data :title)))
+
+           ;; Case 2: Alist format (legacy/example files)
+           ((listp (car data))
+            (setq headers (cadr (assoc :headers data))
+                  title (cdr (assoc :title data)))
+            ;; Handle :rows or :model
+            (if-let ((rows-data (cdr (assoc :rows data))))
+                (setq rows rows-data)
+              (when-let ((model-data (cdr (assoc :model data))))
+                ;; model-data is a vector: [(rows cols ?) [row1 row2 ...]]
+                ;; We want the second element (index 1), which is the vector of rows.
+                ;; And we need to convert it to a list of lists.
+                (when (and (vectorp model-data) (> (length model-data) 1))
+                  (setq rows (append (aref model-data 1) nil)))))) ; convert vector to list
+
+           (t (error "Unknown grid file format in %s" file-path)))
+
+          (if (and (listp headers) (listp rows))
+              (make-default-data-source headers (append (list headers) rows) title)
+            (error "Invalid grid file format in %s" file-path)))))))
 
 (provide 'grid-table-persistence)
 
