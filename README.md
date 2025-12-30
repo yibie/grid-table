@@ -229,6 +229,23 @@ grid-table provides built-in chart functions that render ASCII/Unicode charts di
 =SPARKLINE(10, 15, 13, 17, 19)
 ```
 
+### Chart Preview Gallery
+
+Add demo screenshots under `pictures/` and they will render here.
+
+| Type | Preview |
+| --- | --- |
+| `BARPLOT` | <img alt="BARPLOT preview" src="pictures/chart-barplot.png" width="260" /> |
+| `COLUMNPLOT` | <img alt="COLUMNPLOT preview" src="pictures/chart-columnplot.png" width="260" /> |
+| `LINEPLOT` | <img alt="LINEPLOT preview" src="pictures/chart-lineplot.png" width="260" /> |
+| `SCATTER` | <img alt="SCATTER preview" src="pictures/chart-scatter.png" width="260" /> |
+| `HISTOGRAM` | <img alt="HISTOGRAM preview" src="pictures/chart-histogram.png" width="260" /> |
+| `BOXPLOT` | <img alt="BOXPLOT preview" src="pictures/chart-boxplot.png" width="260" /> |
+| `DENSITY` | <img alt="DENSITY preview" src="pictures/chart-density.png" width="260" /> |
+| `COUNT` | <img alt="COUNT preview" src="pictures/chart-count.png" width="260" /> |
+| `MULTILINE` | <img alt="MULTILINE preview" src="pictures/chart-multiline.png" width="260" /> |
+| `SPARKLINE` | <img alt="SPARKLINE preview" src="pictures/chart-sparkline.png" width="260" /> |
+
 ### Chart Demo File
 
 See `examples/chart-gallery.grid` for a complete demonstration:

@@ -229,6 +229,23 @@ grid-table 内置图表公式功能，可直接在单元格中渲染 ASCII/Unico
 =SPARKLINE(10, 15, 13, 17, 19)
 ```
 
+### 图表效果一览
+
+将 demo 截图放到 `pictures/` 下后，会在这里集中展示。
+
+| 类型 | 预览 |
+| --- | --- |
+| `BARPLOT` | <img alt="BARPLOT 预览" src="pictures/chart-barplot.png" width="260" /> |
+| `COLUMNPLOT` | <img alt="COLUMNPLOT 预览" src="pictures/chart-columnplot.png" width="260" /> |
+| `LINEPLOT` | <img alt="LINEPLOT 预览" src="pictures/chart-lineplot.png" width="260" /> |
+| `SCATTER` | <img alt="SCATTER 预览" src="pictures/chart-scatter.png" width="260" /> |
+| `HISTOGRAM` | <img alt="HISTOGRAM 预览" src="pictures/chart-histogram.png" width="260" /> |
+| `BOXPLOT` | <img alt="BOXPLOT 预览" src="pictures/chart-boxplot.png" width="260" /> |
+| `DENSITY` | <img alt="DENSITY 预览" src="pictures/chart-density.png" width="260" /> |
+| `COUNT` | <img alt="COUNT 预览" src="pictures/chart-count.png" width="260" /> |
+| `MULTILINE` | <img alt="MULTILINE 预览" src="pictures/chart-multiline.png" width="260" /> |
+| `SPARKLINE` | <img alt="SPARKLINE 预览" src="pictures/chart-sparkline.png" width="260" /> |
+
 ### 图表演示文件
 
 查看 `examples/chart-gallery.grid` 获取完整演示：
