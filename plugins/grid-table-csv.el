@@ -2,6 +2,7 @@
 
 (require 'grid-table)
 (require 'grid-table-plugins)
+(require 'grid-table-api)
 
 (defun grid-table-csv--parse-line (line)
   "A proper CSV line parser that handles quoted fields correctly."
