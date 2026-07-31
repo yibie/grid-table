@@ -7,7 +7,7 @@
 ;;; Default Data Source Implementation (using a function bundle)
 ;;;----------------------------------------------------------------------
 
-(defun make-default-data-source (headers initial-data &optional title)
+(defun make-default-data-source (headers initial-data &optional title merges)
   "Create a default data source instance.
 This data source is a hash-table containing functions for the grid-table to call.
 HEADERS is a list of strings.
@@ -15,7 +15,7 @@ INITIAL-DATA is a list of lists of strings. The HEADERS will be prepended to INI
 TITLE is an optional string for the grid title."
   (let* ((rows (length initial-data))
          (cols (length headers))
-         (model (grid-model-create rows cols initial-data))
+         (model (grid-model-create rows cols initial-data merges))
          (source (make-hash-table)))
     (puthash :get-column-count
              (lambda (s) (grid-data-model-cols (gethash :model s)))
@@ -37,6 +37,25 @@ TITLE is an optional string for the grid title."
     (puthash :set-raw-value-at
              (lambda (s row col value)
                (grid-model-set-raw-value (gethash :model s) row col value))
+             source)
+    (puthash :get-merges
+             (lambda (s)
+               (grid-model-get-merges (gethash :model s)))
+             source)
+    (puthash :merge-cells
+             (lambda (s row start-col end-col &optional right-col)
+               (puthash :model
+                        (grid-model-merge-cells (gethash :model s)
+                                                row start-col end-col right-col)
+                        s)
+               s)
+             source)
+    (puthash :unmerge-cell
+             (lambda (s row col)
+               (puthash :model
+                        (grid-model-unmerge-cell (gethash :model s) row col)
+                        s)
+               s)
              source)
     (puthash :sort-by-column
              (lambda (s col-idx sort-order)
@@ -87,12 +106,18 @@ TITLE is an optional string for the grid title."
     (puthash :delete-column
              (lambda (s col-idx)
                (let* ((old-model (gethash :model s))
-                      (old-headers (gethash :headers s))
+                      (old-headers (copy-sequence (gethash :headers s)))
+                      (header-merge
+                       (grid-model-find-merge old-model 0 col-idx))
                       (new-model (grid-model-delete-column old-model col-idx)))
                  (unless (and (>= col-idx 0) (< col-idx (length old-headers)))
                    (error "Invalid column index: %s" col-idx))
                  (when (= (length old-headers) 1)
                    (error "Cannot delete the last column."))
+                 (when (and header-merge
+                            (= col-idx (nth 1 header-merge)))
+                   (setf (nth (1+ col-idx) old-headers)
+                         (nth col-idx old-headers)))
                  (setf old-headers (append (cl-subseq old-headers 0 col-idx)
                                            (cl-subseq old-headers (1+ col-idx))))
                  (puthash :model new-model s)

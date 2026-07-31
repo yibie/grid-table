@@ -13,3 +13,4 @@ tp/
 
 # Emacs byte-compiled files
 *.elc
+.DS_Store

@@ -18,42 +18,126 @@
 (defvar grid-table--highlight-overlay)
 (defvar grid-table--col-header-row-idx)
 
+(defvar-local grid-table--nav-row nil
+  "Logical row represented by point.")
+
+(defvar-local grid-table--nav-col nil
+  "Logical column represented by point.")
+
 ;;;----------------------------------------------------------------------
 ;;; Internal Helper Functions
 ;;;----------------------------------------------------------------------
 
 (defun grid-table--move-to-cell (display-row col)
-  "Move point to the beginning of the cell at logical DISPLAY-ROW and COL."
+  "Move point to the slice at DISPLAY-ROW whose range contains COL."
   (goto-char (point-min))
   (catch 'found
     (while (not (eobp))
-      (let ((props (text-properties-at (point))))
+      (let* ((props (text-properties-at (point)))
+             (start (or (plist-get props 'grid-display-col-start)
+                        (plist-get props 'grid-display-col-idx)))
+             (end (or (plist-get props 'grid-display-col-end)
+                      (plist-get props 'grid-display-col-end-idx)
+                      start))
+             (slice-row (or (plist-get props 'grid-display-slice-row)
+                            (plist-get props 'grid-display-row-idx))))
         (when (and (plist-get props 'grid-cell)
-                   (eq (plist-get props 'grid-display-row-idx) display-row)
-                   (eq (plist-get props 'grid-display-col-idx) col))
+                   (eq slice-row display-row)
+                   start end
+                   (<= start col)
+                   (<= col end))
+          (setq grid-table--nav-row display-row
+                grid-table--nav-col col)
           (throw 'found t)))
       (forward-char 1))
-    ;; If not found, maybe do nothing or move to a default position
     (message "Cell (%s, %s) not found." display-row col)
     nil))
 
-(defun grid-table--get-cell-bounds (display-row col)
-  "Get the buffer start and end positions of the cell at logical DISPLAY-ROW and COL."
+(defun grid-table--highlight-cell (display-row col)
+  "Highlight every rendered slice of the cell at DISPLAY-ROW and COL."
+  (dolist (overlay (if (listp grid-table--highlight-overlay)
+                       grid-table--highlight-overlay
+                     (and (overlayp grid-table--highlight-overlay)
+                          (list grid-table--highlight-overlay))))
+    (delete-overlay overlay))
+  (setq grid-table--highlight-overlay nil)
   (save-excursion
     (when (grid-table--move-to-cell display-row col)
-      (cons (point) (next-single-property-change (point) 'grid-cell nil (point-max))))))
+      (let* ((coords (grid-table-get-cell-at-point))
+             (row-start (plist-get coords :row-start))
+             (row-end (plist-get coords :row-end))
+             (col-start (plist-get coords :col-start))
+             (col-end (plist-get coords :col-end))
+             (pos (point-min)))
+        (while (< pos (point-max))
+          (if (not (get-text-property pos 'grid-cell))
+              (setq pos (or (next-single-property-change
+                             pos 'grid-cell nil (point-max))
+                            (point-max)))
+            (let* ((end (or (next-single-property-change
+                             pos 'grid-cell nil (point-max))
+                            (point-max)))
+                   (row (or (get-text-property
+                             pos 'grid-display-row-start)
+                            (get-text-property
+                             pos 'grid-display-row-idx)))
+                   (last-row (or (get-text-property
+                                  pos 'grid-display-row-end)
+                                 row))
+                   (start (or (get-text-property
+                               pos 'grid-display-col-start)
+                              (get-text-property
+                               pos 'grid-display-col-idx)))
+                   (last-col (or (get-text-property
+                                  pos 'grid-display-col-end)
+                                 (get-text-property
+                                  pos 'grid-display-col-end-idx)
+                                 start)))
+              (when (and (= row row-start) (= last-row row-end)
+                         (= start col-start) (= last-col col-end))
+                (let ((overlay (make-overlay pos end)))
+                  (overlay-put overlay 'face 'grid-table-highlight-face)
+                  (overlay-put overlay 'priority -1)
+                  (push overlay grid-table--highlight-overlay)))
+              (setq pos end))))))))
 
-(defun grid-table--highlight-cell (display-row col)
-  "Highlight the cell at the given DISPLAY-ROW and COL using an overlay."
-  (unless grid-table--highlight-overlay
-    (setq grid-table--highlight-overlay (make-overlay (point-min) (point-min)))
-    (overlay-put grid-table--highlight-overlay 'face 'grid-table-highlight-face)
-    (overlay-put grid-table--highlight-overlay 'priority -1))
+(defun grid-table--tab-nodes ()
+  "Return unique rendered nodes in buffer order."
+  (let ((pos (point-min))
+        seen
+        nodes)
+    (while (< pos (point-max))
+      (if (not (get-text-property pos 'grid-cell))
+          (setq pos (or (next-single-property-change
+                         pos 'grid-cell nil (point-max))
+                        (point-max)))
+        (let* ((end (or (next-single-property-change
+                         pos 'grid-cell nil (point-max))
+                        (point-max)))
+               (row (or (get-text-property pos 'grid-display-anchor-row)
+                        (get-text-property pos 'grid-display-row-start)
+                        (get-text-property pos 'grid-display-row-idx)))
+               (col (or (get-text-property pos 'grid-display-anchor-col)
+                        (get-text-property pos 'grid-display-col-start)
+                        (get-text-property pos 'grid-display-col-idx)))
+               (key (cons row col)))
+          (unless (member key seen)
+            (push key seen)
+            (push key nodes))
+          (setq pos end))))
+    (nreverse nodes)))
 
-  (if-let* ((bounds (grid-table--get-cell-bounds display-row col)))
-      (move-overlay grid-table--highlight-overlay (car bounds) (cdr bounds))
-    ;; If cell not found, hide the overlay
-    (move-overlay grid-table--highlight-overlay (point-min) (point-min))))
+(defun grid-table--move-tab (step)
+  "Move STEP nodes through the rendered cell order."
+  (when-let* ((coords (grid-table-get-cell-at-point))
+              (nodes (grid-table--tab-nodes))
+              (current (cons (plist-get coords :anchor-row)
+                             (plist-get coords :anchor-col)))
+              (index (cl-position current nodes :test #'equal)))
+    (let* ((count (length nodes))
+           (target (nth (mod (+ index step) count) nodes)))
+      (when (grid-table--move-to-cell (car target) (cdr target))
+        (grid-table--highlight-cell (car target) (cdr target))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Public Navigation Commands
@@ -64,82 +148,67 @@
   (interactive)
   (when grid-table--data-source
     (when-let* ((coords (grid-table-get-cell-at-point))
-                (current-row (plist-get coords :display-row-idx))
-                (current-col (plist-get coords :display-col-idx))
+                (current-row (plist-get coords :slice-row))
+                (bottom (plist-get coords :row-end))
+                (current-col (plist-get coords :slice-col))
                 (num-rows (grid-get-row-count grid-table--data-source)))
       (let ((target-row
              (cond
-              ;; from ABC header to first data row
               ((= current-row grid-table--col-header-row-idx) 0)
-              ;; from last data row to ABC header
-              ((= current-row (1- num-rows)) grid-table--col-header-row-idx)
-              ;; normal downward movement
-              (t (1+ current-row)))))
-        (grid-table--move-to-cell target-row current-col)
-        (grid-table--highlight-cell target-row current-col)))))
+              ((= bottom (1- num-rows)) grid-table--col-header-row-idx)
+              (t (1+ bottom)))))
+        (when (grid-table--move-to-cell target-row current-col)
+          (grid-table--highlight-cell target-row current-col))))))
 
 (defun grid-table-previous-line ()
   "Move to the cell in the previous row, same column."
   (interactive)
   (when grid-table--data-source
     (when-let* ((coords (grid-table-get-cell-at-point))
-                (current-row (plist-get coords :display-row-idx))
-                (current-col (plist-get coords :display-col-idx))
+                (current-row (plist-get coords :slice-row))
+                (top (plist-get coords :row-start))
+                (current-col (plist-get coords :slice-col))
                 (num-rows (grid-get-row-count grid-table--data-source)))
       (let ((target-row
              (cond
-              ;; from ABC header to last data row
               ((= current-row grid-table--col-header-row-idx) (1- num-rows))
-              ;; from first data row to ABC header
-              ((= current-row 0) grid-table--col-header-row-idx)
-              ;; normal upward movement
-              (t (1- current-row)))))
-        (grid-table--move-to-cell target-row current-col)
-        (grid-table--highlight-cell target-row current-col)))))
+              ((= top 0) grid-table--col-header-row-idx)
+              (t (1- top)))))
+        (when (grid-table--move-to-cell target-row current-col)
+          (grid-table--highlight-cell target-row current-col))))))
 
 (defun grid-table-next-cell ()
-  "Move to the next cell in the table, wrapping to the next row."
+  "Move to the next rendered cell node."
   (interactive)
   (when grid-table--data-source
-    (when-let* ((coords (grid-table-get-cell-at-point))
-                (current-row (plist-get coords :display-row-idx))
-                (current-col (plist-get coords :display-col-idx))
-                (num-rows (grid-get-row-count grid-table--data-source))
-                (num-cols (grid-get-column-count grid-table--data-source)))
-      (let* ((total-data-cols (1+ num-cols)) ; data cols + row header
-             (target-col (1+ current-col))
-             (target-row current-row))
-        ;; Check for wrapping to the next row
-        (when (>= target-col total-data-cols)
-          (setq target-col 0) ; Wrap to the first column (row header)
-          (setq target-row (cond
-                            ((= current-row grid-table--col-header-row-idx) 0)
-                            ((= current-row (1- num-rows)) grid-table--col-header-row-idx)
-                            (t (1+ current-row)))))
-        (grid-table--move-to-cell target-row target-col)
-        (grid-table--highlight-cell target-row target-col)))))
+    (grid-table--move-tab 1)))
 
 (defun grid-table-previous-cell ()
-  "Move to the previous cell in the table, wrapping to the previous row."
+  "Move to the previous rendered cell node."
   (interactive)
   (when grid-table--data-source
-    (when-let* ((coords (grid-table-get-cell-at-point))
-                (current-row (plist-get coords :display-row-idx))
-                (current-col (plist-get coords :display-col-idx))
-                (num-rows (grid-get-row-count grid-table--data-source))
-                (num-cols (grid-get-column-count grid-table--data-source)))
-      (let* ((total-data-cols (1+ num-cols))
-             (target-col (1- current-col))
-             (target-row current-row))
-        ;; Check for wrapping to the previous row
-        (when (< target-col 0)
-          (setq target-col (1- total-data-cols)) ; Wrap to the last column
-          (setq target-row (cond
-                            ((= current-row grid-table--col-header-row-idx) (1- num-rows))
-                            ((= current-row 0) grid-table--col-header-row-idx)
-                            (t (1- current-row)))))
-        (grid-table--move-to-cell target-row target-col)
-        (grid-table--highlight-cell target-row target-col)))))
+    (grid-table--move-tab -1)))
+
+(defun grid-table-cell-right ()
+  "Move to the next visible cell segment in the current row."
+  (interactive)
+  (when-let* ((coords (grid-table-get-cell-at-point))
+              (row (plist-get coords :slice-row))
+              (end (plist-get coords :col-end))
+              (num-cols (grid-get-column-count grid-table--data-source))
+              (target (and (< end num-cols) (1+ end))))
+    (when (grid-table--move-to-cell row target)
+      (grid-table--highlight-cell row target))))
+
+(defun grid-table-cell-left ()
+  "Move to the previous visible cell segment in the current row."
+  (interactive)
+  (when-let* ((coords (grid-table-get-cell-at-point))
+              (row (plist-get coords :slice-row))
+              (start (plist-get coords :col-start))
+              (target (and (> start 0) (1- start))))
+    (when (grid-table--move-to-cell row target)
+      (grid-table--highlight-cell row target))))
 
 (defun grid-table-scroll-left ()
   "Scroll the table view left by a few columns."

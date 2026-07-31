@@ -16,7 +16,7 @@
 
 | Appearance                                                                            | Data Calculation                                                                                      | Extensibility                                                                                |
 | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Rich Text Rendering<br/> Cell Images<br/> Adaptive Column Widths<br/> Unicode Borders | Formula Engine (Excel Style)<br/>📍 Cell References<br/> Real-time Calculation<br/> Elisp Expressions | Plugin Architecture<br/>🔗 Multiple Data Sources<br/> Format Export<br/>🔧 Custom Extensions |
+| Rich Text Rendering<br/> Cell Images<br/> Adaptive Column Widths<br/> Unicode Borders<br/> Merged Cells | Formula Engine (Excel Style)<br/>📍 Cell References<br/> Real-time Calculation<br/> Elisp Expressions | Plugin Architecture<br/>🔗 Multiple Data Sources<br/> Format Export<br/>🔧 Custom Extensions |
 
 </div>
 
@@ -27,6 +27,17 @@
 - **Excel-Level Formulas** - `=B2*C2· =SUM(A1:A10)· =IF(...)`
 - **Elisp Super Formulas** - Powerful `=elisp:(cell"A1")` expressions
 - **Real-time Preview** - "Static Preview + Dynamic Editing" in Org/Markdown
+- **Merged Cells** - Horizontal and vertical spans with border-aware navigation
+
+### ↔️ Merged Cells
+
+<div align="center">
+
+<img src="pictures/merged-cells.png" alt="Horizontal and vertical merged cells" width="552">
+
+</div>
+
+Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C-c u` to unmerge the cell at point. While editing, `M-RET` inserts a newline for multi-line content.
 
 ## 🚀 30 Seconds to Get Started
 
@@ -83,6 +94,8 @@
 | **✏️ Basic Editing**     |                    |                                  |                                        |
 | Cell Editing             | `e` or right-click | Enter edit mode                  | Cell focus                             |
 | Title Editing            | `C-c t`            | Modify table title               | Global display                         |
+| Merge Cells              | `C-c m`            | Merge an A1 range                | Same row or same column only           |
+| Unmerge Cell             | `C-c u`            | Unmerge the cell at point        | Keeps the anchor value                 |
 | **➕ Row Operations**    |                    |                                  |                                        |
 | Insert Row Below         | `C-c r a`          | Create new row below current row | Smart format inheritance               |
 | Delete Current Row       | `C-c r d`          | Delete entire row                | ⚠️ **Table headers cannot be deleted** |

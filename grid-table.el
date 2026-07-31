@@ -1,5 +1,5 @@
 ;;; grid-table.el --- Grid table for displaying and editing tabular data -*- lexical-binding: t -*-
-;; Version: 0.2.0
+;; Version: 0.3.0
 
 (require 'cl-lib)
 (require 'cl-macs)
@@ -12,7 +12,7 @@
 (require 'grid-table-plugins)
 
 ;; Public version identifier.
-(defconst grid-table-version "0.2.0")
+(defconst grid-table-version "0.3.0")
 
 ;;;----------------------------------------------------------------------
 ;;; Helper functions for data source access
@@ -41,6 +41,21 @@
 (defun grid-set-raw-value-at (source row col value)
   "Set raw value in data source."
   (funcall (gethash :set-raw-value-at source) source row col value))
+
+(defun grid-get-merges (source)
+  "Return merge ranges from SOURCE."
+  (when-let* ((fn (gethash :get-merges source)))
+    (funcall fn source)))
+
+(defun grid-merge-cells (source top left bottom &optional right)
+  "Merge TOP LEFT through BOTTOM RIGHT in SOURCE.
+When RIGHT is nil, use the legacy horizontal TOP LEFT BOTTOM call."
+  (funcall (gethash :merge-cells source)
+           source top left bottom right))
+
+(defun grid-unmerge-cell (source row col)
+  "Unmerge the range covering ROW and COL in SOURCE."
+  (funcall (gethash :unmerge-cell source) source row col))
 
 ;;;----------------------------------------------------------------------
 ;;; Grid Table Configuration
@@ -117,24 +132,85 @@ If nil, uses the `default-directory` of the current buffer."
 
 (defvar-local grid-table--highlight-overlay nil)
 
+(defvar grid-table-cell-edit-map
+  (let ((map (copy-keymap minibuffer-local-map)))
+    (define-key map (kbd "M-RET") #'newline)
+    map)
+  "Minibuffer keymap used while editing a grid cell.")
+
 ;;;----------------------------------------------------------------------
 ;;; Rendering
 ;;;----------------------------------------------------------------------
 
 (defun grid-table-get-cell-at-point ()
-  "Get the logical coordinates of the cell at the current point.
-Robustly searches the current line if point is not directly on cell text."
+  "Return the complete logical descriptor for the cell at point."
   (interactive)
-  (let ((props-at-point (get-text-property (point) 'grid-cell)))
-    (if props-at-point
-        (list :display-row-idx (get-text-property (point) 'grid-display-row-idx)
-              :display-col-idx (get-text-property (point) 'grid-display-col-idx))
-      (save-excursion
-        (goto-char (line-beginning-position))
-        (when-let* ((pos (next-single-property-change (point) 'grid-cell nil (line-end-position))))
-          (goto-char pos)
-          (list :display-row-idx (get-text-property (point) 'grid-display-row-idx)
-                :display-col-idx (get-text-property (point) 'grid-display-col-idx)))))))
+  (let ((position
+         (if (get-text-property (point) 'grid-cell)
+             (point)
+           (save-excursion
+             (goto-char (line-beginning-position))
+             (catch 'cell
+               (while (< (point) (line-end-position))
+                 (when (get-text-property (point) 'grid-cell)
+                   (throw 'cell (point)))
+                 (forward-char 1))
+               nil)))))
+    (when position
+      (let* ((old-row
+              (get-text-property position 'grid-display-row-idx))
+             (old-col
+              (get-text-property position 'grid-display-col-idx))
+             (row-start
+              (or (get-text-property position 'grid-display-row-start)
+                  old-row))
+             (row-end
+              (or (get-text-property position 'grid-display-row-end)
+                  row-start))
+             (col-start
+              (or (get-text-property position 'grid-display-col-start)
+                  old-col))
+             (col-end
+              (or (get-text-property position 'grid-display-col-end)
+                  (get-text-property position 'grid-display-col-end-idx)
+                  col-start))
+             (slice-row
+              (or (get-text-property position 'grid-display-slice-row)
+                  row-start))
+             (property-slice-col
+              (or (get-text-property position 'grid-display-slice-col)
+                  col-start))
+             (slice-col
+              (if (and (boundp 'grid-table--nav-row)
+                       (boundp 'grid-table--nav-col)
+                       (equal grid-table--nav-row slice-row)
+                       (integerp grid-table--nav-col)
+                       (<= col-start grid-table--nav-col)
+                       (<= grid-table--nav-col col-end))
+                  grid-table--nav-col
+                property-slice-col)))
+        (list :row-start row-start :row-end row-end
+              :col-start col-start :col-end col-end
+              :anchor-row
+              (or (get-text-property position 'grid-display-anchor-row)
+                  row-start)
+              :anchor-col
+              (or (get-text-property position 'grid-display-anchor-col)
+                  col-start)
+              :slice-row slice-row :slice-col slice-col
+              ;; Compatibility keys for third-party callers.
+              :display-row-idx row-start
+              :display-col-idx col-start
+              :display-col-end-idx col-end)))))
+
+(defun grid-table--merge-at (merges row col)
+  "Return the range in MERGES covering ROW and COL."
+  (cl-find-if (lambda (merge)
+                (and (<= (nth 0 merge) row)
+                     (<= row (nth 2 merge))
+                     (<= (nth 1 merge) col)
+                     (<= col (nth 3 merge))))
+              merges))
 
 ;;----------------------------------------------------------------------
 ;; Column Width Calculation
@@ -159,10 +235,11 @@ Robustly searches the current line if point is not directly on cell text."
      (1 'grid-table-markup-face) (2 'fixed-pitch) (3 'grid-table-markup-face)))
   "Font-lock keywords for grid-table-mode.")
 
-(defun grid-table--calculate-column-widths (headers data-rows)
+(defun grid-table--calculate-column-widths (headers data-rows &optional merges)
   "Calculate the optimal column widths based on headers and data.
 HEADERS is a list of strings for the column titles.
 DATA-ROWS is a list of lists, where each inner list represents a row.
+MERGES contains horizontal merge ranges whose contents do not size columns.
 Returns a list of integers representing the calculated width for each column."
   (when (or headers data-rows)
     (let* ((num-columns (length headers))
@@ -172,12 +249,25 @@ Returns a list of integers representing the calculated width for each column."
 
       ;; 1. Calculate initial widths from headers
       (dotimes (i num-columns)
-        (setf (nth i widths) (max min-width (string-width (nth i headers)))))
+        (setf (nth i widths)
+              (max min-width
+                   (string-width (grid-table--col-number-to-letter i))
+                   (if (let ((merge (grid-table--merge-at merges 0 i)))
+                         (and merge
+                              (< (nth 1 merge) (nth 3 merge))))
+                       0
+                     (string-width (or (nth i headers) ""))))))
 
       ;; 2. Expand widths based on data rows and A, B, C... headers
-      (dolist (row data-rows)
+      (cl-loop for row in data-rows
+               for row-idx from 0 do
         (dotimes (i num-columns)
-          (when (< i (length row))
+          (when (and (< i (length row))
+                     (not (let ((merge (grid-table--merge-at merges row-idx i)))
+                            (and merge
+                                 (or (< (nth 1 merge) (nth 3 merge))
+                                     (not (and (= row-idx (nth 0 merge))
+                                               (= i (nth 1 merge)))))))))
             (let* ((cell-content (format "%s" (or (nth i row) "")))
                    (content-width 
                       (if (grid-table--extract-image-path cell-content)
@@ -185,10 +275,6 @@ Returns a list of integers representing the calculated width for each column."
                          grid-table-image-column-width
                        ;; Calculate width considering newlines - use the longest line
                        (apply #'max 0 (mapcar #'string-width (split-string cell-content "\n" t ""))))))
-              ;; Also consider the A, B, C... headers for width
-              (let ((col-letter-width (string-width (grid-table--col-number-to-letter i))))
-                (setf (nth i widths) (max (nth i widths) col-letter-width)))
-              
               ;; Update width based on cell content
               (setf (nth i widths) (max (nth i widths) content-width))))))
 
@@ -301,17 +387,16 @@ Returns the valid, existing path if found, otherwise nil."
          (get-header-fn (gethash :get-header-value data-source))
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
+         (merges (grid-get-merges data-source))
          (headers (cl-loop for c from 0 below num-cols
                            collect (funcall get-header-fn data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
                             collect (cl-loop for c from 0 below num-cols
                                              collect (funcall get-computed-fn data-source r c))))
-         (widths (grid-table--calculate-column-widths headers all-rows)))
+         (widths (grid-table--calculate-column-widths headers all-rows merges)))
     (let* ((max-row-number-width (string-width (number-to-string num-rows)))
-           (row-header-width (max 3 (+ 1 max-row-number-width)))
-           (full-widths (cons row-header-width widths))
-           (sep-line (grid-table--draw-separator full-widths "┌" "┬" "┐" t)))
-      (string-width sep-line))))
+           (row-header-width (max 3 (+ 1 max-row-number-width))))
+      (+ row-header-width (apply #'+ widths) (* 3 num-cols) 2))))
 
 (defun grid-table--render-title-line (data-source)
   "Render title line above the table according to alignment/decoration settings."
@@ -363,97 +448,369 @@ This version does not use condition-case for error handling."
 (defvar grid-table--debug-slices nil
   "Output each slice's position and size when non-nil, for debugging.")
 
-(defun grid-table--draw-row (rowData widths display-row-idx)
-  "Draw a table row, supporting image mosaics and text, with uniform line height."
-  (let* (;; Phase 1: Process all cells into a list of lists (lines per cell)
-         (processed-cells
-          (cl-loop for cell in rowData for width in (cdr widths) ; FIX 1: Use CDR to skip row-header width
-                   collect (let* ((computed-value (if (stringp cell) cell cell)) ; cell might be a plist now
-                                  (content (cond
-                                            ((and (listp computed-value) (plist-get computed-value :grid-chart))
-                                             "[Chart]")
-                                            ((stringp computed-value) computed-value)
-                                            (t (format "%s" computed-value))))
-                                  (image-path (grid-table--extract-image-path content)))
-                             (if image-path
-                                 (with-temp-buffer
-                                   (if-let* ((source-info (ignore-errors (grid-table--get-loadable-image-source image-path)))
-                                             (source-file (car source-info))
-                                             (source-type (cadr source-info))
-                                             (target-px-w (* width (frame-char-width)))
-                                             (target-px-h (* grid-table-image-target-char-height (grid-table--get-exact-line-height)))
-                                             (image (create-image source-file source-type nil :width target-px-w :height target-px-h :ascent 'center)))
-                                     (insert-sliced-image image " " nil grid-table-image-target-char-height width)
-                                   (insert (format "[IMG ERR: %s]" (file-name-nondirectory image-path))))
-                                   (let ((lines (split-string (buffer-string) "\n" t)))
-                                     ;; Limit image height to prevent excessive row height
-                                     (if (> (length lines) grid-table-image-target-char-height)
-                                         (cl-subseq lines 0 grid-table-image-target-char-height)
-                                       (if (and (= (length lines) 1) (string= (car lines) ""))
-                                           (list "") ; Return single empty line for failed images
-                                         lines))))
-                               (grid-table--wrap-text content width)))))
-         ;; Phase 2: Calculate the maximum height of the row
-         (max-row-height (apply #'max 1 (mapcar (lambda (cell-lines) 
-                                                   (if (and (= (length cell-lines) 1) 
-                                                            (string= (car cell-lines) ""))
-                                                       0 ; Empty cells don't contribute to height
-                                                     (length cell-lines)))
-                                               processed-cells)))
-         (row-header-width (nth 0 widths)) ; Get the calculated width for the row header column
-         (row-parts
-          (cl-loop for line-idx from 0 below max-row-height
-                   collect (let* ((line-parts (cl-loop for processed-content in processed-cells
-                                                      for width in (cdr widths)
-                                                      for col-idx from 0
-                                                      collect (let* ((content-part (or (nth line-idx processed-content) ""))
-                                                                     (padded (grid-table--pad-string content-part width)))
-                                                                (propertize (format " %s " padded)
-                                                                            'grid-cell t
-                                                                            'grid-display-row-idx display-row-idx
-                                                                            'grid-display-col-idx (1+ col-idx)))))
-                                  (row-header-content (if (= line-idx 0)
-                                                          (if (= display-row-idx grid-table--col-header-row-idx)
-                                                              " "
-                                                            (format "%s" (number-to-string (1+ display-row-idx)))) ; Display 1-based row number
-                                                        " "))
-                                  (row-header-padded (grid-table--pad-string row-header-content row-header-width))
-                                  (propertized-row-header (propertize row-header-padded
-                                                                      'grid-cell t
-                                                                      'grid-display-row-idx display-row-idx
-                                                                      'grid-display-col-idx grid-table--row-header-col-idx)))
-                             (format "│%s│%s│" propertized-row-header (string-join line-parts "│"))))))
-    (string-join row-parts "\n")))
+(defun grid-table--cell-lines (value width)
+  "Render VALUE into display lines fitting WIDTH."
+  (let* ((content (cond
+                   ((and (listp value) (plist-get value :grid-chart)) "[Chart]")
+                   ((stringp value) value)
+                   (t (format "%s" value))))
+         (image-path (grid-table--extract-image-path content)))
+    (if (not image-path)
+        (grid-table--wrap-text content width)
+      (with-temp-buffer
+        (if-let* ((source-info (ignore-errors
+                                 (grid-table--get-loadable-image-source image-path)))
+                  (source-file (car source-info))
+                  (source-type (cadr source-info))
+                  (target-px-w (* width (frame-char-width)))
+                  (target-px-h (* grid-table-image-target-char-height
+                                  (grid-table--get-exact-line-height)))
+                  (image (create-image source-file source-type nil
+                                       :width target-px-w :height target-px-h
+                                       :ascent 'center)))
+            (insert-sliced-image image " " nil
+                                 grid-table-image-target-char-height width)
+          (insert (format "[IMG ERR: %s]"
+                          (file-name-nondirectory image-path))))
+        (let ((lines (split-string (buffer-string) "\n" t)))
+          (if (> (length lines) grid-table-image-target-char-height)
+              (cl-subseq lines 0 grid-table-image-target-char-height)
+            (if (and (= (length lines) 1) (string= (car lines) ""))
+                (list "")
+              lines)))))))
 
-(defun grid-table--draw-separator (widths &optional left mid right has-row-header)
-  "Draw a horizontal separator line.
-LEFT, MID, RIGHT are the characters for left-end, middle, and right-end.
-HAS-ROW-HEADER indicates if this separator should include a row header column."
-  (let* ((left (or left "├")) (mid (or mid "┼")) (right (or right "┤")))
-    (if has-row-header
-        (let* ((row-header-width (car widths))
-               (data-widths (cdr widths))
-               ;; The row header content is NOT padded with spaces, so its separator width is just its raw width.
-               (row-header-segment (make-string row-header-width ?─))
-               ;; Data cell content IS padded with spaces (" %s "), so separator width is width + 2.
-               (data-segments
-                (mapcar (lambda (w) (make-string (+ w 2) ?─)) data-widths)))
-          ;; The final string is built from these segments.
-          (concat left row-header-segment mid (string-join data-segments mid) right))
-      ;; This part is for tables without row headers.
-      (let ((segments
-             (mapcar (lambda (w) (make-string (+ w 2) ?─)) widths)))
-        (concat left (string-join segments mid) right)))))
+(defun grid-table--display-line-count (lines)
+  "Return the height contribution of display LINES."
+  (if (and (= (length lines) 1) (string= (car lines) ""))
+      0
+    (length lines)))
 
+(defun grid-table--cell-properties
+    (top left bottom right slice-row slice-col)
+  "Return text properties for a rendered cell slice.
+Columns are display coordinates, including the row-header column."
+  (list 'grid-cell t
+        'grid-display-row-idx top
+        'grid-display-col-idx left
+        'grid-display-col-end-idx right
+        'grid-display-row-start top
+        'grid-display-row-end bottom
+        'grid-display-col-start left
+        'grid-display-col-end right
+        'grid-display-anchor-row top
+        'grid-display-anchor-col left
+        'grid-display-slice-row slice-row
+        'grid-display-slice-col slice-col))
 
+(defun grid-table--draw-column-header-row
+    (headers widths row-header-width)
+  "Draw the single ABC header row."
+  (let ((row grid-table--col-header-row-idx))
+    (format
+     "│%s│%s│"
+     (apply #'propertize
+            (make-string row-header-width ?\s)
+            (grid-table--cell-properties row 0 row 0 row 0))
+     (string-join
+      (cl-loop for header in headers
+               for width in widths
+               for col from 1
+               collect
+               (apply #'propertize
+                      (format " %s "
+                              (grid-table--pad-string header width))
+                      (grid-table--cell-properties
+                       row col row col row col)))
+      "│"))))
+
+(defun grid-table--build-layout (rows widths merges)
+  "Build the cached row layout for ROWS, WIDTHS, and MERGES.
+WIDTHS excludes the row-header width."
+  (let* ((row-count (length rows))
+         (base-heights (make-vector row-count 1))
+         (extras (make-vector row-count 0))
+         (nodes (make-hash-table :test #'equal)))
+    (dotimes (row row-count)
+      (dotimes (col (length widths))
+        (let ((merge (grid-table--merge-at merges row col)))
+          (when (or (null merge)
+                    (and (= row (nth 0 merge))
+                         (= col (nth 1 merge))))
+            (let* ((top (if merge (nth 0 merge) row))
+                   (left (if merge (nth 1 merge) col))
+                   (bottom (if merge (nth 2 merge) row))
+                   (right (if merge (nth 3 merge) col))
+                   (span-width
+                    (+ (apply #'+ (cl-subseq widths left (1+ right)))
+                       (* 3 (- right left))))
+                   (lines (grid-table--cell-lines
+                           (nth col (nth row rows)) span-width))
+                   (node (list :top top :left left
+                               :bottom bottom :right right
+                               :width span-width :lines lines)))
+              (puthash (cons top left) node nodes)
+              (when (= top bottom)
+                (aset base-heights row
+                      (max (aref base-heights row)
+                           (grid-table--display-line-count lines)))))))))
+    ;; All proposals read the same base heights; only the per-row max is kept.
+    (maphash
+     (lambda (_key node)
+       (let ((top (plist-get node :top))
+             (bottom (plist-get node :bottom)))
+         (when (< top bottom)
+           (let* ((span (1+ (- bottom top)))
+                  (required (grid-table--display-line-count
+                             (plist-get node :lines)))
+                  (base-total
+                   (cl-loop for row from top to bottom
+                            sum (aref base-heights row)))
+                  (deficit (max 0 (- required base-total)))
+                  (share (/ deficit span))
+                  (remainder (% deficit span)))
+             (cl-loop for row from top to bottom
+                      for offset from 0
+                      for proposal = (+ share (if (< offset remainder) 1 0))
+                      do (aset extras row
+                               (max (aref extras row) proposal)))))))
+     nodes)
+    (let ((heights (make-vector row-count 1)))
+      (dotimes (row row-count)
+        (aset heights row
+              (+ (aref base-heights row) (aref extras row))))
+      (maphash
+       (lambda (key node)
+         (when (< (plist-get node :top) (plist-get node :bottom))
+           (let* ((height
+                   (cl-loop for row from (plist-get node :top)
+                            to (plist-get node :bottom)
+                            sum (aref heights row)))
+                  (padding
+                   (/ (- height
+                         (grid-table--display-line-count
+                          (plist-get node :lines)))
+                      2)))
+             (puthash key (plist-put node :top-padding padding) nodes))))
+       nodes)
+      (list :rows rows :widths widths :merges merges
+            :heights heights :nodes nodes))))
+
+(defun grid-table--layout-node-at (layout row col)
+  "Return the layout node covering ROW and COL."
+  (let* ((merge (grid-table--merge-at (plist-get layout :merges) row col))
+         (key (if merge
+                  (cons (nth 0 merge) (nth 1 merge))
+                (cons row col))))
+    (gethash key (plist-get layout :nodes))))
+
+(defun grid-table--vertical-line-at (layout node row line)
+  "Return NODE content for ROW and physical LINE in LAYOUT."
+  (let* ((heights (plist-get layout :heights))
+         (offset
+          (+ (cl-loop for prior from (plist-get node :top) below row
+                      sum (aref heights prior))
+             line))
+         (content-index (- offset (or (plist-get node :top-padding) 0))))
+    (when (>= content-index 0)
+      (nth content-index (plist-get node :lines)))))
+
+(defun grid-table--draw-layout-row (layout row row-header-width)
+  "Draw logical ROW from LAYOUT."
+  (let* ((widths (plist-get layout :widths))
+         (height (aref (plist-get layout :heights) row))
+         lines)
+    (dotimes (line height)
+      (let ((col 0)
+            parts)
+        (while (< col (length widths))
+          (let* ((node (grid-table--layout-node-at layout row col))
+                 (left (plist-get node :left))
+                 (right (plist-get node :right))
+                 (vertical (< (plist-get node :top)
+                              (plist-get node :bottom)))
+                 (content
+                  (or (if vertical
+                          (grid-table--vertical-line-at
+                           layout node row line)
+                        (nth line (plist-get node :lines)))
+                      ""))
+                 (padded
+                  (grid-table--pad-string content (plist-get node :width)))
+                 (display-left (1+ left))
+                 (display-right (1+ right)))
+            (push
+             (apply #'propertize
+                    (format " %s " padded)
+                    (grid-table--cell-properties
+                     (plist-get node :top) display-left
+                     (plist-get node :bottom) display-right
+                     row display-left))
+             parts)
+            (setq col (1+ right))))
+        (let* ((header (if (= line 0)
+                           (number-to-string (1+ row))
+                         " "))
+               (header-text
+                (apply #'propertize
+                       (grid-table--pad-string header row-header-width)
+                       (grid-table--cell-properties
+                        row 0 row 0 row 0))))
+          (push (format "│%s│%s│"
+                        header-text
+                        (string-join (nreverse parts) "│"))
+                lines))))
+    (string-join (nreverse lines) "\n")))
+
+(defun grid-table--vertical-edge-p (merges row boundary column-count)
+  "Return non-nil when ROW has a vertical edge at full-grid BOUNDARY."
+  (or (= boundary 0)
+      (= boundary 1)
+      (= boundary (1+ column-count))
+      (let ((data-boundary (1- boundary)))
+        (not
+         (cl-some
+          (lambda (merge)
+            (and (= row (nth 0 merge))
+                 (= row (nth 2 merge))
+                 (< (nth 1 merge) data-boundary)
+                 (<= data-boundary (nth 3 merge))))
+          merges)))))
+
+(defun grid-table--vertical-merge-across-boundary (merges upper-row col)
+  "Return a vertical merge spanning below UPPER-ROW at COL."
+  (cl-find-if
+   (lambda (merge)
+     (and (= (nth 1 merge) (nth 3 merge))
+          (= col (nth 1 merge))
+          (<= (nth 0 merge) upper-row)
+          (< upper-row (nth 2 merge))))
+   merges))
+
+(defun grid-table--junction-char (up down left right)
+  "Return the Unicode junction for the four incident edge booleans."
+  (cond
+   ((and up down left right) "┼")
+   ((and up down left) "┤")
+   ((and up down right) "├")
+   ((and up left right) "┴")
+   ((and down left right) "┬")
+   ((and up right) "└")
+   ((and up left) "┘")
+   ((and down right) "┌")
+   ((and down left) "┐")
+   ((or up down) "│")
+   ((or left right) "─")
+   (t " ")))
+
+(defun grid-table--draw-layout-separator
+    (widths merges upper-row lower-row)
+  "Draw the separator between UPPER-ROW and LOWER-ROW.
+Nil denotes the outside of the table; row -1 is the ABC header."
+  (let* ((column-count (1- (length widths)))
+         (segments
+          (cl-loop for slot from 0 below (length widths)
+                   collect
+                   (if (= slot 0)
+                       (list t nil)
+                     (let ((vertical
+                            (and (integerp upper-row)
+                                 (>= upper-row 0)
+                                 (integerp lower-row)
+                                 (= lower-row (1+ upper-row))
+                                 (grid-table--vertical-merge-across-boundary
+                                  merges upper-row (1- slot)))))
+                       (list (not vertical) vertical)))))
+         result)
+    (cl-loop
+     for boundary from 0 to (length widths) do
+     (let* ((up (and (integerp upper-row)
+                     (grid-table--vertical-edge-p
+                      merges upper-row boundary column-count)))
+            (down (and (integerp lower-row)
+                       (grid-table--vertical-edge-p
+                        merges lower-row boundary column-count)))
+            (left (and (> boundary 0)
+                       (car (nth (1- boundary) segments))))
+            (right (and (< boundary (length widths))
+                        (car (nth boundary segments)))))
+       (setq result
+             (concat result
+                     (grid-table--junction-char up down left right))))
+     (when (< boundary (length widths))
+       (let* ((slot-width (+ (nth boundary widths)
+                             (if (= boundary 0) 0 2)))
+              (segment (nth boundary segments))
+              (draw (car segment))
+              (vertical (cadr segment))
+              (text (make-string slot-width (if draw ?─ ?\s))))
+         (when vertical
+           (let ((display-col boundary))
+             (setq text
+                   (apply #'propertize text
+                          (grid-table--cell-properties
+                           (nth 0 vertical) display-col
+                           (nth 2 vertical) display-col
+                           upper-row display-col)))))
+         (setq result (concat result text)))))
+    result))
+
+(defun grid-table--parse-cell-address (address)
+  "Parse ADDRESS into zero-based (ROW COL), or return nil."
+  (when (string-match "\\`\\([A-Za-z]+\\)\\([1-9][0-9]*\\)\\'" address)
+    (list (1- (string-to-number (match-string 2 address)))
+          (grid-calc-col-letter-to-number (match-string 1 address)))))
+
+;;;###autoload
+(defun grid-table-merge-cells (range)
+  "Merge a horizontal or vertical A1-style RANGE."
+  (interactive (list (read-string "Merge range (e.g. B1:D1 or B2:B9): ")))
+  (let* ((parts (split-string range ":" t "[[:space:]]*"))
+         (start (and (= (length parts) 2)
+                     (grid-table--parse-cell-address (car parts))))
+         (end (and start
+                   (grid-table--parse-cell-address (cadr parts)))))
+    (unless (and start end
+                 (xor (= (car start) (car end))
+                      (= (cadr start) (cadr end))))
+      (user-error "Merge range must span exactly one row or one column"))
+    (let* ((top (min (car start) (car end)))
+           (left (min (cadr start) (cadr end)))
+           (bottom (max (car start) (car end)))
+           (right (max (cadr start) (cadr end))))
+      (setq-local grid-table--data-source
+                  (grid-merge-cells grid-table--data-source
+                                    top left bottom right))
+      (grid-table-refresh top (1+ left))
+      (message "Merged %s." range))))
+
+;;;###autoload
+(defun grid-table-unmerge-cell ()
+  "Unmerge the merged cell at point."
+  (interactive)
+  (when-let* ((coords (grid-table-get-cell-at-point))
+              (row (plist-get coords :anchor-row))
+              (display-col (plist-get coords :anchor-col)))
+    (when (or (= row grid-table--col-header-row-idx)
+              (= display-col grid-table--row-header-col-idx))
+      (user-error "Place point on a data cell"))
+    (unless (or (/= (plist-get coords :row-start)
+                    (plist-get coords :row-end))
+                (/= (plist-get coords :col-start)
+                    (plist-get coords :col-end)))
+      (user-error "Cell is not merged"))
+    (setq-local grid-table--data-source
+                (grid-unmerge-cell grid-table--data-source
+                                   row (1- display-col)))
+    (grid-table-refresh row display-col)
+    (message "Cell unmerged.")))
 
 (defun grid-table-edit-cell ()
   "Edit the value of the current cell."
   (interactive)
   (let ((inhibit-read-only t))
     (when-let* ((coords (grid-table-get-cell-at-point))
-                (display-row-idx (plist-get coords :display-row-idx))
-                (display-col-idx (plist-get coords :display-col-idx)))
+                (display-row-idx (plist-get coords :anchor-row))
+                (display-col-idx (plist-get coords :anchor-col)))
       (cond
        ((= display-col-idx grid-table--row-header-col-idx) ; Editing row header (1, 2, 3...)
         (message "Cannot edit row header (1, 2, 3...) column."))
@@ -466,7 +823,13 @@ HAS-ROW-HEADER indicates if this separator should include a row header column."
                ;; Data model row index is the same as display row index for data rows.
                ;; Data model col index is display col index - 1 (for row header).
                (current-value (funcall get-raw-fn grid-table--data-source display-row-idx (1- display-col-idx)))
-               (new-value (read-string (format "New value for %s%s: " (grid-table--col-number-to-letter (1- display-col-idx)) (1+ display-row-idx)) current-value)) ; Excel style R/C
+               (new-value
+                (read-from-minibuffer
+                 (format "New value for %s%s (M-RET inserts newline): "
+                         (grid-table--col-number-to-letter
+                          (1- display-col-idx))
+                         (1+ display-row-idx))
+                 current-value grid-table-cell-edit-map))
                (modified-cell (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) new-value)))
           (when modified-cell ; Only redraw if a cell was actually modified
             (grid-table-refresh) ; Full refresh is simpler and safer for now
@@ -507,7 +870,7 @@ Prompts for sort direction (ascending/descending)."
   (interactive)
   (when grid-table--data-source
     (let* ((coords (grid-table-get-cell-at-point))
-           (current-col (if coords (plist-get coords :display-col-idx) 1)) ; Default to first data column
+           (current-col (if coords (plist-get coords :anchor-col) 1))
            (col-idx (if (and coords (> current-col 0)) ; Skip row header column
                        (1- current-col) ; Adjust for row header column
                      (read-number "Sort by column (0-based index): " 0)))
@@ -516,8 +879,12 @@ Prompts for sort direction (ascending/descending)."
            (sort-fn (gethash :sort-by-column grid-table--data-source)))
       (when sort-fn
         (let* ((current-coords (grid-table-get-cell-at-point))
-               (restore-row-idx (when current-coords (plist-get current-coords :display-row-idx)))
-               (restore-col-idx (when current-coords (plist-get current-coords :display-col-idx)))
+               (restore-row-idx
+                (when current-coords
+                  (plist-get current-coords :slice-row)))
+               (restore-col-idx
+                (when current-coords
+                  (plist-get current-coords :slice-col)))
                (new-data-source (funcall sort-fn grid-table--data-source col-idx sort-order)))
           (setq-local grid-table--data-source new-data-source)
           (grid-table-refresh restore-row-idx restore-col-idx) ; Force full refresh to display sorted results
@@ -543,109 +910,121 @@ Prompts for sort direction (ascending/descending)."
   "Add a new row at ROW-IDX, or at the end if ROW-IDX is nil.
 If called interactively, adds a row below the current cell."
   (interactive (list (when-let ((coords (grid-table-get-cell-at-point)))
-                       (plist-get coords :display-row-idx))))
+                       (plist-get coords :slice-row))))
   (when grid-table--data-source
-    ;; Validate row-idx before proceeding
-    (unless (and row-idx (numberp row-idx) (>= row-idx 0))
-      (message "Error: Invalid row index. Please place cursor on a valid table cell.")
-      (cl-return-from grid-table-add-row))
-    (let* ((current-coords (grid-table-get-cell-at-point))
-           (restore-row-idx (when current-coords (plist-get current-coords :display-row-idx)))
-           (restore-col-idx (when current-coords (plist-get current-coords :display-col-idx)))
-           (add-row-fn (gethash :add-row grid-table--data-source))
-           (data-model-row-idx row-idx) ; row-idx is already correct (0-based data row index)
-           (new-data-source (funcall add-row-fn grid-table--data-source data-model-row-idx)))
-      (setq-local grid-table--data-source new-data-source)
-      (grid-table-refresh restore-row-idx restore-col-idx)
-      (message "Row added."))))
+    (cl-block grid-table-add-row
+      ;; Validate row-idx before proceeding
+      (unless (and row-idx (numberp row-idx) (>= row-idx 0))
+        (message "Error: Invalid row index. Please place cursor on a valid table cell.")
+        (cl-return-from grid-table-add-row))
+      (let* ((current-coords (grid-table-get-cell-at-point))
+             (restore-row-idx
+              (when current-coords (plist-get current-coords :slice-row)))
+             (restore-col-idx
+              (when current-coords (plist-get current-coords :slice-col)))
+             (add-row-fn (gethash :add-row grid-table--data-source))
+             (data-model-row-idx row-idx) ; row-idx is already correct (0-based data row index)
+             (new-data-source (funcall add-row-fn grid-table--data-source data-model-row-idx)))
+        (setq-local grid-table--data-source new-data-source)
+        (grid-table-refresh restore-row-idx restore-col-idx)
+        (message "Row added.")))))
 
 (defun grid-table-delete-row (&optional row-idx)
   "Delete the row at ROW-IDX.
 If called interactively, deletes the current row."
   (interactive (list (when-let ((coords (grid-table-get-cell-at-point)))
-                       (plist-get coords :display-row-idx))))
+                       (plist-get coords :slice-row))))
   (when grid-table--data-source
-    ;; Validate row-idx before proceeding
-    (unless (and row-idx (numberp row-idx) (>= row-idx 0))
-      (message "Error: Invalid row index. Please place cursor on a valid table cell.")
-      (cl-return-from grid-table-delete-row))
-    ;; Row index 0 is the user-defined header row, not allowed to be deleted
-    (when (= row-idx 0)
-      (message "Cannot delete header row.")
-      (cl-return-from grid-table-delete-row))
-    (let* ((current-coords (grid-table-get-cell-at-point))
-           (restore-row-idx (when current-coords (plist-get current-coords :display-row-idx)))
-           (restore-col-idx (when current-coords (plist-get current-coords :display-col-idx)))
-           ;; Convert display row index to data area (excluding header): data row index = display row index - 1
-           (data-model-row-idx (1- row-idx)))
-      (condition-case err
-          (let* ((delete-row-fn (gethash :delete-row grid-table--data-source))
-                 (new-data-source (funcall delete-row-fn grid-table--data-source data-model-row-idx)))
-            (setq-local grid-table--data-source new-data-source)
-            ;; After deletion, calculate a safe recovery position to avoid the cursor falling outside the table (especially when deleting the last row)
-            (let* ((get-row-count-fn (gethash :get-row-count grid-table--data-source))
-                   (get-col-count-fn (gethash :get-column-count grid-table--data-source))
-                   (new-num-rows (funcall get-row-count-fn grid-table--data-source))
-                   (new-num-cols (funcall get-col-count-fn grid-table--data-source))
-                   ;; Display layer row index range: [0 .. new-num-rows-1]
-                   (safe-row (max 0 (min (or restore-row-idx 0) (1- new-num-rows))))
-                   ;; Display layer column index range: [0 .. new-num-cols] (including row header column 0)
-                   (safe-col (max 0 (min (or restore-col-idx 0) new-num-cols))))
-              (grid-table-refresh safe-row safe-col))
-            (message "Row deleted."))
-        (error (message "Error deleting row: %s" (error-message-string err)))))))
+    (cl-block grid-table-delete-row
+      ;; Validate row-idx before proceeding
+      (unless (and row-idx (numberp row-idx) (>= row-idx 0))
+        (message "Error: Invalid row index. Please place cursor on a valid table cell.")
+        (cl-return-from grid-table-delete-row))
+      ;; Row index 0 is the user-defined header row, not allowed to be deleted
+      (when (= row-idx 0)
+        (message "Cannot delete header row.")
+        (cl-return-from grid-table-delete-row))
+      (let* ((current-coords (grid-table-get-cell-at-point))
+             (restore-row-idx
+              (when current-coords (plist-get current-coords :slice-row)))
+             (restore-col-idx
+              (when current-coords (plist-get current-coords :slice-col)))
+             ;; Convert display row index to data area (excluding header): data row index = display row index - 1
+             (data-model-row-idx (1- row-idx)))
+        (condition-case err
+            (let* ((delete-row-fn (gethash :delete-row grid-table--data-source))
+                   (new-data-source (funcall delete-row-fn grid-table--data-source data-model-row-idx)))
+              (setq-local grid-table--data-source new-data-source)
+              ;; After deletion, calculate a safe recovery position to avoid the cursor falling outside the table (especially when deleting the last row)
+              (let* ((get-row-count-fn (gethash :get-row-count grid-table--data-source))
+                     (get-col-count-fn (gethash :get-column-count grid-table--data-source))
+                     (new-num-rows (funcall get-row-count-fn grid-table--data-source))
+                     (new-num-cols (funcall get-col-count-fn grid-table--data-source))
+                     ;; Display layer row index range: [0 .. new-num-rows-1]
+                     (safe-row (max 0 (min (or restore-row-idx 0) (1- new-num-rows))))
+                     ;; Display layer column index range: [0 .. new-num-cols] (including row header column 0)
+                     (safe-col (max 0 (min (or restore-col-idx 0) new-num-cols))))
+                (grid-table-refresh safe-row safe-col))
+              (message "Row deleted."))
+          (error (message "Error deleting row: %s" (error-message-string err))))))))
 
 (defun grid-table-add-column (&optional col-idx)
   "Add a new column at COL-IDX, or at the end if COL-IDX is nil.
 If called interactively, adds a column to the right of the current cell."
   (interactive (list (when-let ((coords (grid-table-get-cell-at-point)))
-                       (plist-get coords :display-col-idx))))
+                       (plist-get coords :slice-col))))
   (when grid-table--data-source
-    ;; Validate col-idx before proceeding
-    (unless (and col-idx (numberp col-idx) (>= col-idx 0))
-      (message "Error: Invalid column index. Please place cursor on a valid table cell.")
-      (cl-return-from grid-table-add-column))
-    (let* ((current-coords (grid-table-get-cell-at-point))
-           (restore-row-idx (when current-coords (plist-get current-coords :display-row-idx)))
-           (restore-col-idx (when current-coords (plist-get current-coords :display-col-idx)))
-           ;; To insert to the right of the current column, the new column should appear after the current data column.
-           ;; grid-model-add-column inserts the new column before the given index (left).
-           ;; Therefore we pass the display index (including header 0), which is equivalent to (data-col-index + 1).
-           ;; This ensures insertion to the right of the current data column.
-           (insertion-col-idx col-idx))
-      (let* ((add-column-fn (gethash :add-column grid-table--data-source))
-             (new-data-source (funcall add-column-fn grid-table--data-source insertion-col-idx)))
-        (setq-local grid-table--data-source new-data-source)
-        (grid-table-refresh restore-row-idx restore-col-idx)
-        (message "Column added.")))))
+    (cl-block grid-table-add-column
+      ;; Validate col-idx before proceeding
+      (unless (and col-idx (numberp col-idx) (>= col-idx 0))
+        (message "Error: Invalid column index. Please place cursor on a valid table cell.")
+        (cl-return-from grid-table-add-column))
+      (let* ((current-coords (grid-table-get-cell-at-point))
+             (restore-row-idx
+              (when current-coords (plist-get current-coords :slice-row)))
+             (restore-col-idx
+              (when current-coords (plist-get current-coords :slice-col)))
+             ;; To insert to the right of the current column, the new column should appear after the current data column.
+             ;; grid-model-add-column inserts the new column before the given index (left).
+             ;; Therefore we pass the display index (including header 0), which is equivalent to (data-col-index + 1).
+             ;; This ensures insertion to the right of the current data column.
+             (insertion-col-idx col-idx))
+        (let* ((add-column-fn (gethash :add-column grid-table--data-source))
+               (new-data-source (funcall add-column-fn grid-table--data-source insertion-col-idx)))
+          (setq-local grid-table--data-source new-data-source)
+          (grid-table-refresh restore-row-idx restore-col-idx)
+          (message "Column added."))))))
 
 (defun grid-table-delete-column (&optional col-idx)
   "Delete the column at COL-IDX.
 If called interactively, deletes the current column."
   (interactive (list (when-let ((coords (grid-table-get-cell-at-point)))
-                       (plist-get coords :display-col-idx))))
+                       (plist-get coords :slice-col))))
   (when grid-table--data-source
-    ;; Validate col-idx before proceeding
-    (unless (and col-idx (numberp col-idx) (>= col-idx 0))
-      (message "Error: Invalid column index. Please place cursor on a valid table cell.")
-      (cl-return-from grid-table-delete-column))
-    (let* ((current-coords (grid-table-get-cell-at-point))
-           (restore-row-idx (when current-coords (plist-get current-coords :display-row-idx)))
-           (restore-col-idx (when current-coords (plist-get current-coords :display-col-idx)))
-           (data-model-col-idx (1- col-idx))) ; display col 1 = data col 0, display col 2 = data col 1, etc.
-      (condition-case err
-          (let* ((delete-column-fn (gethash :delete-column grid-table--data-source))
-                 (new-data-source (funcall delete-column-fn grid-table--data-source data-model-col-idx)))
-            (setq-local grid-table--data-source new-data-source)
-            (grid-table-refresh restore-row-idx restore-col-idx)
-            (message "Column deleted."))
-        (error (message "Error deleting column: %s" (error-message-string err)))))))
+    (cl-block grid-table-delete-column
+      ;; Validate col-idx before proceeding
+      (unless (and col-idx (numberp col-idx) (>= col-idx 0))
+        (message "Error: Invalid column index. Please place cursor on a valid table cell.")
+        (cl-return-from grid-table-delete-column))
+      (let* ((current-coords (grid-table-get-cell-at-point))
+             (restore-row-idx
+              (when current-coords (plist-get current-coords :slice-row)))
+             (restore-col-idx
+              (when current-coords (plist-get current-coords :slice-col)))
+             (data-model-col-idx (1- col-idx))) ; display col 1 = data col 0, display col 2 = data col 1, etc.
+        (condition-case err
+            (let* ((delete-column-fn (gethash :delete-column grid-table--data-source))
+                   (new-data-source (funcall delete-column-fn grid-table--data-source data-model-col-idx)))
+              (setq-local grid-table--data-source new-data-source)
+              (grid-table-refresh restore-row-idx restore-col-idx)
+              (message "Column deleted."))
+          (error (message "Error deleting column: %s" (error-message-string err))))))))
 
 (defun grid-table-insert-row-above ()
   "Insert a new row above the current row."
   (interactive)
   (when-let ((coords (grid-table-get-cell-at-point)))
-    (grid-table-add-row (plist-get coords :display-row-idx))))
+    (grid-table-add-row (plist-get coords :slice-row))))
 
 (defun grid-table-insert-column-left ()
   "Insert a new column to the left of the current column."
@@ -653,7 +1032,7 @@ If called interactively, deletes the current column."
   (when-let ((coords (grid-table-get-cell-at-point)))
     ;; To insert to the left of the current column, reuse the implementation of "insert to the right":
     ;; Pass (display-col-idx - 1), which is equivalent to the left of the current column.
-    (let* ((display-col (plist-get coords :display-col-idx))
+    (let* ((display-col (plist-get coords :slice-col))
            (target (max 0 (1- display-col))))
       (grid-table-add-column target))))
 
@@ -711,48 +1090,6 @@ If called interactively, deletes the current column."
 ;; Main Functions & Mode Definition
 ;;----------------------------------------------------------------------
 
-(defun grid-table--redraw-cells (cells)
-  "Redraw a list of CELLS that have been updated."
-  (let ((inhibit-read-only t)
-        (rows-to-redraw (make-hash-table)))
-    ;; 1. Identify which rows need redrawing
-    (dolist (cell cells)
-      (puthash (grid-cell-row cell) t rows-to-redraw))
-    ;; 2. Redraw each affected row
-    (maphash
-     (lambda (row-idx _)
-       (let* ((get-col-count-fn (gethash :get-column-count grid-table--data-source))
-              (get-row-count-fn (gethash :get-row-count grid-table--data-source))
-              (get-computed-fn (gethash :get-computed-value-at grid-table--data-source))
-              (get-header-fn (gethash :get-header-value grid-table--data-source))
-              (num-cols (funcall get-col-count-fn grid-table--data-source))
-              (num-rows (funcall get-row-count-fn grid-table--data-source))
-              (row-values (cl-loop for c from 0 below num-cols
-                                   collect (funcall get-computed-fn grid-table--data-source row-idx c))) ; Direct call to grid-model-get-computed-value
-              (headers (cl-loop for c from 0 below num-cols
-                                collect (funcall get-header-fn grid-table--data-source c)))
-              ;; For column width calculation, we still need all rows' computed values
-              (all-rows (cl-loop for r from 0 below num-rows
-                                 collect (cl-loop for c from 0 below num-cols
-                                                  collect (funcall get-computed-fn grid-table--data-source r c)))) ; Direct call to grid-model-get-computed-value
-              (widths (grid-table--calculate-column-widths headers all-rows))
-              (new-row-content (grid-table--draw-row row-values widths row-idx))
-              (bounds (grid-table--get-row-bounds row-idx)))
-         (when bounds
-           (delete-region (car bounds) (cdr bounds))
-           (goto-char (car bounds))
-           (insert new-row-content))))
-     rows-to-redraw)
-  (redisplay))) ; Force redisplay after changes
-
-(defun grid-table--get-row-bounds (row-idx)
-  "Get the start and end positions of a given ROW-IDX."
-  (save-excursion
-    (when (grid-table--move-to-cell row-idx 0)
-      (let ((start (line-beginning-position))
-            (end (line-end-position)))
-        (cons start end)))))
-
 (defun grid-table--insert-table-from-data-source ()
   "Insert a grid table into the current buffer from `grid-table--data-source`."
   (let* ((get-col-count-fn (gethash :get-column-count grid-table--data-source))
@@ -761,38 +1098,39 @@ If called interactively, deletes the current column."
          (get-header-fn (gethash :get-header-value grid-table--data-source))
          (num-rows (funcall get-row-count-fn grid-table--data-source))
          (num-cols (funcall get-col-count-fn grid-table--data-source))
+         (merges (grid-get-merges grid-table--data-source))
          (headers (cl-loop for c from 0 below num-cols
                            collect (funcall get-header-fn grid-table--data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
                             collect (cl-loop for c from 0 below num-cols ; Data model rows are 0-indexed
                                              collect (funcall get-computed-fn grid-table--data-source r c))))
-         (widths (grid-table--calculate-column-widths headers all-rows))
+         (data-widths
+          (grid-table--calculate-column-widths headers all-rows merges))
          (col-header-data (cl-loop for c from 0 below num-cols
                                    collect (grid-table--col-number-to-letter c))))
-
-    ;; Prepend width for row header column.
-    ;; Use let* because the calculation of `row-header-width` depends on `max-row-number-width`.
     (let* ((max-row-number-width (string-width (number-to-string num-rows)))
-           (row-header-width (max 3 (+ 1 max-row-number-width)))) ; Add 1 for padding, ensure min width of 3
-      (setq widths (cons row-header-width widths)))
-
-    ;; Draw A, B, C... column headers
-    (insert (grid-table--draw-separator widths "┌" "┬" "┐" t) "\n") ; Top border, 't' for row header
-    (insert (grid-table--draw-row col-header-data widths grid-table--col-header-row-idx) "\n") ; A, B, C... row, special row_idx
-    (insert (grid-table--draw-separator widths "├" "┼" "┤" t) "\n") ; Separator below A, B, C..., 't' for row header
-
-    ;; Draw user-defined headers (now the first data row) and subsequent data rows
-    (cl-loop for r from 0 below num-rows do
-             (let ((row-data (nth r all-rows)))
-               ;; r is the data model row index, which is also the display row index for data rows
-               ;; (since A,B,C header is -1, and user-defined header is 0)
-               (insert (grid-table--draw-row row-data widths r))
-               (unless (= r (1- num-rows)) ; Don't draw separator after the last row
-                 (insert "\n" (grid-table--draw-separator widths "├" "┼" "┤" t))) ; 't' for row header
-               (insert "\n")))
-
-    (insert (grid-table--draw-separator widths "└" "┴" "┘" t) "\n") ; Bottom border, 't' for row header
-    ))
+           (row-header-width (max 3 (+ 1 max-row-number-width)))
+           (widths (cons row-header-width data-widths))
+           (layout (grid-table--build-layout
+                    all-rows data-widths merges)))
+      (insert (grid-table--draw-layout-separator
+               widths merges nil grid-table--col-header-row-idx)
+              "\n"
+              (grid-table--draw-column-header-row
+               col-header-data data-widths row-header-width)
+              "\n"
+              (grid-table--draw-layout-separator
+               widths merges grid-table--col-header-row-idx
+               (and (> num-rows 0) 0))
+              "\n")
+      (cl-loop for row from 0 below num-rows do
+               (insert (grid-table--draw-layout-row
+                        layout row row-header-width)
+                       "\n"
+                       (grid-table--draw-layout-separator
+                        widths merges row
+                        (and (< row (1- num-rows)) (1+ row)))
+                       "\n")))))
 
 (defun grid-table--show-grid-in-current-buffer (data-source &optional title)
   "Display the grid table in the current buffer.
@@ -825,19 +1163,31 @@ TITLE is an optional title for the grid."
       (grid-table--show-grid-in-current-buffer data-source))
     (switch-to-buffer buffer)))
 
-(defun grid-table-refresh ()
-  "Refresh the current grid table."
+(defun grid-table-refresh (&optional restore-row-idx restore-col-idx)
+  "Refresh the table, restoring point to RESTORE-ROW-IDX and RESTORE-COL-IDX."
   (interactive)
   (let* ((inhibit-read-only t)
          (restore-coords (grid-table-get-cell-at-point))
-         (restore-row-idx (plist-get restore-coords :display-row-idx))
-         (restore-col-idx (plist-get restore-coords :display-col-idx)))
+         (restore-row-idx (or restore-row-idx
+                              (plist-get restore-coords :slice-row)
+                              grid-table--nav-row))
+         (restore-col-idx (or restore-col-idx
+                              (plist-get restore-coords :slice-col)
+                              grid-table--nav-col)))
     (when (and grid-table--data-source (current-buffer))
-      (when (and (called-interactively-p 'interactive) (not restore-row-idx) (not restore-col-idx))
-        (let ((current-coords (grid-table-get-cell-at-point)))
-          (when current-coords
-            (setq restore-row-idx (plist-get current-coords :display-row-idx))
-            (setq restore-col-idx (plist-get current-coords :display-col-idx)))))
+      (let ((num-rows (grid-get-row-count grid-table--data-source))
+            (num-cols (grid-get-column-count grid-table--data-source)))
+        (when restore-row-idx
+          (setq restore-row-idx
+                (if (= restore-row-idx grid-table--col-header-row-idx)
+                    restore-row-idx
+                  (max 0 (min restore-row-idx (1- num-rows))))))
+        (when restore-col-idx
+          (setq restore-col-idx (max 0 (min restore-col-idx num-cols))))
+        (when grid-table--nav-row
+          (setq grid-table--nav-row restore-row-idx))
+        (when grid-table--nav-col
+          (setq grid-table--nav-col restore-col-idx)))
       (erase-buffer)
       (when-let ((title-content (grid-table--render-title-line grid-table--data-source)))
         (insert title-content))
@@ -888,13 +1238,17 @@ skipping regions with a `display' property (like images)."
     (define-key map (kbd "C-c C-w") 'grid-table-write-file)
     (define-key map (kbd "C-c C-f") 'grid-table-find-file)
     (define-key map (kbd "C-c s") 'grid-table-sort-column) ; New keybinding for sorting
+    (define-key map (kbd "C-c m") 'grid-table-merge-cells)
+    (define-key map (kbd "C-c u") 'grid-table-unmerge-cell)
      (define-key map (kbd "C-c v") 'grid-table-view-chart)
      (define-key map (kbd "C-c i") 'grid-table-insert-chart)
      ;; Horizontal scrolling and navigation
      (define-key map (kbd "C-x <") 'scroll-left)
      (define-key map (kbd "C-x >") 'scroll-right)
-     (define-key map (kbd "<right>") 'forward-char)
-     (define-key map (kbd "<left>") 'backward-char)
+     (define-key map (kbd "<right>") 'grid-table-cell-right)
+     (define-key map (kbd "<left>") 'grid-table-cell-left)
+     (define-key map (kbd "<down>") 'grid-table-next-line)
+     (define-key map (kbd "<up>") 'grid-table-previous-line)
      (define-key map (kbd "C-f") 'forward-char)
      (define-key map (kbd "C-b") 'backward-char)
      (define-key map (kbd "C-a") 'grid-table-move-beginning-of-line)
@@ -922,8 +1276,8 @@ skipping regions with a `display' property (like images)."
   "View the chart in the current cell in a separate buffer."
   (interactive)
   (when-let* ((coords (grid-table-get-cell-at-point))
-              (row (plist-get coords :display-row-idx))
-              (col (plist-get coords :display-col-idx))
+              (row (plist-get coords :anchor-row))
+              (col (plist-get coords :anchor-col))
               ;; Adjust col for data source (0-based data cols start at display col 1)
               (data-col (1- col))
               (val (grid-get-computed-value-at grid-table--data-source row data-col)))
@@ -1002,8 +1356,8 @@ skipping regions with a `display' property (like images)."
 (defun grid-table-edit-cell-with-value (value)
   "Helper to set cell value directly."
   (when-let* ((coords (grid-table-get-cell-at-point))
-              (display-row-idx (plist-get coords :display-row-idx))
-              (display-col-idx (plist-get coords :display-col-idx)))
+              (display-row-idx (plist-get coords :anchor-row))
+              (display-col-idx (plist-get coords :anchor-col)))
     (let ((set-raw-fn (gethash :set-raw-value-at grid-table--data-source)))
       (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) value)
       (grid-table-refresh)
