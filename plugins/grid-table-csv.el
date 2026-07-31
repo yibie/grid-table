@@ -88,17 +88,7 @@
   "Open a CSV file in a grid-table view."
   (interactive "fFind CSV file: ")
   (when-let ((data-source (grid-table-csv-create-data-source file-path)))
-    (let ((headers (gethash :headers data-source))
-          (rows (gethash :model data-source)))
-      (let ((num-rows (grid-data-model-rows rows))
-            (num-cols (grid-data-model-cols rows))
-            (row-data '()))
-        (dotimes (r num-rows)
-          (let ((row '()))
-            (dotimes (c num-cols)
-              (push (grid-cell-raw-input (grid-model-get-cell rows r c)) row))
-            (push (nreverse row) row-data)))
-        (grid-table-api-create :data-source (make-default-data-source headers (nreverse row-data)))))))
+    (grid-table-api-create :data-source data-source)))
 
 (defun grid-table-csv-save (file-path)
   "Save the current grid-table data back to a CSV file."

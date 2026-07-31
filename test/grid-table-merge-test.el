@@ -253,6 +253,49 @@
             (should (string-match-p "^10,,$" (buffer-string)))))
       (delete-file file))))
 
+(ert-deftest grid-table-package-root-exposes-plugin-directory ()
+  (let* ((root (file-name-directory (locate-library "grid-table")))
+         (plugin-dir (expand-file-name "plugins" root))
+         (load-path (delete plugin-dir (copy-sequence load-path))))
+    (load (expand-file-name "grid-table.el" root) nil t)
+    (should (member plugin-dir load-path))
+    (should (locate-library "grid-table-csv"))))
+
+(ert-deftest grid-table-api-create-defaults-key-bindings ()
+  (let (bindings)
+    (cl-letf (((symbol-function 'grid-table--create-grid)
+               (lambda (_source _columns value _title _file-path)
+                 (setq bindings value))))
+      (grid-table-api-create :data-source (make-hash-table))
+      (should (equal bindings grid-table-default-bindings)))))
+
+(ert-deftest grid-table-match-defaults-to-exact-match ()
+  (should (= 2 (grid-calc-call-function nil "MATCH"
+                                        '("beta" ("alpha" "beta"))))))
+
+(ert-deftest grid-table-csv-open-preserves-csv-data-source ()
+  (let ((input (make-temp-file "grid-csv-input-" nil ".csv"))
+        (output (make-temp-file "grid-csv-output-" nil ".csv"))
+        source)
+    (unwind-protect
+        (progn
+          (with-temp-file input
+            (insert "name,amount\nalpha,10\nbeta,20\n"))
+          (cl-letf (((symbol-function 'grid-table-api-create)
+                     (lambda (&rest args)
+                       (setq source (plist-get args :data-source)))))
+            (grid-table-find-file-csv input))
+          (should (equal (gethash :file-path source) input))
+          (should (functionp (gethash :save-to-file source)))
+          (let ((grid-table--data-source source))
+            (grid-table-csv-save output))
+          (with-temp-buffer
+            (insert-file-contents output)
+            (should (equal (buffer-string)
+                           "name,amount\nalpha,10\nbeta,20\n"))))
+      (delete-file input)
+      (delete-file output))))
+
 ;;;----------------------------------------------------------------------
 ;;; Navigation regression tests (spec checklist, dev-note/merge-cells-spec.md)
 ;;;

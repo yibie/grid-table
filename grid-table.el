@@ -3,6 +3,13 @@
 
 (require 'cl-lib)
 (require 'cl-macs)
+
+(when-let* ((library-file (or load-file-name buffer-file-name))
+            (plugin-directory
+             (expand-file-name "plugins" (file-name-directory library-file)))
+            ((file-directory-p plugin-directory)))
+  (add-to-list 'load-path plugin-directory))
+
 (require 'grid-data-source)
 (require 'grid-data-model)
 (require 'grid-table-parser)

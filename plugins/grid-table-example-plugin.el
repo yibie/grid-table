@@ -1,7 +1,7 @@
 ;;; grid-table-example-plugin.el --- Example plugin for grid-table -*- lexical-binding: t -*-
 
-(require 'grid-table-plugins)
-(require 'grid-table-core)
+(require 'grid-table)
+(require 'grid-table-api)
 
 ;;;----------------------------------------------------------------------
 ;;; Example Plugin: Enhanced Text Rendering

@@ -78,7 +78,8 @@ Supported arguments:
   :file-path - Associated file path"
   (let* ((data-source (plist-get args :data-source))
          (columns (plist-get args :columns))
-         (key-bindings (plist-get args :key-bindings grid-table-default-bindings))
+         (key-bindings (or (plist-get args :key-bindings)
+                           grid-table-default-bindings))
          (plugins (plist-get args :plugins))
          (title (plist-get args :title))
          (file-path (plist-get args :file-path)))

@@ -600,9 +600,10 @@ Returns a list of (list-of-values . predicate-lambda)."
           (setq total (+ total (grid-calc-to-number (nth i sum_range)))))))
     total))
 
-(grid-calc-defun MATCH (lookup-value lookup-array &optional (match-type 0))
+(grid-calc-defun MATCH (lookup-value lookup-array &optional match-type)
   "Finds the position of a value in a single-row or single-column range.
 NOTE: Only exact match (match-type = 0) is currently implemented."
+  (setq match-type (or match-type 0))
   (when (/= match-type 0)
     (error "MATCH only supports exact match (match-type 0) at this time"))
   (let ((pos (cl-position lookup-value lookup-array :test #'equal)))
