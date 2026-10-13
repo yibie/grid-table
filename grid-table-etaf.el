@@ -1399,6 +1399,20 @@ TAB or the mouse, stores the text too."
     (setf (grid-table-etaf--state-undo state) undo
           (grid-table-etaf--state-redo state) nil)))
 
+(defun grid-table-etaf--as-one-step (state function)
+  "Call FUNCTION and fold the undo records it leaves on STATE into one.
+Return what FUNCTION returns."
+  (let* ((before (grid-table-etaf--state-undo state))
+         (value (funcall function))
+         (after (grid-table-etaf--state-undo state))
+         (added (cl-loop for tail on after until (eq tail before)
+                         collect (car tail))))
+    (when (cdr added)
+      (setf (grid-table-etaf--state-undo state) before)
+      ;; ADDED is newest first; a group replays oldest first.
+      (grid-table-etaf--record state (cons 'group (nreverse added))))
+    value))
+
 (defun grid-table-etaf--write-cells (state changes)
   "Store CHANGES, a list of (ROW COL VALUE), in STATE's data source.
 Return the list of (ROW COL OLD NEW) for the cells that changed.  Cells
@@ -1426,6 +1440,24 @@ Return the number of cells that changed."
     (grid-table-etaf--settle state)
     (length applied)))
 
+(defun grid-table-etaf--set-styles (state changes)
+  "Give cells their styles from CHANGES, a list of (ROW COL STYLE).
+The change is one undoable step in STATE.  Nothing happens when the data
+source stores no styles.  Return the number of cells that changed."
+  (let ((source (grid-table-etaf--source state))
+        applied)
+    (when (gethash :set-style-at source)
+      (pcase-dolist (`(,row ,col ,style) changes)
+        (let ((old (grid-get-style-at source row col)))
+          (unless (equal old style)
+            (grid-set-style-at source row col style)
+            (push (list row col old style) applied)))))
+    (when applied
+      (grid-table-etaf--record state (cons 'styles (nreverse applied)))
+      (grid-table-etaf--bump state)
+      (grid-table-etaf--settle state))
+    (length applied)))
+
 (defun grid-table-etaf--track-model (state)
   "Record a structural change of STATE's data source since the last look.
 Adding, deleting, sorting and merging replace the source's model, so the
@@ -1450,6 +1482,9 @@ shifts."
   "Apply undo RECORD to STATE: its new side when FORWARD, else its old side."
   (let ((source (grid-table-etaf--source state)))
     (pcase record
+      (`(group . ,records)
+       (dolist (part (if forward records (reverse records)))
+         (grid-table-etaf--replay state part forward)))
       (`(cells . ,cells)
        (grid-table-etaf--write-cells
         state
@@ -1684,11 +1719,12 @@ plist.  The rule keeps applying as values change."
 ;;;----------------------------------------------------------------------
 
 (defvar grid-table-etaf--clipboard nil
-  "The last copied range as (TEXT ROWS TOP LEFT CUT).
+  "The last copied range as (TEXT ROWS TOP LEFT CUT STYLES).
 TEXT is what went to the kill ring and ROWS the raw values, formulas
 included, copied from model row TOP and column LEFT.  Pasting uses ROWS
 while TEXT is still the current kill.  CUT is non-nil when the range was
-cut, so its formulas move without being adjusted.")
+cut, so its formulas move without being adjusted.  STYLES holds the
+cells' styles, shaped like ROWS.")
 
 (defun grid-table-etaf--tsv-field (text)
   "Return TEXT as one tab-separated field, quoted when it needs to be."
@@ -1731,7 +1767,7 @@ Quoted fields may hold tabs, newlines and doubled quotes."
     (nreverse rows)))
 
 (defun grid-table-etaf--range-rows (state source range reader)
-  "Return the cells of RANGE in SOURCE as rows of strings read by READER.
+  "Return the cells of RANGE in SOURCE as rows of what READER returns.
 Rows hidden by STATE's filters are left out."
   (cl-loop for row from (nth 0 range) to (nth 2 range)
            when (grid-table-etaf--row-shown-p state row) collect
@@ -1741,7 +1777,8 @@ Rows hidden by STATE's filters are left out."
 (defun grid-table-etaf-copy ()
   "Copy the selected range.
 The kill ring receives the shown values as tab-separated text; pasting
-back into a grid restores the raw values, formulas included."
+back into a grid restores the raw values, formulas included, and the
+cells' formats."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
          (source (grid-table-etaf--source state))
@@ -1759,17 +1796,30 @@ back into a grid restores the raw values, formulas included."
                  state source range
                  (lambda (source row col)
                    (or (grid-get-raw-value-at source row col) "")))
-                (nth 0 range) (nth 1 range) nil))
+                (nth 0 range) (nth 1 range) nil
+                (grid-table-etaf--range-rows state source range
+                                             #'grid-get-style-at)))
     (message "Copied %d × %d cells"
              (1+ (- (nth 2 range) (nth 0 range)))
              (1+ (- (nth 3 range) (nth 1 range))))))
 
 (defun grid-table-etaf-cut ()
-  "Copy the selected range and empty it."
+  "Copy the selected range and empty it, formats included."
   (interactive)
   (grid-table-etaf-copy)
   (setf (nth 4 grid-table-etaf--clipboard) t)
-  (grid-table-etaf-clear-cells))
+  (let ((state (grid-table-etaf--state-or-error))
+        (range (grid-table-etaf-selection)))
+    (grid-table-etaf--as-one-step
+     state
+     (lambda ()
+       (grid-table-etaf-clear-cells)
+       (grid-table-etaf--set-styles
+        state
+        (cl-loop for row from (nth 0 range) to (nth 2 range)
+                 when (grid-table-etaf--row-shown-p state row) nconc
+                 (cl-loop for col from (nth 1 range) to (nth 3 range)
+                          collect (list row col nil))))))))
 
 (defun grid-table-etaf--shifted (value origin row col)
   "Return VALUE as it reads when its range moves from ORIGIN to ROW and COL.
@@ -1784,7 +1834,9 @@ value should be pasted as it is."
 The top left cell of the range receives the first value.  A single
 copied cell fills the whole range.  Values that would fall outside the
 grid are dropped.  Copied formulas have their relative references moved
-by the distance they travel, as in a spreadsheet; cut formulas do not."
+by the distance they travel, as in a spreadsheet; cut formulas do not.
+Cells copied in a grid bring their formats; text from elsewhere leaves
+the formats of the cells it lands in."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
          (source (grid-table-etaf--source state))
@@ -1806,7 +1858,8 @@ by the distance they travel, as in a spreadsheet; cut formulas do not."
          (single (and (null (cdr rows)) (null (cdr (car rows)))))
          (bottom top)
          (right left)
-         changes)
+         (styled (and own (nth 5 own)))
+         changes styles)
     (unless rows (user-error "Nothing to paste"))
     (if single
         (cl-loop for row from top to (nth 2 range) do
@@ -1814,7 +1867,9 @@ by the distance they travel, as in a spreadsheet; cut formulas do not."
                           (push (list row col
                                       (grid-table-etaf--shifted
                                        (caar rows) origin row col))
-                                changes))
+                                changes)
+                          (when styled
+                            (push (list row col (caar styled)) styles)))
                  finally (setq bottom (nth 2 range) right (nth 3 range)))
       (cl-loop
        for values in rows for row from top to max-row do
@@ -1824,8 +1879,17 @@ by the distance they travel, as in a spreadsheet; cut formulas do not."
                 (push (list row col
                             ;; Every cell travels as far as the first one.
                             (grid-table-etaf--shifted value origin top left))
-                      changes))))
-    (let ((count (grid-table-etaf--set-cells state (nreverse changes))))
+                      changes)
+                (when styled
+                  (push (list row col
+                              (nth (- col left) (nth (- row top) styled)))
+                        styles)))))
+    (let ((count (grid-table-etaf--as-one-step
+                  state
+                  (lambda ()
+                    (prog1 (grid-table-etaf--set-cells state (nreverse changes))
+                      (grid-table-etaf--set-styles state
+                                                   (nreverse styles)))))))
       (grid-table-etaf-goto bottom right)
       (grid-table-etaf-goto top left t)
       (message "Pasted %d cell%s" count (if (= count 1) "" "s")))))
