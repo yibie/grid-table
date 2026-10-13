@@ -13,6 +13,14 @@
 (declare-function grid-get-row-count "grid-table.el")
 (declare-function grid-get-column-count "grid-table.el")
 
+;; The ETAF renderer keeps its own cursor; these commands dispatch to it.
+(declare-function grid-table--etaf-p "grid-table.el")
+(declare-function grid-table-etaf-goto "grid-table-etaf")
+(declare-function grid-table-etaf-move "grid-table-etaf")
+(declare-function grid-table-etaf-move-tab "grid-table-etaf")
+(declare-function grid-table-etaf-row-start "grid-table-etaf")
+(declare-function grid-table-etaf-row-end "grid-table-etaf")
+
 ;; These variables are defined as buffer-local in grid-table.el
 (defvar grid-table--data-source)
 (defvar grid-table--highlight-overlay)
@@ -30,6 +38,12 @@
 
 (defun grid-table--move-to-cell (display-row col)
   "Move point to the slice at DISPLAY-ROW whose range contains COL."
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-goto (max 0 display-row) (max 0 (1- col)))
+    (grid-table--classic-move-to-cell display-row col)))
+
+(defun grid-table--classic-move-to-cell (display-row col)
+  "Move point in classic text to DISPLAY-ROW's slice containing COL."
   (goto-char (point-min))
   (catch 'found
     (while (not (eobp))
@@ -55,6 +69,11 @@
 
 (defun grid-table--highlight-cell (display-row col)
   "Highlight every rendered slice of the cell at DISPLAY-ROW and COL."
+  (unless (grid-table--etaf-p)
+    (grid-table--classic-highlight-cell display-row col)))
+
+(defun grid-table--classic-highlight-cell (display-row col)
+  "Overlay every classic slice of the cell at DISPLAY-ROW and COL."
   (dolist (overlay (if (listp grid-table--highlight-overlay)
                        grid-table--highlight-overlay
                      (and (overlayp grid-table--highlight-overlay)
@@ -146,69 +165,81 @@
 (defun grid-table-next-line ()
   "Move to the cell in the next row, same column."
   (interactive)
-  (when grid-table--data-source
-    (when-let* ((coords (grid-table-get-cell-at-point))
-                (current-row (plist-get coords :slice-row))
-                (bottom (plist-get coords :row-end))
-                (current-col (plist-get coords :slice-col))
-                (num-rows (grid-get-row-count grid-table--data-source)))
-      (let ((target-row
-             (cond
-              ((= current-row grid-table--col-header-row-idx) 0)
-              ((= bottom (1- num-rows)) grid-table--col-header-row-idx)
-              (t (1+ bottom)))))
-        (when (grid-table--move-to-cell target-row current-col)
-          (grid-table--highlight-cell target-row current-col))))))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-move 1 0)
+    (when grid-table--data-source
+      (when-let* ((coords (grid-table-get-cell-at-point))
+                  (current-row (plist-get coords :slice-row))
+                  (bottom (plist-get coords :row-end))
+                  (current-col (plist-get coords :slice-col))
+                  (num-rows (grid-get-row-count grid-table--data-source)))
+        (let ((target-row
+               (cond
+                ((= current-row grid-table--col-header-row-idx) 0)
+                ((= bottom (1- num-rows)) grid-table--col-header-row-idx)
+                (t (1+ bottom)))))
+          (when (grid-table--move-to-cell target-row current-col)
+            (grid-table--highlight-cell target-row current-col)))))))
 
 (defun grid-table-previous-line ()
   "Move to the cell in the previous row, same column."
   (interactive)
-  (when grid-table--data-source
-    (when-let* ((coords (grid-table-get-cell-at-point))
-                (current-row (plist-get coords :slice-row))
-                (top (plist-get coords :row-start))
-                (current-col (plist-get coords :slice-col))
-                (num-rows (grid-get-row-count grid-table--data-source)))
-      (let ((target-row
-             (cond
-              ((= current-row grid-table--col-header-row-idx) (1- num-rows))
-              ((= top 0) grid-table--col-header-row-idx)
-              (t (1- top)))))
-        (when (grid-table--move-to-cell target-row current-col)
-          (grid-table--highlight-cell target-row current-col))))))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-move -1 0)
+    (when grid-table--data-source
+      (when-let* ((coords (grid-table-get-cell-at-point))
+                  (current-row (plist-get coords :slice-row))
+                  (top (plist-get coords :row-start))
+                  (current-col (plist-get coords :slice-col))
+                  (num-rows (grid-get-row-count grid-table--data-source)))
+        (let ((target-row
+               (cond
+                ((= current-row grid-table--col-header-row-idx) (1- num-rows))
+                ((= top 0) grid-table--col-header-row-idx)
+                (t (1- top)))))
+          (when (grid-table--move-to-cell target-row current-col)
+            (grid-table--highlight-cell target-row current-col)))))))
 
 (defun grid-table-next-cell ()
   "Move to the next rendered cell node."
   (interactive)
-  (when grid-table--data-source
-    (grid-table--move-tab 1)))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-move-tab 1)
+    (when grid-table--data-source
+      (grid-table--move-tab 1))))
 
 (defun grid-table-previous-cell ()
   "Move to the previous rendered cell node."
   (interactive)
-  (when grid-table--data-source
-    (grid-table--move-tab -1)))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-move-tab -1)
+    (when grid-table--data-source
+      (grid-table--move-tab -1))))
 
 (defun grid-table-cell-right ()
   "Move to the next visible cell segment in the current row."
   (interactive)
-  (when-let* ((coords (grid-table-get-cell-at-point))
-              (row (plist-get coords :slice-row))
-              (end (plist-get coords :col-end))
-              (num-cols (grid-get-column-count grid-table--data-source))
-              (target (and (< end num-cols) (1+ end))))
-    (when (grid-table--move-to-cell row target)
-      (grid-table--highlight-cell row target))))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-move 0 1)
+    (when-let* ((coords (grid-table-get-cell-at-point))
+                (row (plist-get coords :slice-row))
+                (end (plist-get coords :col-end))
+                (num-cols (grid-get-column-count grid-table--data-source))
+                (target (and (< end num-cols) (1+ end))))
+      (when (grid-table--move-to-cell row target)
+        (grid-table--highlight-cell row target)))))
 
 (defun grid-table-cell-left ()
   "Move to the previous visible cell segment in the current row."
   (interactive)
-  (when-let* ((coords (grid-table-get-cell-at-point))
-              (row (plist-get coords :slice-row))
-              (start (plist-get coords :col-start))
-              (target (and (> start 0) (1- start))))
-    (when (grid-table--move-to-cell row target)
-      (grid-table--highlight-cell row target))))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-move 0 -1)
+    (when-let* ((coords (grid-table-get-cell-at-point))
+                (row (plist-get coords :slice-row))
+                (start (plist-get coords :col-start))
+                (target (and (> start 0) (1- start))))
+      (when (grid-table--move-to-cell row target)
+        (grid-table--highlight-cell row target)))))
 
 (defun grid-table-scroll-left ()
   "Scroll the table view left by a few columns."
@@ -223,12 +254,16 @@
 (defun grid-table-move-beginning-of-line ()
   "Move point to the beginning of the visual line (accounting for horizontal scroll)."
   (interactive)
-  (move-beginning-of-line nil))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-row-start)
+    (move-beginning-of-line nil)))
 
 (defun grid-table-move-end-of-line ()
   "Move point to the end of the visual line (accounting for horizontal scroll)."
   (interactive)
-  (move-end-of-line nil))
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-row-end)
+    (move-end-of-line nil)))
 
 (provide 'grid-table-nav)
 

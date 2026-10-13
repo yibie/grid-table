@@ -5,6 +5,9 @@
 (require 'ert)
 (require 'grid-table)
 
+;; These tests characterize the classic renderer.
+(setq grid-table-renderer 'classic)
+
 (defun grid-table-vertical-nav-test--source (&optional hooks)
   "Return a minimal data source for synthetic navigation buffers.
 HOOKS is an alist keyed by :set-raw-value-at, :add-row or :unmerge-cell."

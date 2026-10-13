@@ -76,6 +76,24 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 (require 'grid-table-markdown) ;; Markdown integration
 ```
 
+#### 🖼️ Renderers
+
+`grid-table-renderer` chooses how a grid is drawn:
+
+- `etaf` (default) mounts the grid through [ETAF](https://github.com/emacs-taf). Only the rows and columns that fit the window are rendered, cells are edited in place, and `S-<arrow>` selects a range. It needs the `ecss`, `ebox` and `etaf` repositories on `load-path`:
+
+  ```elisp
+  (add-to-list 'load-path "/path/to/ecss")
+  (add-to-list 'load-path "/path/to/ebox")
+  (add-to-list 'load-path "/path/to/etaf")
+  ```
+
+  Keys follow spreadsheet habits: typing replaces the cell and starts editing, `F2` or `RET` edits the existing text, `RET` stores it and moves down, `TAB` stores it and moves right, `C-c C-c` stores it in place and `C-c C-k` cancels. `C-n`/`C-p`/`C-f`/`C-b` and the arrow keys move, `DEL` clears the selection, `M-w`/`C-w`/`C-y` copy, cut and paste a range, `C-/` undoes and `C-?` redoes, `C-c C-r` refreshes and `C-c C-q` quits. The single-letter commands in the tables below (`e`, `n`, `p`, `g`, `q`) belong to the classic renderer.
+
+- `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete.
+
+Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/checkouts`.
+
 ## 📋 Operation Quick Reference
 
 ### File Operations Overview

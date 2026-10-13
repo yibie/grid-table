@@ -234,7 +234,6 @@ The criteria can be a number, a string, or a string with a comparison operator."
 (defun grid-calc-parse-cell-ref (ref-str)
   "Parses a cell reference string (e.g., A1, $A$1) into a plist of coordinates.
 This function is duplicated from grid-table-parser.el for now, will be refactored."
-  (message "CALLING grid-calc-parse-cell-ref with: %s" ref-str)
   (cond
         ;; Absolute reference $A$1
      ((string-match "^\\$\\([A-Z]+\\)\\$\\([0-9]+\\)$" ref-str) ; Excel row 1 is user-defined header (data row 0)
@@ -255,12 +254,11 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
            (row-str (match-string 2 ref-str))
            (row-num (string-to-number row-str))
            (model-row (- row-num 1)))
-      (message "DEBUG: %s -> col=%s, row=%s, model-row=%s" ref-str col-str row-str model-row)
       (list :col (grid-calc-col-letter-to-number col-str)
             :row model-row
             :absolute-col nil :absolute-row nil)))
    ;; Fallback for debugging
-   (t (message "NO MATCH for: %s" ref-str) nil)))
+   (t nil)))
 
 (defun grid-calc-col-letter-to-number (letters)
   "Converts column letters (e.g., A, B, AA) to a 0-based number."

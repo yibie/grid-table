@@ -76,6 +76,24 @@
 (require 'grid-table-markdown) ;; Markdown集成
 ```
 
+#### 🖼️ 渲染器
+
+`grid-table-renderer` 决定表格的绘制方式：
+
+- `etaf`（默认）通过 [ETAF](https://github.com/emacs-taf) 挂载表格。只渲染窗口内可见的行列，单元格原位编辑，`S-<方向键>` 选择范围。需要把 `ecss`、`ebox`、`etaf` 三个仓库加入 `load-path`：
+
+  ```elisp
+  (add-to-list 'load-path "/path/to/ecss")
+  (add-to-list 'load-path "/path/to/ebox")
+  (add-to-list 'load-path "/path/to/etaf")
+  ```
+
+  按键遵循电子表格的习惯：直接打字会替换单元格内容并进入编辑，`F2` 或 `RET` 编辑现有内容，`RET` 提交并下移，`TAB` 提交并右移，`C-c C-c` 原地提交，`C-c C-k` 取消。`C-n`/`C-p`/`C-f`/`C-b` 和方向键移动，`DEL` 清空选区，`M-w`/`C-w`/`C-y` 复制、剪切、粘贴选区，`C-/` 撤销，`C-?` 重做，`C-c C-r` 刷新，`C-c C-q` 退出。下文表格里的单字母命令（`e`、`n`、`p`、`g`、`q`）属于 classic 渲染器。
+
+- `classic` 用边框字符直接画进 buffer，通过 minibuffer 编辑。它是迁移到 ETAF 期间的兜底选择：ETAF 无法加载时自动使用，迁移完成后移除。
+
+运行测试：`make test-classic` 与 `make test-etaf ETAF_SRC=/path/to/checkouts`。
+
 ## 📋 操作速查表
 
 ### 文件操作一览表

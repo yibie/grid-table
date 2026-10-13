@@ -112,6 +112,23 @@ If nil, uses the `default-directory` of the current buffer."
                  (directory :tag "Specify directory"))
   :group 'grid-table)
 
+(defcustom grid-table-renderer 'etaf
+  "Renderer used to show a grid.
+`etaf' mounts the grid through ETAF and needs the ecss, ebox and etaf
+packages on `load-path'.  `classic' draws box characters into the
+buffer; it is the fallback while grids migrate to ETAF and is used
+whenever ETAF cannot be loaded.  The classic renderer will be removed
+once the migration is complete."
+  :type '(choice (const :tag "ETAF" etaf)
+                 (const :tag "Classic (migration fallback)" classic))
+  :group 'grid-table)
+
+(defvar-local grid-table--renderer nil
+  "Renderer showing the current buffer: `etaf', or nil for classic.")
+
+(defvar grid-table--etaf-warned nil
+  "Non-nil once the ETAF renderer has failed to load or mount this session.")
+
 (defvar-local grid-table--data-source nil
   "Buffer-local variable to hold the current data source instance.")
 
@@ -139,6 +156,40 @@ If nil, uses the `default-directory` of the current buffer."
 
 (defvar-local grid-table--highlight-overlay nil)
 
+(declare-function grid-table-etaf-show-in-current-buffer "grid-table-etaf")
+(declare-function grid-table-etaf-refresh "grid-table-etaf")
+(declare-function grid-table-etaf-cell-at-point "grid-table-etaf")
+(declare-function grid-table-etaf-edit-cell "grid-table-etaf")
+(declare-function grid-table-etaf-set-cell "grid-table-etaf")
+
+(defun grid-table--etaf-p ()
+  "Return non-nil when the current buffer is shown through ETAF."
+  (eq grid-table--renderer 'etaf))
+
+(defun grid-table--enter-classic-mode ()
+  "Enable `grid-table-mode' unless the grid will be shown through ETAF.
+The ETAF renderer sets its own major mode when it mounts."
+  (unless (eq (grid-table--resolve-renderer) 'etaf)
+    (grid-table-mode)))
+
+(defun grid-table--resolve-renderer ()
+  "Return the renderer to show a grid with: `etaf' or `classic'.
+Falls back to `classic' when `grid-table-renderer' asks for ETAF and it
+cannot be loaded."
+  (cond ((not (eq grid-table-renderer 'etaf)) 'classic)
+        (grid-table--etaf-warned 'classic)
+        ((featurep 'grid-table-etaf) 'etaf)
+        ;; `require' with NOERROR still signals when ETAF itself is missing.
+        (t (condition-case err
+               (progn (require 'grid-table-etaf) 'etaf)
+             (error (grid-table--etaf-failed err) 'classic)))))
+
+(defun grid-table--etaf-failed (err)
+  "Report ERR from the ETAF renderer and stay on classic for this session."
+  (setq grid-table--etaf-warned t)
+  (message "grid-table: ETAF renderer unavailable (%s), using the classic renderer"
+           (error-message-string err)))
+
 (defvar grid-table-cell-edit-map
   (let ((map (copy-keymap minibuffer-local-map)))
     (define-key map (kbd "M-RET") #'newline)
@@ -152,6 +203,12 @@ If nil, uses the `default-directory` of the current buffer."
 (defun grid-table-get-cell-at-point ()
   "Return the complete logical descriptor for the cell at point."
   (interactive)
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-cell-at-point)
+    (grid-table--classic-cell-at-point)))
+
+(defun grid-table--classic-cell-at-point ()
+  "Return the cell descriptor read from the classic renderer's text."
   (let ((position
          (if (get-text-property (point) 'grid-cell)
              (point)
@@ -814,6 +871,12 @@ Nil denotes the outside of the table; row -1 is the ABC header."
 (defun grid-table-edit-cell ()
   "Edit the value of the current cell."
   (interactive)
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-edit-cell)
+    (grid-table--classic-edit-cell)))
+
+(defun grid-table--classic-edit-cell ()
+  "Edit the current cell of a classic grid through the minibuffer."
   (let ((inhibit-read-only t))
     (when-let* ((coords (grid-table-get-cell-at-point))
                 (display-row-idx (plist-get coords :anchor-row))
@@ -1078,7 +1141,7 @@ If called interactively, deletes the current column."
     (if data-source
         (let ((buffer (get-buffer-create buffer-name)))
           (with-current-buffer buffer
-            (grid-table-mode)
+            (grid-table--enter-classic-mode)
             (setq-local grid-table--file-path file-path)
             ;; Get title from data source
             (setq-local grid-table--title (gethash :title data-source))
@@ -1145,6 +1208,25 @@ If called interactively, deletes the current column."
 DATA-SOURCE is a hash table containing the data source functions.
 TITLE is an optional title for the grid."
   (interactive)
+  (unless (and (eq (grid-table--resolve-renderer) 'etaf)
+               (condition-case err
+                   (progn
+                     (grid-table-etaf-show-in-current-buffer data-source title)
+                     t)
+                 ;; A stale ETAF checkout can load and still fail to mount.
+                 (error
+                  (grid-table--etaf-failed err)
+                  (let ((file-path grid-table--file-path)
+                        (old-title grid-table--title))
+                    (grid-table-mode)
+                    (setq grid-table--file-path file-path
+                          grid-table--title old-title))
+                  nil)))
+    (grid-table--classic-show-in-current-buffer data-source title)))
+
+(defun grid-table--classic-show-in-current-buffer (data-source &optional title)
+  "Draw DATA-SOURCE into the current buffer with the classic renderer.
+TITLE is an optional title for the grid."
   (let ((inhibit-read-only t))
     (erase-buffer)
     (setq grid-table--data-source data-source)
@@ -1166,13 +1248,19 @@ TITLE is an optional title for the grid."
   "Show a grid view in a dedicated buffer using DATA-SOURCE."
   (let ((buffer (get-buffer-create (or buffer-name "*Grid Table*"))))
     (with-current-buffer buffer
-      (grid-table-mode)
+      (grid-table--enter-classic-mode)
       (grid-table--show-grid-in-current-buffer data-source))
     (switch-to-buffer buffer)))
 
 (defun grid-table-refresh (&optional restore-row-idx restore-col-idx)
   "Refresh the table, restoring point to RESTORE-ROW-IDX and RESTORE-COL-IDX."
   (interactive)
+  (if (grid-table--etaf-p)
+      (grid-table-etaf-refresh restore-row-idx restore-col-idx)
+    (grid-table--classic-refresh restore-row-idx restore-col-idx)))
+
+(defun grid-table--classic-refresh (&optional restore-row-idx restore-col-idx)
+  "Redraw a classic grid, restoring point to RESTORE-ROW-IDX and RESTORE-COL-IDX."
   (let* ((inhibit-read-only t)
          (restore-coords (grid-table-get-cell-at-point))
          (restore-row-idx (or restore-row-idx
@@ -1365,11 +1453,14 @@ skipping regions with a `display' property (like images)."
   (when-let* ((coords (grid-table-get-cell-at-point))
               (display-row-idx (plist-get coords :anchor-row))
               (display-col-idx (plist-get coords :anchor-col)))
-    (let ((set-raw-fn (gethash :set-raw-value-at grid-table--data-source)))
-      (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) value)
-      (grid-table-refresh)
-      (grid-table--move-to-cell display-row-idx display-col-idx)
-      (grid-table--highlight-cell display-row-idx display-col-idx))))
+    (if (grid-table--etaf-p)
+        ;; The ETAF renderer records the change for undo.
+        (grid-table-etaf-set-cell display-row-idx (1- display-col-idx) value)
+      (let ((set-raw-fn (gethash :set-raw-value-at grid-table--data-source)))
+        (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) value)
+        (grid-table-refresh)
+        (grid-table--move-to-cell display-row-idx display-col-idx)
+        (grid-table--highlight-cell display-row-idx display-col-idx)))))
 
 (defun grid-table--open-demo ()
   "Open a grid-table buffer with a demonstration table for internal testing."

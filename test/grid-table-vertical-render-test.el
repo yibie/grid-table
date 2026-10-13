@@ -5,6 +5,9 @@
 (require 'ert)
 (require 'grid-table)
 
+;; These tests characterize the classic renderer.
+(setq grid-table-renderer 'classic)
+
 (defun grid-table-vertical-test--source (headers rows merges)
   "Return a source for vertical merge rendering tests."
   (make-default-data-source headers rows nil merges))

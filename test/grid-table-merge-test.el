@@ -4,6 +4,9 @@
 
 (require 'ert)
 (require 'grid-table)
+
+;; These tests characterize the classic renderer.
+(setq grid-table-renderer 'classic)
 (require 'grid-table-csv)
 
 (defun grid-table-test--source ()

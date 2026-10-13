@@ -5,6 +5,9 @@
 (require 'ert)
 (require 'grid-table)
 
+;; These tests characterize the classic renderer.
+(setq grid-table-renderer 'classic)
+
 (defun grid-table-render-test--render (source)
   "Return SOURCE rendered as plain buffer text."
   (with-temp-buffer
