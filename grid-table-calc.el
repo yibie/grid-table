@@ -1,6 +1,10 @@
 ;;; grid-table-calc.el --- AST evaluator and calculation engine -*- lexical-binding: t -*-
 
 (require 'grid-table-parser)
+(require 'grid-table-format)
+
+(declare-function grid-data-model-styles "grid-data-model")
+(declare-function grid-data-model-cols "grid-data-model")
 
 ;;;----------------------------------------------------------------------
 ;;; Main Calculation Entry Point
@@ -65,6 +69,25 @@ A sheet that does not exist makes the reference #REF!."
            "#N/A")
           (t "#ERROR!"))))
 
+(defun grid-calc--typed-value (model index raw)
+  "Return the value of the cell at INDEX of MODEL that holds typed RAW.
+Text typed after an apostrophe, and anything in a cell with the text
+format, is text even when it reads as a number."
+  (cond ((string-prefix-p "'" raw)
+         (propertize (substring raw 1) 'grid-text t))
+        ((and (> (length raw) 0)
+              (let ((styles (grid-data-model-styles model)))
+                (and styles (> (hash-table-count styles) 0)
+                     (let ((cols (grid-data-model-cols model)))
+                       (eq (car-safe
+                            (plist-get (gethash (cons (/ index cols)
+                                                      (% index cols))
+                                                styles)
+                                       :format))
+                           'text)))))
+         (propertize raw 'grid-text t))
+        (t raw)))
+
 (defun grid-calc--compute-cell (model index)
   "Compute the cell at INDEX of MODEL unless this pass already did.
 A formula that fails gives its cell one of `grid-calc-error-values'
@@ -87,7 +110,7 @@ instead of stopping the recalculation."
                      model (grid-parser-parse (substring raw 1))))
                 (grid-calc-cycle (setq cycle t) "#CYCLE!")
                 (error (grid-calc--error-value err)))
-            raw))
+            (grid-calc--typed-value model index raw)))
          (aset pass index 'done)
          ;; Every formula on a cycle is part of it, not only the one that
          ;; closed it.
@@ -254,7 +277,7 @@ AST: The Abstract Syntax Tree to evaluate."
     ('OR (or left right))
     
     ;; String concatenation
-    ('& (concat (format "%s" left) (format "%s" right)))
+    ('& (concat (grid-calc-to-string left) (grid-calc-to-string right)))
     
     (_ (error "Unknown binary operator: %s" op))))
 
@@ -279,12 +302,9 @@ AST: The Abstract Syntax Tree to evaluate."
     number))
 
 (defun grid-calc--numeric (value)
-  "Return VALUE as a number when it is one or reads as one, else nil."
-  (cond ((numberp value) value)
-        ((and (stringp value)
-              (string-match-p "\\`[ \t]*[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)[ \t]*\\'"
-                              value))
-         (string-to-number value))))
+  "Return VALUE as a number when it is one or reads as one, else nil.
+Text marked as text is not a number, whatever it reads as."
+  (grid-format-number value))
 
 (defun grid-calc--equal (left right)
   "Return non-nil when LEFT and RIGHT are the same spreadsheet value.
@@ -304,20 +324,25 @@ Returns 0 for non-numeric values instead of throwing an error."
    ((stringp value)
     (if (string-empty-p value)
         0
-      (or (grid-calc--numeric value) 0)))
+      ;; Arithmetic reads a number out of text; only aggregates skip it.
+      (or (grid-calc--numeric (substring-no-properties value)) 0)))
    ((null value) 0)
    (t 0))) ; Return 0 for any other type instead of throwing error
 
-(defun grid-calc--to-time (value)
-  "Convert a value to an Emacs time value if possible.
-Handles time-values and strings like \"YYYY-MM-DD\"."
+(defun grid-calc--to-serial (value)
+  "Return the date VALUE as a serial number.
+VALUE is a serial number, or a date written year first as old sheets
+hold them."
   (cond
-   ((consp value) value) ; Assume it's already a time value
-   ((stringp value)
-    (condition-case nil
-        (parse-time-string value)
-      (error (error "Invalid date/time string: %s" value))))
-   (t (error "Value cannot be converted to a date/time: %s" value))))
+   ((numberp value) value)
+   ((and (stringp value) (grid-calc--numeric value)))
+   ((and (stringp value) (grid-format-parse-date value)))
+   ((and (stringp value)
+         (let ((time (ignore-errors (parse-time-string value))))
+           (and (nth 5 time) (nth 4 time) (nth 3 time)
+                (grid-format-date-to-serial (nth 5 time) (nth 4 time)
+                                            (nth 3 time))))))
+   (t (error "Value cannot be read as a date: %s" value))))
 
 (defun grid-calc--parse-criteria (criteria)
   "Parse a criteria string (e.g., \">10\", \"<>0\", \"Apple\") into a predicate lambda.
@@ -345,12 +370,8 @@ The criteria can be a number, a string, or a string with a comparison operator."
         (lambda (cell-val) (equal (grid-calc-to-string cell-val) crit-str))))))
 
 (defun grid-calc-to-string (value)
-  "Converts a value to a string."
-  (cond
-   ((stringp value) value)
-   ((numberp value) (number-to-string value))
-   ((null value) "")
-   (t (format "%s" value))))
+  "Converts a value to a string, a number as the general format shows it."
+  (if (stringp value) value (grid-format-general value)))
 
 (defun grid-calc-to-boolean (value)
   "Converts a value to a boolean."
@@ -874,17 +895,9 @@ Each argument is a value or the list of values of a range."
          (p (expt 10.0 digits)))
     (grid-calc--tidy-number (/ (funcall round-fn (* num p)) p))))
 
-(defun grid-calc--round-half-away (number)
-  "Round NUMBER to the nearest integer, a half going away from zero.
-A product that falls a hair short of a half, as 1.005 * 100 does, still
-counts as the half it stands for."
-  (let* ((size (abs number))
-         (rounded (floor (+ size 0.5 (* size 1e-12)))))
-    (if (< number 0) (- rounded) rounded)))
-
 (grid-calc-defun ROUND (number num_digits)
   "Rounds a number to a specified number of digits."
-  (grid-calc--round-by #'grid-calc--round-half-away number num_digits))
+  (grid-calc--round-by #'grid-format-round number num_digits))
 
 (grid-calc-defun ROUNDUP (number num_digits)
   "Rounds a number up, away from zero."
@@ -1169,59 +1182,98 @@ NOTE: instance_num is not yet supported; all instances are replaced."
   "Returns the length of a string."
   (length (grid-calc-to-string string)))
 
-;; Date/Time functions
+;; Date/Time functions.  A date is a serial number: days since 1899-12-30,
+;; the time of day as its fraction.  Give the cell a date format to read it.
 (grid-calc-defun NOW ()
-  "Returns the current time."
-  (current-time))
+  "Returns this moment as a serial number."
+  (grid-format-now))
 
 (grid-calc-defun TODAY ()
-  "Returns today's date as a string."
-  (format-time-string "%Y-%m-%d"))
+  "Returns today's date as a serial number."
+  (grid-format-today))
 
 (grid-calc-defun DATE (year month day)
-  "Creates a date value from year, month, and day."
-  (encode-time 0 0 0 (grid-calc-to-number day) (grid-calc-to-number month) (grid-calc-to-number year)))
+  "Returns the serial number of a date; months and days carry over."
+  (grid-format-date-to-serial (truncate (grid-calc-to-number year))
+                              (truncate (grid-calc-to-number month))
+                              (truncate (grid-calc-to-number day))))
+
+(grid-calc-defun DATEVALUE (text)
+  "Returns the serial number of a date written as text, year first."
+  (or (grid-format-parse-date (grid-calc-to-string text))
+      (error "Value cannot be read as a date: %s" text)))
 
 (grid-calc-defun YEAR (date)
-  "Returns the year from a date value."
-  (nth 5 (decode-time (grid-calc--to-time date))))
+  "Returns the year of a date."
+  (nth 0 (grid-format-serial-to-date (grid-calc--to-serial date))))
 
 (grid-calc-defun MONTH (date)
-  "Returns the month from a date value."
-  (nth 4 (decode-time (grid-calc--to-time date))))
+  "Returns the month of a date."
+  (nth 1 (grid-format-serial-to-date (grid-calc--to-serial date))))
 
 (grid-calc-defun DAY (date)
-  "Returns the day of the month from a date value."
-  (nth 3 (decode-time (grid-calc--to-time date))))
+  "Returns the day of the month of a date."
+  (nth 2 (grid-format-serial-to-date (grid-calc--to-serial date))))
+
+(grid-calc-defun HOUR (date)
+  "Returns the hour of a time."
+  (nth 3 (grid-format-serial-to-date (grid-calc--to-serial date))))
+
+(grid-calc-defun MINUTE (date)
+  "Returns the minute of a time."
+  (nth 4 (grid-format-serial-to-date (grid-calc--to-serial date))))
 
 (grid-calc-defun WEEKDAY (date &optional return_type)
   "Returns the day of the week corresponding to a date.
 return_type 1 (default): Sunday=1 through Saturday=7.
 return_type 2: Monday=1 through Sunday=7."
-  (let* ((time (grid-calc--to-time date))
-         (dow (nth 6 (decode-time time))) ; Emacs DOW: Sun=0, Mon=1, .. Sat=6
-         (type (if return_type (grid-calc-to-number return_type) 1)))
+  (let ((dow (nth 6 (grid-format-serial-to-date (grid-calc--to-serial date))))
+        (type (if return_type (grid-calc-to-number return_type) 1)))
     (pcase type
       (1 (1+ dow))
       (2 (if (= dow 0) 7 dow))
       (_ (error "Unsupported WEEKDAY return_type: %s" type)))))
 
+(defun grid-calc--add-months (date months)
+  "Return (YEAR MONTH DAY) of DATE with MONTHS added to its month."
+  (pcase-let ((`(,year ,month ,day)
+               (grid-format-serial-to-date (grid-calc--to-serial date))))
+    (list year (+ month (truncate (grid-calc-to-number months))) day)))
+
 (grid-calc-defun EOMONTH (start_date months)
-  "Returns the serial number of the last day of the month before or
-after a specified number of months."
-  (let* ((time (grid-calc--to-time start_date))
-         (months-offset (grid-calc-to-number months))
-         (decoded (decode-time time))
-         (year (nth 5 decoded))
-         (month (nth 4 decoded))
-         ;; Calculate the target month and year
-         (total-month (+ month months-offset 1)) ; Go to the start of the *next* month
-         (target-year (+ year (floor (1- total-month) 12)))
-         (target-month (1+ (mod (1- total-month) 12)))
-         ;; Get the first day of the month *after* our target month
-         (first-of-next-month (encode-time 0 0 0 1 target-month target-year)))
-    ;; Subtract a few seconds to get the last moment of the previous day
-    (time-subtract first-of-next-month (seconds-to-time 1))))
+  "Returns the last day of the month MONTHS months from a date."
+  (pcase-let ((`(,year ,month ,_) (grid-calc--add-months start_date months)))
+    (grid-format-date-to-serial year (1+ month) 0)))
+
+(grid-calc-defun EDATE (start_date months)
+  "Returns the same day of the month MONTHS months from a date.
+A day the target month does not have becomes its last day."
+  (pcase-let ((`(,year ,month ,day) (grid-calc--add-months start_date months)))
+    (min (grid-format-date-to-serial year month day)
+         (grid-format-date-to-serial year (1+ month) 0))))
+
+(grid-calc-defun DAYS (end_date start_date)
+  "Returns the number of days from START_DATE to END_DATE."
+  (- (floor (grid-calc--to-serial end_date))
+     (floor (grid-calc--to-serial start_date))))
+
+(grid-calc-defun VALUE (text)
+  "Returns the number that text reads as; a date gives its serial number."
+  (let ((text (substring-no-properties (grid-calc-to-string text))))
+    (or (grid-calc--numeric text)
+        (let ((typed (grid-format-parse-entry text)))
+          (and typed (string-to-number (car typed))))
+        (error "Value cannot be read as a number: %s" text))))
+
+(grid-calc-defun TEXT (value format_text)
+  "Returns a number written after a format code such as 0.00 or yyyy-mm-dd."
+  (let ((format (grid-format-from-code (grid-calc-to-string format_text))))
+    (when (eq (car-safe format) 'code)
+      (error "Unsupported format in TEXT: %s" format_text))
+    (grid-format-display (if (eq (car-safe format) 'date)
+                             (grid-calc--to-serial value)
+                           value)
+                         format)))
 
 ;; Lookup functions (Placeholder)
 (grid-calc-defun VLOOKUP (lookup-value table-range col-index exact-match)

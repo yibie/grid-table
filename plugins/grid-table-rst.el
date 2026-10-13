@@ -51,7 +51,7 @@
                            collect (funcall get-header-fn data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
                             collect (cl-loop for c from 0 below num-cols
-                                             collect (funcall get-computed-fn data-source r c))))
+                                             collect (grid-get-display-value-at data-source r c))))
          (widths (grid-table--calculate-column-widths headers all-rows)))
     (with-temp-buffer
       (insert (grid-table-rst--draw-separator widths "-") "\n")

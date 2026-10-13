@@ -48,7 +48,7 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
          (actual-headers (gethash :headers data-source)) ; Original headers from data-source
          (all-data-rows (cl-loop for r from 0 below num-rows ; Get all data rows
                                  collect (cl-loop for c from 0 below num-cols
-                                                 collect (funcall get-computed-fn data-source r c))))
+                                                 collect (grid-get-display-value-at data-source r c))))
          (column-widths (grid-table-org--calculate-column-widths actual-headers all-data-rows))
          (buffer-content ""))
     (with-temp-buffer

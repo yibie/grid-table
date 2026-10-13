@@ -419,6 +419,122 @@
   (should (equal (grid-calc-shift-formula "=LOG10(A1)&\"A:A\"" 0 1)
                  "=LOG10(B1)&\"A:A\"")))
 
+;;;----------------------------------------------------------------------
+;;; Number formats and dates
+;;;----------------------------------------------------------------------
+
+(ert-deftest grid-table-formats-show-numbers ()
+  (should (equal (grid-format-display 1234.5 '(number 2 t)) "1,234.50"))
+  (should (equal (grid-format-display -1234567 '(number 0 t)) "-1,234,567"))
+  (should (equal (grid-format-display 2.5 '(number 0 nil)) "3"))
+  (should (equal (grid-format-display "0.125" '(percent 1)) "12.5%"))
+  (should (equal (grid-format-display -3.5 '(currency 2 "$")) "-$3.50"))
+  (should (equal (grid-format-display "text" '(number 2 t)) "text"))
+  ;; The general format hides the noise of binary fractions.
+  (should (equal (grid-format-display (+ 0.1 0.2) nil) "0.3"))
+  (should (equal (grid-format-display 3.0 nil) "3"))
+  (should (equal (grid-format-display t nil) "TRUE"))
+  ;; Dates are serial numbers.
+  (should (= (grid-format-date-to-serial 2026 10 12) 46307))
+  (should (= (grid-format-date-to-serial 2024 2 29) 45351))
+  (should (equal (grid-format-display 46307 '(date "yyyy-mm-dd")) "2026-10-12"))
+  (should (equal (grid-format-display 45351 '(date "m/d/yyyy")) "2/29/2024"))
+  (should (equal (grid-format-display 46307.75 '(date "yyyy-mm-dd hh:mm"))
+                 "2026-10-12 18:00"))
+  (should (equal (grid-format-display 46307 '(date "yyyy年m月d日"))
+                 "2026年10月12日"))
+  ;; Spreadsheet format codes come in and go back out.
+  (should (equal (grid-format-from-code "#,##0.00") '(number 2 t)))
+  (should (equal (grid-format-from-code "0.0%") '(percent 1)))
+  (should (equal (grid-format-from-code "\"¥\"#,##0.00") '(currency 2 "¥")))
+  (should (equal (grid-format-from-code "yyyy\\-mm\\-dd") '(date "yyyy-mm-dd")))
+  (should (equal (grid-format-from-code "@") '(text)))
+  (should-not (grid-format-from-code "General"))
+  (should (equal (grid-format-from-code "[$-409]mmmm d, yyyy")
+                 '(date "yyyy-mm-dd" "[$-409]mmmm d, yyyy")))
+  (should (equal (grid-format-from-code "0.00E+00") '(code "0.00E+00")))
+  (dolist (format '((number 2 t) (number 0 nil) (percent 1) (date "yyyy/mm/dd")
+                    (date "yyyy年m月d日") (text) (code "0.00E+00")
+                    (date "yyyy-mm-dd" "[$-409]mmmm d, yyyy")))
+    (should (equal (grid-format-from-code (grid-format-to-code format))
+                   format))))
+
+(ert-deftest grid-table-typed-dates-and-percentages-become-numbers ()
+  (let ((source (make-default-data-source
+                 '("" "") '(("h" "") ("" "") ("" "") ("" "")))))
+    (grid-table-enter-value source 1 0 "2026-10-13")
+    (should (equal (grid-get-raw-value-at source 1 0) "46308"))
+    (should (equal (grid-get-display-value-at source 1 0) "2026-10-13"))
+    (should (equal (grid-table-edit-text source 1 0) "2026-10-13"))
+    (grid-set-raw-value-at source 1 1 "=A2+7")
+    (should (equal (grid-get-computed-value-at source 1 1) 46315))
+    ;; A date that does not exist is not one.
+    (grid-table-enter-value source 2 0 "2026-02-30")
+    (should (equal (grid-get-raw-value-at source 2 0) "2026-02-30"))
+    (grid-table-enter-value source 2 0 "12.5%")
+    (should (equal (grid-get-raw-value-at source 2 0) "0.125"))
+    (should (equal (grid-get-display-value-at source 2 0) "12.5%"))
+    (should (equal (grid-table-edit-text source 2 0) "12.5%"))
+    ;; A cell that has a format keeps it.
+    (grid-table-enter-value source 2 0 "50%")
+    (should (equal (grid-get-display-value-at source 2 0) "50.0%"))
+    (grid-table-enter-value source 2 1 "$1,234.5")
+    (should (equal (grid-get-display-value-at source 2 1) "$1,234.5"))
+    (should (equal (grid-get-raw-value-at source 2 1) "1234.5"))
+    ;; Text typed after an apostrophe is never a number to a range.
+    (grid-table-enter-value source 3 0 "'007")
+    (should (equal (grid-get-display-value-at source 3 0) "007"))
+    (grid-set-raw-value-at source 3 1 "=COUNT(A4:A4)")
+    (should (equal (grid-get-computed-value-at source 3 1) 0))
+    (grid-set-raw-value-at source 3 1 "=A4+1")
+    (should (equal (grid-get-computed-value-at source 3 1) 8))
+    ;; The formats are saved with the grid and come back.
+    (let ((file (make-temp-file "grid-format-" nil ".grid")))
+      (unwind-protect
+          (progn
+            (grid-table-persistence--save-to-file source file)
+            (let ((back (grid-table-persistence-create-data-source-from-file
+                         file)))
+              (should (equal (grid-get-display-value-at back 1 0) "2026-10-13"))
+              (should (equal (grid-get-display-value-at back 2 0) "50.0%"))
+              (should (equal (grid-get-display-value-at back 3 0) "007"))
+              (should (equal (grid-get-computed-value-at back 3 1) 8))))
+        (delete-file file)))
+    ;; A source that keeps no styles stores what was typed.
+    (let ((plain (copy-hash-table source)))
+      (remhash :set-style-at plain)
+      (should (equal (grid-table-read-entry plain 1 1 "2026-10-13")
+                     '("2026-10-13" . keep))))))
+
+(ert-deftest grid-table-date-functions-work-on-serial-numbers ()
+  (let* ((source (make-default-data-source
+                  '("" "") '(("46307" "2026-03-05") ("" ""))))
+         (value (lambda (formula)
+                  (grid-set-raw-value-at source 1 0 formula)
+                  (grid-get-computed-value-at source 1 0)))
+         (shown (lambda (formula)
+                  (grid-set-raw-value-at source 1 0 formula)
+                  (grid-get-display-value-at source 1 0))))
+    (should (equal (funcall value "=DATE(2026,10,12)") 46307))
+    (should (equal (funcall value "=DATE(2026,10,12)+1") 46308))
+    (should (equal (funcall value "=TODAY()+1") (1+ (grid-format-today))))
+    ;; A formula that starts by computing a date is shown as one.
+    (should (equal (funcall shown "=DATE(2026,10,12)+1") "2026-10-13"))
+    (should (equal (funcall shown "=EOMONTH(A1,1)") "2026-11-30"))
+    (should (equal (funcall shown "=EDATE(DATE(2026,1,31),1)") "2026-02-28"))
+    (should (equal (funcall value "=YEAR(A1)") 2026))
+    (should (equal (funcall value "=MONTH(A1)") 10))
+    (should (equal (funcall value "=DAY(A1)") 12))
+    (should (equal (funcall value "=WEEKDAY(A1)") 2))
+    ;; Dates kept as text in older sheets are still read.
+    (should (equal (funcall value "=MONTH(B1)") 3))
+    (should (equal (funcall value "=DATEVALUE(B1)")
+                   (grid-format-date-to-serial 2026 3 5)))
+    (should (equal (funcall value "=DAYS(A1,B1)") 221))
+    (should (equal (funcall value "=TEXT(A1,\"yyyy/mm/dd\")") "2026/10/12"))
+    (should (equal (funcall value "=TEXT(0.256,\"0.0%\")") "25.6%"))
+    (should (equal (funcall value "=VALUE(\"12.5%\")") 0.125))))
+
 (ert-deftest grid-table-sort-keeps-a-formula-reading-its-own-row ()
   (let* ((model (grid-model-create
                  4 4 '(("Key" "Amount" "Double" "Share")

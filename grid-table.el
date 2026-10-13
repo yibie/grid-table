@@ -13,6 +13,7 @@
 (require 'grid-data-source)
 (require 'grid-data-model)
 (require 'grid-table-parser)
+(require 'grid-table-format)
 (require 'grid-table-persistence)
 (require 'grid-table-nav)
 (require 'grid-table-chart)
@@ -70,6 +71,79 @@ Sources that do not store styles give nil."
   "Give the cell at ROW and COL in SOURCE the plist STYLE; nil clears it."
   (when-let* ((function (gethash :set-style-at source)))
     (funcall function source row col style)))
+
+(defcustom grid-table-currency-symbol "$"
+  "Currency symbol the currency format is offered with."
+  :type 'string
+  :group 'grid-table)
+
+(defconst grid-table--date-formula-regexp
+  "\\`=[ \t]*\\(TODAY\\|DATE\\|DATEVALUE\\|EDATE\\|EOMONTH\\|NOW\\)[ \t]*("
+  "Matches a formula that starts by computing a date.")
+
+(defun grid-table-cell-format (source row col)
+  "Return the format the cell at ROW and COL of SOURCE is shown with.
+That is the format of its style.  A cell without one whose formula
+starts by computing a date, such as =TODAY()+7, is shown as a date."
+  (or (plist-get (grid-get-style-at source row col) :format)
+      (let ((raw (and (gethash :get-raw-value-at source)
+                      (grid-get-raw-value-at source row col)))
+            (case-fold-search t))
+        (and (stringp raw)
+             (string-match grid-table--date-formula-regexp raw)
+             (list 'date (if (string= (upcase (match-string 1 raw)) "NOW")
+                             "yyyy-mm-dd hh:mm"
+                           "yyyy-mm-dd"))))))
+
+(defun grid-get-display-value-at (source row col)
+  "Return what the cell at ROW and COL of SOURCE shows.
+That is its computed value written after its format.  A value that is
+not plain data, such as a chart, is returned as it is."
+  (let ((value (grid-get-computed-value-at source row col)))
+    (if (or (stringp value) (numberp value) (memq value '(nil t)))
+        (grid-format-display value (grid-table-cell-format source row col))
+      value)))
+
+(defun grid-table-edit-text (source row col)
+  "Return the text an edit of the cell at ROW and COL of SOURCE starts from.
+A date and a percentage are edited as they read, not as the number
+stored for them."
+  (grid-format-edit-text (or (grid-get-raw-value-at source row col) "")
+                         (plist-get (grid-get-style-at source row col)
+                                    :format)))
+
+(defun grid-table-read-entry (source row col text)
+  "Read TEXT as typed into the cell at ROW and COL of SOURCE.
+Return (RAW . STYLE): RAW is the text to store and STYLE the style to
+give the cell, or the symbol `keep' to leave its style alone.  A date
+written year first, a percentage, an amount of money and a number with
+thousands separators are stored as numbers; a cell without a format
+takes the one that shows the number as it was typed.  Sources that keep
+no styles, and cells with the text format, store TEXT as it is."
+  (let* ((style (grid-get-style-at source row col))
+         (format (plist-get style :format))
+         (typed (and (gethash :set-style-at source)
+                     (not (eq (car-safe format) 'text))
+                     (grid-format-parse-entry text))))
+    (cond ((null typed) (cons text 'keep))
+          (format (cons (car typed) 'keep))
+          (t (cons (car typed)
+                   (plist-put (copy-sequence style) :format (cdr typed)))))))
+
+(defun grid-table-enter-value (source row col text)
+  "Store TEXT in the cell at ROW and COL of SOURCE as a user types it.
+See `grid-table-read-entry' for how dates and percentages are read."
+  (let ((entry (grid-table-read-entry source row col text)))
+    (unless (eq (cdr entry) 'keep)
+      (grid-set-style-at source row col (cdr entry)))
+    (grid-set-raw-value-at source row col (car entry))))
+
+(defun grid-table-recalculate (source)
+  "Compute every formula of SOURCE, and of the sheets it shares a book with."
+  (let ((workbook (grid-workbook-of source))
+        (model (gethash :model source)))
+    (cond (workbook (grid-workbook-recalculate workbook))
+          (model (grid-table-calc-evaluate model)))))
 
 (defun grid-get-conditional-formats (source)
   "Return SOURCE's conditional format rules.
@@ -531,7 +605,7 @@ Returns the valid, existing path if found, otherwise nil."
                            collect (funcall get-header-fn data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
                             collect (cl-loop for c from 0 below num-cols
-                                             collect (funcall get-computed-fn data-source r c))))
+                                             collect (grid-get-display-value-at data-source r c))))
          (widths (grid-table--calculate-column-widths headers all-rows merges)))
     (let* ((max-row-number-width (string-width (number-to-string num-rows)))
            (row-header-width (max 3 (+ 1 max-row-number-width))))
@@ -966,11 +1040,9 @@ The classic renderer only takes a range along one row or one column."
         (message "Cannot edit column header (A, B, C...) row."))
 
        (t ; Editing data cell
-        (let* ((get-raw-fn (gethash :get-raw-value-at grid-table--data-source))
-               (set-raw-fn (gethash :set-raw-value-at grid-table--data-source))
-               ;; Data model row index is the same as display row index for data rows.
+        (let* (;; Data model row index is the same as display row index for data rows.
                ;; Data model col index is display col index - 1 (for row header).
-               (current-value (funcall get-raw-fn grid-table--data-source display-row-idx (1- display-col-idx)))
+               (current-value (grid-table-edit-text grid-table--data-source display-row-idx (1- display-col-idx)))
                (new-value
                 (read-from-minibuffer
                  (format "New value for %s%s (M-RET inserts newline): "
@@ -978,7 +1050,7 @@ The classic renderer only takes a range along one row or one column."
                           (1- display-col-idx))
                          (1+ display-row-idx))
                  current-value grid-table-cell-edit-map))
-               (modified-cell (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) new-value)))
+               (modified-cell (grid-table-enter-value grid-table--data-source display-row-idx (1- display-col-idx) new-value)))
           (when modified-cell ; Only redraw if a cell was actually modified
             (grid-table-refresh) ; Full refresh is simpler and safer for now
             (grid-table--move-to-cell display-row-idx display-col-idx)
@@ -1251,7 +1323,7 @@ If called interactively, deletes the current column."
                            collect (funcall get-header-fn grid-table--data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
                             collect (cl-loop for c from 0 below num-cols ; Data model rows are 0-indexed
-                                             collect (funcall get-computed-fn grid-table--data-source r c))))
+                                             collect (grid-get-display-value-at grid-table--data-source r c))))
          (data-widths
           (grid-table--calculate-column-widths headers all-rows merges))
          (col-header-data (cl-loop for c from 0 below num-cols

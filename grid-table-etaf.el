@@ -126,22 +126,21 @@ follows the window.")
                  (error "[Chart]"))
                grid-table-etaf--chart-cache)))
 
-(defun grid-table-etaf--display-text (value)
-  "Return the text shown for computed VALUE."
+(defun grid-table-etaf--display-text (value &optional format)
+  "Return the text shown for computed VALUE under FORMAT."
   (cond ((null value) "")
-        ((stringp value) value)
         ((grid-table-etaf--chart-p value) (grid-table-etaf--chart-text value))
-        (t (format "%s" value))))
+        (t (grid-format-display value format))))
 
 (defconst grid-table-etaf--max-chart-width 120
   "Widest column a chart may ask for, in characters.")
 
-(defun grid-table-etaf--value-width (value)
-  "Return the column width computed VALUE asks for, in characters.
+(defun grid-table-etaf--value-width (value &optional format)
+  "Return the column width computed VALUE asks for under FORMAT, in characters.
 A chart is drawn at its own size, so it is not held to the width limit
 of ordinary text, which wraps instead."
   (let ((width (grid-table-etaf--text-width
-                (grid-table-etaf--display-text value))))
+                (grid-table-etaf--display-text value format))))
     (if (grid-table-etaf--chart-p value)
         (max grid-table-etaf-min-column-width
              (min grid-table-etaf--max-chart-width width))
@@ -175,7 +174,8 @@ Covered cells and horizontally merged anchors do not widen a column."
                        (or (/= (nth 1 merge) (nth 3 merge))
                            (/= row (nth 0 merge))))
             (let ((width (grid-table-etaf--value-width
-                          (grid-get-computed-value-at source row col))))
+                          (grid-get-computed-value-at source row col)
+                          (grid-table-cell-format source row col))))
               (when (> width (aref widths col))
                 (aset widths col width)))))))
     (dotimes (col cols)
@@ -219,9 +219,10 @@ Covered cells and horizontally merged anchors do not widen a column."
       (setq col (1+ col)))
     (nreverse result)))
 
-(defun grid-table-etaf--cell-lines (value width)
-  "Estimate how many lines computed VALUE takes in a cell WIDTH wide."
-  (let ((text (grid-table-etaf--display-text value)))
+(defun grid-table-etaf--cell-lines (value width &optional format)
+  "Estimate how many lines computed VALUE takes in a cell WIDTH wide.
+FORMAT is the format the value is shown with."
+  (let ((text (grid-table-etaf--display-text value format)))
     (cond ((grid-table-etaf--chart-p value)
            (length (split-string text "\n")))
           ((grid-table--extract-image-path text)
@@ -240,7 +241,8 @@ Covered cells and horizontally merged anchors do not widen a column."
               (max lines
                    (grid-table-etaf--cell-lines
                     (grid-get-computed-value-at source row col)
-                    (aref widths col))))))
+                    (aref widths col)
+                    (grid-table-cell-format source row col))))))
     lines))
 
 (defun grid-table-etaf--title-lines (state)
@@ -345,6 +347,7 @@ The first row holds the column titles and is always shown."
   "Return non-nil when VALUE should be right-aligned as a number."
   (or (numberp value)
       (and (stringp value)
+           (not (grid-format-text-p value))
            (string-match-p
             "\\`[ \t]*[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)%?[ \t]*\\'"
             value))))
@@ -545,6 +548,14 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c f e" grid-table-etaf-align-center "Align center")
     ("C-c f r" grid-table-etaf-align-right "Align right")
     ("C-c f x" grid-table-etaf-clear-format "Clear formatting")
+    ("C-c f G" grid-table-etaf-format-general "General format")
+    ("C-c f ," grid-table-etaf-format-number "Number format")
+    ("C-c f p" grid-table-etaf-format-percent "Percent format")
+    ("C-c f $" grid-table-etaf-format-currency "Currency format")
+    ("C-c f d" grid-table-etaf-format-date "Date format")
+    ("C-c f t" grid-table-etaf-format-text "Text format")
+    ("C-c f +" grid-table-etaf-more-decimals "More decimals")
+    ("C-c f -" grid-table-etaf-fewer-decimals "Fewer decimals")
     ("C-c f n" grid-table-etaf-add-conditional-format "Conditional format")
     ("C-c f N" grid-table-etaf-clear-conditional-formats
      "Clear conditional formats")
@@ -608,9 +619,12 @@ SPAN is nil or (ROW-SPAN . COL-SPAN).  SPEC is a plist carrying the grid
 position, the node key and the paint state of the cell."
   (let* ((editing (plist-get spec :editing))
          (value (cond ((stringp editing) editing)
-                      (editing (or (grid-get-raw-value-at source row col) ""))
+                      (editing (grid-table-edit-text source row col))
                       (t (grid-get-computed-value-at source row col))))
-         (text (if editing value (grid-table-etaf--display-text value)))
+         (text (if editing
+                   value
+                 (grid-table-etaf--display-text
+                  value (grid-table-cell-format source row col))))
          (image (and (not editing) (grid-table--extract-image-path text)))
          (face (cond ((plist-get spec :cursor) 'grid-table-etaf-cursor-face)
                      ((plist-get spec :selected)
@@ -747,7 +761,7 @@ pointer instead."
 It names the cell at ROW and COL of SOURCE, or RANGE when several cells
 are selected, and shows the raw value of that cell.  LINE is the grid
 line border."
-  (let ((raw (or (grid-get-raw-value-at source row col) ""))
+  (let ((raw (grid-table-edit-text source row col))
         (face 'grid-table-etaf-header-face))
     (etaf-node
      'flex
@@ -1226,7 +1240,9 @@ after each edit."
   (let* ((cursor (grid-table-etaf--cursor))
          (value (grid-table-etaf--display-text
                  (grid-get-computed-value-at grid-table--data-source
-                                             (car cursor) (cdr cursor)))))
+                                             (car cursor) (cdr cursor))
+                 (grid-table-cell-format grid-table--data-source
+                                         (car cursor) (cdr cursor)))))
     (if (string-empty-p value)
         (grid-table-etaf-filter-column (cdr cursor) "empty" "")
       (grid-table-etaf-filter-column (cdr cursor) "=" value))))
@@ -1332,7 +1348,8 @@ Columns only shrink on `grid-table-refresh'."
             (aset widths col
                   (max (aref widths col)
                        (grid-table-etaf--value-width
-                        (grid-get-computed-value-at source row col))))))))))
+                        (grid-get-computed-value-at source row col)
+                        (grid-table-cell-format source row col))))))))))
 
 (defun grid-table-etaf--end-session (state)
   "End STATE's input session and return its text, or nil without one."
@@ -1352,7 +1369,7 @@ Columns only shrink on `grid-table-refresh'."
                      (grid-table-etaf--cell-extent (car cursor) (cdr cursor))))
            (value (grid-table-etaf--end-session state)))
       (if value
-          (grid-table-etaf--set-cells
+          (grid-table-etaf--enter-cells
            state (list (list (nth 0 extent) (nth 1 extent) value)))
         (grid-table-etaf--bump state)
         (grid-table-etaf--settle state)))))
@@ -1496,6 +1513,34 @@ Return the number of cells that changed."
     (grid-table-etaf--settle state)
     (length applied)))
 
+(defun grid-table-etaf--enter-cells (state changes)
+  "Store CHANGES, a list of (ROW COL TEXT), as a user types them.
+A date or a percentage is stored as its number and gives a cell without
+a format the one that shows it as typed.  The whole is one undoable step
+in STATE.  Return the number of cells that changed."
+  (let ((source (grid-table-etaf--source state))
+        values styles)
+    (pcase-dolist (`(,row ,col ,text) changes)
+      (let ((entry (grid-table-read-entry source row col text)))
+        (push (list row col (car entry)) values)
+        (unless (eq (cdr entry) 'keep)
+          (push (list row col (cdr entry)) styles))))
+    (grid-table-etaf--as-one-step
+     state
+     (lambda ()
+       ;; The format first, so the value is fitted as it will be shown.
+       (when styles
+         (grid-table-etaf--set-styles state (nreverse styles)))
+       (grid-table-etaf--set-cells state (nreverse values))))))
+
+(defun grid-table-etaf--text-format-changed-p (cells)
+  "Return non-nil when CELLS, (ROW COL OLD NEW) styles, touch a text format.
+Whether a cell holds text or a number then has to be worked out again."
+  (cl-some (lambda (cell)
+             (not (eq (eq (car-safe (plist-get (nth 2 cell) :format)) 'text)
+                      (eq (car-safe (plist-get (nth 3 cell) :format)) 'text))))
+           cells))
+
 (defun grid-table-etaf--set-styles (state changes)
   "Give cells their styles from CHANGES, a list of (ROW COL STYLE).
 The change is one undoable step in STATE.  Nothing happens when the data
@@ -1509,7 +1554,10 @@ source stores no styles.  Return the number of cells that changed."
             (grid-set-style-at source row col style)
             (push (list row col old style) applied)))))
     (when applied
+      (when (grid-table-etaf--text-format-changed-p applied)
+        (grid-table-recalculate source))
       (grid-table-etaf--record state (cons 'styles (nreverse applied)))
+      (grid-table-etaf--widen-visible state)
       (grid-table-etaf--bump state)
       (grid-table-etaf--settle state))
     (length applied)))
@@ -1555,6 +1603,8 @@ shifts."
        (dolist (cell cells)
          (grid-set-style-at source (nth 0 cell) (nth 1 cell)
                             (nth (if forward 3 2) cell)))
+       (when (grid-table-etaf--text-format-changed-p cells)
+         (grid-table-recalculate source))
        (grid-table-etaf--bump state)
        (grid-table-etaf--settle state))
       (`(conditionals ,old ,new)
@@ -1644,7 +1694,10 @@ change is one undoable step.  Covered cells of a merge are skipped."
               (grid-set-style-at source row col new)
               (push (list row col old new) changed)))))))
     (when changed
-      (grid-table-etaf--record state (cons 'styles (nreverse changed))))
+      (when (grid-table-etaf--text-format-changed-p changed)
+        (grid-table-recalculate source))
+      (grid-table-etaf--record state (cons 'styles (nreverse changed)))
+      (grid-table-etaf--widen-visible state))
     (grid-table-etaf--bump state)
     (grid-table-etaf--settle state)
     (length changed)))
@@ -1708,6 +1761,78 @@ change is one undoable step.  Covered cells of a merge are skipped."
   "Align the selection to the right."
   (interactive)
   (grid-table-etaf--set-format :align 'right))
+
+(defun grid-table-etaf--cursor-format ()
+  "Return the format the cursor cell is shown with."
+  (let* ((cursor (grid-table-etaf--cursor))
+         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor))))
+    (grid-table-cell-format grid-table--data-source
+                            (nth 0 extent) (nth 1 extent))))
+
+(defun grid-table-etaf-format-general ()
+  "Show the selection in the general format."
+  (interactive)
+  (grid-table-etaf--set-format :format nil))
+
+(defun grid-table-etaf-format-number (decimals)
+  "Show the selection as numbers with DECIMALS decimal places.
+The whole part is grouped in thousands."
+  (interactive (list (read-number "Decimal places: " 2)))
+  (grid-table-etaf--set-format
+   :format (list 'number (max 0 (min 12 (truncate decimals))) t)))
+
+(defun grid-table-etaf-format-percent ()
+  "Show the selection as percentages, so 0.125 reads 12.5%."
+  (interactive)
+  (grid-table-etaf--set-format
+   :format (list 'percent
+                 (or (grid-format-decimals (grid-table-etaf--cursor-format))
+                     0))))
+
+(defun grid-table-etaf-format-currency (symbol)
+  "Show the selection as amounts of money led by SYMBOL."
+  (interactive
+   (list (read-string (format "Currency symbol (default %s): "
+                              grid-table-currency-symbol)
+                      nil nil grid-table-currency-symbol)))
+  (grid-table-etaf--set-format :format (list 'currency 2 symbol)))
+
+(defun grid-table-etaf-format-date (pattern)
+  "Show the numbers of the selection as dates written after PATTERN.
+PATTERN is made of yyyy, yy, mm, m, dd, d, hh, h and ss."
+  (interactive
+   (list (completing-read "Date format (default yyyy-mm-dd): "
+                          grid-format-date-patterns nil nil nil nil
+                          "yyyy-mm-dd")))
+  (grid-table-etaf--set-format :format (list 'date pattern)))
+
+(defun grid-table-etaf-format-text ()
+  "Keep the selection as text: what is typed there is never a number."
+  (interactive)
+  (grid-table-etaf--set-format :format (list 'text)))
+
+(defun grid-table-etaf--change-decimals (delta)
+  "Show the selection with DELTA more decimal places than the cursor cell."
+  (let* ((format (grid-table-etaf--cursor-format))
+         (decimals (or (grid-format-decimals format) 0)))
+    (grid-table-etaf--restyle
+     (lambda (style)
+       (plist-put style :format
+                  (grid-format-with-decimals
+                   (if (grid-format-decimals (plist-get style :format))
+                       (plist-get style :format)
+                     format)
+                   (+ decimals delta)))))))
+
+(defun grid-table-etaf-more-decimals ()
+  "Show one more decimal place in the selection."
+  (interactive)
+  (grid-table-etaf--change-decimals 1))
+
+(defun grid-table-etaf-fewer-decimals ()
+  "Show one decimal place less in the selection."
+  (interactive)
+  (grid-table-etaf--change-decimals -1))
 
 (defun grid-table-etaf-clear-format ()
   "Remove every style from the selection."
@@ -1845,7 +1970,8 @@ cells' formats."
                  state source range
                  (lambda (source row col)
                    (grid-table-etaf--display-text
-                    (grid-get-computed-value-at source row col)))))))
+                    (grid-get-computed-value-at source row col)
+                    (grid-table-cell-format source row col)))))))
     (kill-new text)
     (setq grid-table-etaf--clipboard
           (list text
@@ -1944,9 +2070,14 @@ the formats of the cells it lands in."
     (let ((count (grid-table-etaf--as-one-step
                   state
                   (lambda ()
-                    (prog1 (grid-table-etaf--set-cells state (nreverse changes))
-                      (grid-table-etaf--set-styles state
-                                                   (nreverse styles)))))))
+                    (if own
+                        (prog1 (grid-table-etaf--set-cells
+                                state (nreverse changes))
+                          (grid-table-etaf--set-styles state
+                                                       (nreverse styles)))
+                      ;; Text from elsewhere is read as if it were typed.
+                      (grid-table-etaf--enter-cells
+                       state (nreverse changes)))))))
       (grid-table-etaf-goto bottom right)
       (grid-table-etaf-goto top left t)
       (message "Pasted %d cell%s" count (if (= count 1) "" "s")))))
