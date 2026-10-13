@@ -102,6 +102,14 @@
   (should (equal (grid-table-formula-test--eval "=MIN(B1:D1)" "1" "0" "2") 0))
   (should (equal (grid-table-formula-test--eval "=SUM(B1:D1)" "1" "x" "") 1)))
 
+(ert-deftest grid-table-formula-count-counts-numbers ()
+  ;; COUNT used to be shadowed by the frequency chart, now COUNTPLOT.
+  (should (equal (grid-table-formula-test--eval "=COUNT(B1:E1)" "1" "x" "0" "")
+                 2))
+  (should (plist-get (grid-table-formula-test--eval
+                      "=COUNTPLOT(B1:D1,\"Fruit\")" "a" "b" "a")
+                     :grid-chart)))
+
 (ert-deftest grid-table-formula-multi-branch-functions-return ()
   (should (equal (grid-table-formula-test--eval
                   "=IFS(B1>5,\"big\",B1>1,\"mid\",TRUE,\"small\")" "3")

@@ -1268,9 +1268,10 @@ Usage: =DENSITY(data, [title], [width], [height])"
                                 :width (or width 40)
                                 :height (or height 15))))
 
-(grid-calc-defun COUNT (values &optional title reverse width)
+(grid-calc-defun COUNTPLOT (values &optional title reverse width)
   "Formula to create a Count/Frequency bar chart.
-Usage: =COUNT(values, [title], [reverse], [width])"
+Usage: =COUNTPLOT(values, [title], [reverse], [width])
+COUNT itself counts the numbers in a range, as in a spreadsheet."
   (ignore model)
   (grid-chart-make-object 'count
                           (list :values values)

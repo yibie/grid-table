@@ -9,7 +9,7 @@
 
         ;; New Chart Types
         ("Histogram" "5" "8" "12" "8" "5" "=HISTOGRAM(B6:F6, 3, \"Distribution\")")
-        ("Count" "Apple" "Banana" "Apple" "Orange" "Apple" "=COUNT(B7:F7, \"Fruit Count\")")
+        ("Count" "Apple" "Banana" "Apple" "Orange" "Apple" "=COUNTPLOT(B7:F7, \"Fruit Count\")")
 
         ;; Multi-series
         ("Series1" "10" "20" "15" "25" "" "=MULTILINE(B1:E1, B8:E8, B9:E9, \"Multi-Line\")")

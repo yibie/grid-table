@@ -106,12 +106,43 @@ follows the window.")
   (buffer-local-value 'grid-table--data-source
                       (grid-table-etaf--state-buffer state)))
 
+(defvar grid-table-etaf--chart-cache
+  (make-hash-table :test 'eq :weakness 'key)
+  "Drawings of chart values, so that a chart is drawn once per value.")
+
+(defun grid-table-etaf--chart-p (value)
+  "Return non-nil when computed VALUE is a chart."
+  (and (consp value) (plist-get value :grid-chart)))
+
+(defun grid-table-etaf--chart-text (chart)
+  "Return the text drawing of CHART, or a placeholder when it fails."
+  (or (gethash chart grid-table-etaf--chart-cache)
+      (puthash chart
+               (condition-case nil
+                   (string-trim-right (grid-table-chart-content chart) "\n+")
+                 (error "[Chart]"))
+               grid-table-etaf--chart-cache)))
+
 (defun grid-table-etaf--display-text (value)
   "Return the text shown for computed VALUE."
   (cond ((null value) "")
         ((stringp value) value)
-        ((and (listp value) (plist-get value :grid-chart)) "[Chart]")
+        ((grid-table-etaf--chart-p value) (grid-table-etaf--chart-text value))
         (t (format "%s" value))))
+
+(defconst grid-table-etaf--max-chart-width 120
+  "Widest column a chart may ask for, in characters.")
+
+(defun grid-table-etaf--value-width (value)
+  "Return the column width computed VALUE asks for, in characters.
+A chart is drawn at its own size, so it is not held to the width limit
+of ordinary text, which wraps instead."
+  (let ((width (grid-table-etaf--text-width
+                (grid-table-etaf--display-text value))))
+    (if (grid-table-etaf--chart-p value)
+        (max grid-table-etaf-min-column-width
+             (min grid-table-etaf--max-chart-width width))
+      (grid-table-etaf--clamp-width width))))
 
 (defun grid-table-etaf--text-width (text)
   "Return the column width TEXT asks for, in characters."
@@ -140,13 +171,13 @@ Covered cells and horizontally merged anchors do not widen a column."
           (unless (and merge
                        (or (/= (nth 1 merge) (nth 3 merge))
                            (/= row (nth 0 merge))))
-            (let ((width (grid-table-etaf--text-width
-                          (grid-table-etaf--display-text
-                           (grid-get-computed-value-at source row col)))))
+            (let ((width (grid-table-etaf--value-width
+                          (grid-get-computed-value-at source row col))))
               (when (> width (aref widths col))
                 (aset widths col width)))))))
     (dotimes (col cols)
-      (aset widths col (grid-table-etaf--clamp-width (aref widths col))))
+      (aset widths col (max grid-table-etaf-min-column-width
+                            (aref widths col))))
     widths))
 
 (defun grid-table-etaf--fit-widths (state)
@@ -185,12 +216,15 @@ Covered cells and horizontally merged anchors do not widen a column."
       (setq col (1+ col)))
     (nreverse result)))
 
-(defun grid-table-etaf--cell-lines (text width)
-  "Estimate how many lines TEXT takes in a cell WIDTH characters wide."
-  (cond ((grid-table--extract-image-path text)
-         grid-table-image-target-char-height)
-        ((string-empty-p text) 1)
-        (t (length (grid-table--wrap-text text width)))))
+(defun grid-table-etaf--cell-lines (value width)
+  "Estimate how many lines computed VALUE takes in a cell WIDTH wide."
+  (let ((text (grid-table-etaf--display-text value)))
+    (cond ((grid-table-etaf--chart-p value)
+           (length (split-string text "\n")))
+          ((grid-table--extract-image-path text)
+           grid-table-image-target-char-height)
+          ((string-empty-p text) 1)
+          (t (length (grid-table--wrap-text text width))))))
 
 (defun grid-table-etaf--row-lines (state row cols merges)
   "Estimate the height of ROW over COLS in STATE, in lines."
@@ -202,8 +236,7 @@ Covered cells and horizontally merged anchors do not widen a column."
         (setq lines
               (max lines
                    (grid-table-etaf--cell-lines
-                    (grid-table-etaf--display-text
-                     (grid-get-computed-value-at source row col))
+                    (grid-get-computed-value-at source row col)
                     (aref widths col))))))
     lines))
 
@@ -446,7 +479,7 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c C-w" grid-table-write-file "Save")
     ("C-c C-f" grid-table-find-file "Open")
     ("C-c s" grid-table-sort-column "Sort")
-    ("C-c m" grid-table-merge-cells "Merge")
+    ("C-c m" grid-table-etaf-merge "Merge")
     ("C-c u" grid-table-unmerge-cell "Unmerge")
     ("C-c v" grid-table-view-chart "View chart")
     ("C-c i" grid-table-insert-chart "Insert chart"))
@@ -514,6 +547,8 @@ position, the node key and the paint state of the cell."
            :grid-row (if span (list grid-row :span (car span)) grid-row)
            :grid-column (if span (list grid-col :span (cdr span)) grid-col)
            :padding '((lh 0) (ch 1))
+           ;; A chart is a drawing: wrapping its lines would break it.
+           :wrap-mode (and (not editing) (grid-table-etaf--chart-p value) 'none)
            :text-align (cond ((plist-get style :align))
                              ((and (not editing)
                                    (grid-table-etaf--numeric-p value))
@@ -1075,10 +1110,8 @@ Columns only shrink on `grid-table-refresh'."
                                (/= row (nth 0 merge)))))
             (aset widths col
                   (max (aref widths col)
-                       (grid-table-etaf--clamp-width
-                        (grid-table-etaf--text-width
-                         (grid-table-etaf--display-text
-                          (grid-get-computed-value-at source row col))))))))))))
+                       (grid-table-etaf--value-width
+                        (grid-get-computed-value-at source row col))))))))))
 
 (defun grid-table-etaf--end-session (state)
   "End STATE's input session and return its text, or nil without one."
@@ -1295,6 +1328,18 @@ previous model is all that undoing them needs."
     (pop (grid-table-etaf--state-redo state))
     (push record (grid-table-etaf--state-undo state))
     (grid-table-etaf--replay state record t)))
+
+(defun grid-table-etaf-merge ()
+  "Merge the selected range into one cell, or ask for a range to merge.
+Only the top left cell of the range may hold a value."
+  (interactive)
+  (let ((range (grid-table-etaf-selection)))
+    (if (and (= (nth 0 range) (nth 2 range)) (= (nth 1 range) (nth 3 range)))
+        (call-interactively #'grid-table-merge-cells)
+      (grid-table-merge-cells
+       (format "%s:%s"
+               (grid-table-etaf--address (nth 0 range) (nth 1 range))
+               (grid-table-etaf--address (nth 2 range) (nth 3 range)))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Formatting

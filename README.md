@@ -92,6 +92,8 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 
   Formatting applies to the selection: `C-c f b` bold, `C-c f i` italic, `C-c f c` text color, `C-c f g` fill color, `C-c f l`/`e`/`r` align left, center or right, `C-c f x` clear. `C-c f n` adds a conditional format (for example "greater than 100" in red) that keeps following the values, and `C-c f N` removes the ones touching the selection. Formats move with their cells when rows and columns are inserted, deleted or sorted, and are saved in the `.grid` file. A file with formats is written as format version 4, which earlier releases cannot open; files without formats keep their older version.
 
+  With several cells selected, `C-c m` merges them into one; the range can be a rectangle, not only a row or a column (the classic renderer shows a rectangular merge as separate cells). A chart formula is drawn inside its cell at the chart's own size, so its row and column grow to fit; `C-c v` still opens it in its own buffer.
+
 - `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete.
 
 Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/checkouts`.
@@ -187,7 +189,7 @@ grid-table provides built-in chart functions that render ASCII/Unicode charts di
 | Histogram     | `HISTOGRAM`  | Distribution histogram           |
 | Box Plot      | `BOXPLOT`    | Statistical box plot             |
 | Density       | `DENSITY`    | KDE density curve                |
-| Count         | `COUNT`      | Frequency count chart            |
+| Count         | `COUNTPLOT`  | Frequency count chart            |
 | Multi-line    | `MULTILINE`  | Multiple series line chart       |
 | Sparkline     | `SPARKLINE`  | Compact inline trend             |
 
@@ -280,7 +282,7 @@ Add demo screenshots under `pictures/` and they will render here.
 | `HISTOGRAM` | <img alt="HISTOGRAM preview" src="pictures/chart-histogram.png" width="260" /> |
 | `BOXPLOT` | <img alt="BOXPLOT preview" src="pictures/chart-boxplot.png" width="260" /> |
 | `DENSITY` | <img alt="DENSITY preview" src="pictures/chart-density.png" width="260" /> |
-| `COUNT` | <img alt="COUNT preview" src="pictures/chart-count.png" width="260" /> |
+| `COUNTPLOT` | <img alt="COUNTPLOT preview" src="pictures/chart-count.png" width="260" /> |
 | `MULTILINE` | <img alt="MULTILINE preview" src="pictures/chart-multiline.png" width="260" /> |
 | `SPARKLINE` | <img alt="SPARKLINE preview" src="pictures/chart-sparkline.png" width="260" /> |
 

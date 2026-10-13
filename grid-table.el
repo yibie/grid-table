@@ -333,6 +333,15 @@ cannot be loaded."
               :display-col-idx col-start
               :display-col-end-idx col-end)))))
 
+(defun grid-table--classic-merges (source)
+  "Return the merges of SOURCE the classic renderer can draw.
+It draws merges along one row or one column; a rectangular merge is
+shown as separate cells, of which only the first holds a value."
+  (cl-remove-if (lambda (merge)
+                  (and (< (nth 0 merge) (nth 2 merge))
+                       (< (nth 1 merge) (nth 3 merge))))
+                (grid-get-merges source)))
+
 (defun grid-table--merge-at (merges row col)
   "Return the range in MERGES covering ROW and COL."
   (cl-find-if (lambda (merge)
@@ -517,7 +526,7 @@ Returns the valid, existing path if found, otherwise nil."
          (get-header-fn (gethash :get-header-value data-source))
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
-         (merges (grid-get-merges data-source))
+         (merges (grid-table--classic-merges data-source))
          (headers (cl-loop for c from 0 below num-cols
                            collect (funcall get-header-fn data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
@@ -892,16 +901,19 @@ Nil denotes the outside of the table; row -1 is the ABC header."
 
 ;;;###autoload
 (defun grid-table-merge-cells (range)
-  "Merge a horizontal or vertical A1-style RANGE."
+  "Merge the cells of A1-style RANGE.
+The classic renderer only takes a range along one row or one column."
   (interactive (list (read-string "Merge range (e.g. B1:D1 or B2:B9): ")))
   (let* ((parts (split-string range ":" t "[[:space:]]*"))
          (start (and (= (length parts) 2)
                      (grid-table--parse-cell-address (car parts))))
          (end (and start
                    (grid-table--parse-cell-address (cadr parts)))))
-    (unless (and start end
-                 (xor (= (car start) (car end))
-                      (= (cadr start) (cadr end))))
+    (unless (and start end)
+      (user-error "Merge range must look like B1:D1"))
+    (unless (or (grid-table--etaf-p)
+                (xor (= (car start) (car end))
+                     (= (cadr start) (cadr end))))
       (user-error "Merge range must span exactly one row or one column"))
     (let* ((top (min (car start) (car end)))
            (left (min (cadr start) (cadr end)))
@@ -1234,7 +1246,7 @@ If called interactively, deletes the current column."
          (get-header-fn (gethash :get-header-value grid-table--data-source))
          (num-rows (funcall get-row-count-fn grid-table--data-source))
          (num-cols (funcall get-col-count-fn grid-table--data-source))
-         (merges (grid-get-merges grid-table--data-source))
+         (merges (grid-table--classic-merges grid-table--data-source))
          (headers (cl-loop for c from 0 below num-cols
                            collect (funcall get-header-fn grid-table--data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
@@ -1433,6 +1445,51 @@ skipping regions with a `display' property (like images)."
     ('count '(:width 50 :height 10 :grid nil))
     (_ '(:width 60 :height 20 :grid t))))
 
+(defun grid-table-chart-content (chart)
+  "Return the text drawing of CHART, the value of a chart formula."
+  (let* ((type (plist-get chart :type))
+         (data (plist-get chart :data))
+         (options (plist-get chart :options))
+         (defaults (grid-table--chart-type-defaults type))
+         (params (grid-chart--options-to-params options defaults)))
+    (cond
+     ((eq type 'bar)
+      (grid-chart-barplot (plist-get data :labels)
+                          (plist-get data :values)
+                          params))
+     ((eq type 'column)
+      (grid-chart-columnplot (plist-get data :labels)
+                             (plist-get data :values)
+                             params))
+     ((eq type 'line)
+      (grid-chart-lineplot (plist-get data :x)
+                           (plist-get data :y)
+                           params
+                           'line))
+     ((eq type 'scatter)
+      (grid-chart-lineplot (plist-get data :x)
+                           (plist-get data :y)
+                           params
+                           'scatter))
+     ((eq type 'histogram)
+      (grid-chart-histogram (plist-get data :values)
+                            params))
+     ((eq type 'boxplot)
+      (grid-chart-boxplot (plist-get data :series)
+                          params))
+     ((eq type 'multiline)
+      (grid-chart-multiline (plist-get data :x)
+                            (plist-get data :series)
+                            params))
+     ((eq type 'density)
+      (grid-chart-density (plist-get data :data)
+                          nil  ; unused parameter for API compatibility
+                          params))
+     ((eq type 'count)
+      (grid-chart-count (plist-get data :values)
+                        params))
+     (t (format "Unknown chart type: %s" type)))))
+
 (defun grid-table-view-chart ()
   "View the chart in the current cell in a separate buffer."
   (interactive)
@@ -1443,49 +1500,7 @@ skipping regions with a `display' property (like images)."
               (data-col (1- col))
               (val (grid-get-computed-value-at grid-table--data-source row data-col)))
     (if (and (listp val) (plist-get val :grid-chart))
-        (let* ((type (plist-get val :type))
-               (data (plist-get val :data))
-               (options (plist-get val :options))
-               (defaults (grid-table--chart-type-defaults type))
-               (params (grid-chart--options-to-params options defaults))
-               (chart-content
-                (cond
-                 ((eq type 'bar)
-                  (grid-chart-barplot (plist-get data :labels)
-                                      (plist-get data :values)
-                                      params))
-                 ((eq type 'column)
-                  (grid-chart-columnplot (plist-get data :labels)
-                                         (plist-get data :values)
-                                         params))
-                 ((eq type 'line)
-                  (grid-chart-lineplot (plist-get data :x)
-                                       (plist-get data :y)
-                                       params
-                                       'line))
-                 ((eq type 'scatter)
-                  (grid-chart-lineplot (plist-get data :x)
-                                       (plist-get data :y)
-                                       params
-                                       'scatter))
-                 ((eq type 'histogram)
-                  (grid-chart-histogram (plist-get data :values)
-                                        params))
-                 ((eq type 'boxplot)
-                  (grid-chart-boxplot (plist-get data :series)
-                                      params))
-                 ((eq type 'multiline)
-                  (grid-chart-multiline (plist-get data :x)
-                                        (plist-get data :series)
-                                        params))
-                ((eq type 'density)
-                 (grid-chart-density (plist-get data :data)
-                                     nil  ; unused parameter for API compatibility
-                                     params))
-                 ((eq type 'count)
-                  (grid-chart-count (plist-get data :values)
-                                    params))
-                 (t (format "Unknown chart type: %s" type)))))
+        (let ((chart-content (grid-table-chart-content val)))
           (with-current-buffer (get-buffer-create "*Grid Plot*")
             (read-only-mode -1)
             (erase-buffer)

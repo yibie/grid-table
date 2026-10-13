@@ -51,8 +51,12 @@
                 '(("H1" "" "")
                   ("a" "" "")
                   ("" "" "")))))
-    (should-error (grid-model-merge-cells model 1 0 2 1))
-    (should-error (grid-model-merge-cells model 0 0 1 0))))
+    ;; A rectangle is a merge like any other; it still cannot take row 0.
+    (should (equal (grid-model-get-merges
+                    (grid-model-merge-cells model 1 0 2 1))
+                   '((1 0 2 1))))
+    (should-error (grid-model-merge-cells model 0 0 1 0))
+    (should-error (grid-model-merge-cells model 0 0 1 1))))
 
 (ert-deftest grid-table-validation-keeps-first-overlapping-range ()
   (let ((model (grid-model-create 1 5 '(("" "" "" "" ""))))

@@ -92,6 +92,8 @@
 
   格式作用于选区：`C-c f b` 加粗，`C-c f i` 斜体，`C-c f c` 文字颜色，`C-c f g` 填充色，`C-c f l`/`e`/`r` 左对齐、居中、右对齐，`C-c f x` 清除。`C-c f n` 添加条件格式（例如「大于 100」标红），之后随数值变化自动生效，`C-c f N` 移除与选区相交的条件格式。增删行列和排序时格式跟随单元格移动，并保存在 `.grid` 文件里。带格式的文件以版本 4 写出，旧版本打不开；不带格式的文件仍按原来的旧版本保存。
 
+  选中多个单元格后按 `C-c m` 合并为一格；范围可以是矩形，不限于单行或单列（classic 渲染器把矩形合并显示为分开的单元格）。图表公式直接画在所在单元格里，按图表自身的尺寸撑开行高和列宽；`C-c v` 仍可在独立 buffer 里查看。
+
 - `classic` 用边框字符直接画进 buffer，通过 minibuffer 编辑。它是迁移到 ETAF 期间的兜底选择：ETAF 无法加载时自动使用，迁移完成后移除。
 
 运行测试：`make test-classic` 与 `make test-etaf ETAF_SRC=/path/to/checkouts`。
@@ -187,7 +189,7 @@ grid-table 内置图表公式功能，可直接在单元格中渲染 ASCII/Unico
 | 直方图      | `HISTOGRAM`  | 分布直方图           |
 | 箱线图      | `BOXPLOT`    | 统计箱线图           |
 | 密度图      | `DENSITY`    | KDE 密度曲线         |
-| 频率图      | `COUNT`      | 频率统计图           |
+| 频率图      | `COUNTPLOT`  | 频率统计图           |
 | 多线图      | `MULTILINE`  | 多系列折线图         |
 | 迷你图      | `SPARKLINE`  | 紧凑的内联趋势线     |
 
@@ -280,7 +282,7 @@ grid-table 内置图表公式功能，可直接在单元格中渲染 ASCII/Unico
 | `HISTOGRAM` | <img alt="HISTOGRAM 预览" src="pictures/chart-histogram.png" width="260" /> |
 | `BOXPLOT` | <img alt="BOXPLOT 预览" src="pictures/chart-boxplot.png" width="260" /> |
 | `DENSITY` | <img alt="DENSITY 预览" src="pictures/chart-density.png" width="260" /> |
-| `COUNT` | <img alt="COUNT 预览" src="pictures/chart-count.png" width="260" /> |
+| `COUNTPLOT` | <img alt="COUNTPLOT 预览" src="pictures/chart-count.png" width="260" /> |
 | `MULTILINE` | <img alt="MULTILINE 预览" src="pictures/chart-multiline.png" width="260" /> |
 | `SPARKLINE` | <img alt="SPARKLINE 预览" src="pictures/chart-sparkline.png" width="260" /> |
 

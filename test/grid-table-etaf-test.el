@@ -436,6 +436,64 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-clear-conditional-formats)
     (should-not (grid-get-conditional-formats source))))
 
+(ert-deftest grid-table-etaf-merges-the-selected-rectangle ()
+  (grid-table-etaf-test--with-grid (8 6)
+    (dolist (cell '((2 2) (3 1) (3 2) (4 1) (4 2)))
+      (grid-table-etaf-set-cell (car cell) (cadr cell) ""))
+    (grid-table-etaf-goto 2 1)
+    (grid-table-etaf-goto 4 2 t)
+    (grid-table-etaf-merge)
+    (should (equal (grid-get-merges grid-table--data-source) '((2 1 4 2))))
+    ;; The cursor anywhere inside is the one merged cell.
+    (grid-table-etaf-goto 3 2)
+    (let ((cell (grid-table-get-cell-at-point)))
+      (should (equal (plist-get cell :anchor-row) 2))
+      (should (equal (plist-get cell :row-end) 4))
+      (should (equal (plist-get cell :col-start) 2))
+      (should (equal (plist-get cell :col-end) 3)))
+    (should (grid-table-etaf-test--cursor-painted-p))
+    (should (equal (etaf-host-ref-size
+                    (etaf-runtime-for-buffer (current-buffer))
+                    (grid-table-etaf--slot-ref 2 1))
+                   ;; Two 5-wide columns with their padding and grid lines,
+                   ;; three rows tall.
+                   '(16 . 3)))
+    ;; Movement leaves the rectangle by its edges.
+    (grid-table-next-line)
+    (should (equal (grid-table-etaf--cursor) '(5 . 2)))
+    (grid-table-etaf-goto 3 2)
+    (grid-table-cell-left)
+    (should (equal (grid-table-etaf--cursor) '(3 . 0)))
+    ;; A non-empty covered cell refuses the merge and changes nothing.
+    (grid-table-etaf-goto 5 3)
+    (grid-table-etaf-goto 6 4 t)
+    (should-error (grid-table-etaf-merge))
+    (should (equal (grid-get-merges grid-table--data-source) '((2 1 4 2))))
+    (grid-table-etaf-goto 3 1)
+    (grid-table-unmerge-cell)
+    (should-not (grid-get-merges grid-table--data-source))))
+
+(ert-deftest grid-table-etaf-charts-are-drawn-in-their-cell ()
+  (grid-table-etaf-test--with-grid (6 5 160 30)
+    (grid-table-etaf-set-cell 2 4 "=COUNTPLOT(A2:A6,\"Counts\")")
+    (let ((value (grid-get-computed-value-at source 2 4))
+          (text (grid-table-etaf-test--text)))
+      (should (plist-get value :grid-chart))
+      (should-not (string-match-p "\\[Chart\\]" text))
+      (should (string-match-p "Counts" text))
+      ;; The column and the row grew to the size of the drawing.
+      (let ((drawing (grid-table-chart-content value)))
+        (should (>= (aref (grid-table-etaf--state-widths grid-table-etaf--state)
+                          4)
+                    (apply #'max (mapcar #'string-width
+                                         (split-string drawing "\n")))))
+        (should (> (count-lines (point-min) (point-max)) 10))))
+    ;; Editing shows the formula, not the drawing.
+    (grid-table-etaf-goto 2 4)
+    (should (string-match-p "=COUNTPLOT" (car (split-string
+                                               (grid-table-etaf-test--text)
+                                               "\n"))))))
+
 (ert-deftest grid-table-etaf-keys-reach-the-sheet ()
   (grid-table-etaf-test--with-grid (6 5)
     (switch-to-buffer buffer)
