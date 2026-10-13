@@ -25,7 +25,8 @@
   (should (equal (grid-table-formula-test--eval "=-B1*2" "3") -6))
   (should (equal (grid-table-formula-test--eval "=10/4") 2.5))
   (should (equal (grid-table-formula-test--eval "=10/5") 2))
-  (should (equal (grid-table-formula-test--eval "=7%4") 3))
+  (should (equal (grid-table-formula-test--eval "=MOD(7,4)") 3))
+  (should (equal (grid-table-formula-test--eval "=200*5%") 10))
   (should (equal (grid-table-formula-test--eval "=1+2*3") 7))
   (should (equal (grid-table-formula-test--eval "=(1+2)*3") 9))
   (should (equal (grid-table-formula-test--eval "=B1&\"x\"" "1") "1x"))
@@ -98,7 +99,7 @@
 
 (ert-deftest grid-table-formula-aggregates-count-zeros ()
   (should (equal (grid-table-formula-test--eval "=AVERAGE(B1:D1)" "1" "0" "2")
-                 1.0))
+                 1))
   (should (equal (grid-table-formula-test--eval "=MIN(B1:D1)" "1" "0" "2") 0))
   (should (equal (grid-table-formula-test--eval "=SUM(B1:D1)" "1" "x" "") 1)))
 
@@ -356,6 +357,45 @@
                              (grid-model-get-cell sorted row 0)))
                    ;; Equal results keep their original order.
                    '("a" "b" "c")))))
+
+(ert-deftest grid-table-formulas-follow-spreadsheet-conventions ()
+  (let* ((source (make-default-data-source
+                  '("" "" "" "")
+                  '(("1" "2" "3" "") ("4" "5" "6" "") ("" "" "" ""))))
+         (value (lambda (formula)
+                  (grid-set-raw-value-at source 2 3 formula)
+                  (grid-get-computed-value-at source 2 3))))
+    ;; Aggregates take any number of values and ranges.
+    (should (equal (funcall value "=SUM(1,2,3)") 6))
+    (should (equal (funcall value "=SUM(A1:A2,B1)") 7))
+    (should (equal (funcall value "=AVERAGE(1,2)") 1.5))
+    (should (equal (funcall value "=MAX(1,5,3)") 5))
+    (should (equal (funcall value "=MIN(A1:C1,0)") 0))
+    (should (equal (funcall value "=COUNT(A1:C2,7)") 7))
+    (should (equal (funcall value "=COUNTA(A1:B2,\"x\")") 5))
+    ;; IF only evaluates the branch it picks.
+    (should (equal (funcall value "=IF(TRUE,1,1/0)") 1))
+    (should (equal (funcall value "=IF(FALSE,1/0,2)") 2))
+    (should (equal (funcall value "=IF(1/0,1,2)") "#DIV/0!"))
+    ;; A percent sign divides by 100.
+    (should (equal (funcall value "=10%") 0.1))
+    (should (equal (funcall value "=A2*50%") 2))
+    (should (equal (funcall value "=-10%") -0.1))
+    (should (equal (funcall value "=MOD(7,3)") 1))
+    ;; ROUND takes a half away from zero.
+    (should (equal (funcall value "=ROUND(2.5,0)") 3))
+    (should (equal (funcall value "=ROUND(-2.5,0)") -3))
+    (should (equal (funcall value "=ROUND(1.005,2)") 1.01))
+    ;; Whole columns and whole rows.
+    (should (equal (funcall value "=SUM(A:A)") 5))
+    (should (equal (funcall value "=SUM(B:C)") 16))
+    (should (equal (funcall value "=SUM($1:$2)") 21))
+    (should (equal (funcall value "=SUM(D:D)") "#CYCLE!"))
+    ;; XLOOKUP
+    (should (equal (funcall value "=XLOOKUP(4,A:A,C:C)") "6"))
+    (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2,\"none\")") "none"))
+    (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2)") "#N/A"))
+    (should (equal (funcall value "=XLOOKUP(1,A1:A2,B1:B2,1/0)") "2"))))
 
 (ert-deftest grid-table-sort-keeps-a-formula-reading-its-own-row ()
   (let* ((model (grid-model-create

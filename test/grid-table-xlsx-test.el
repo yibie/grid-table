@@ -192,7 +192,7 @@
     (let ((first (grid-table-xlsx-create-data-source file "销售"))
           (second (grid-table-xlsx-create-data-source file "Sheet2")))
       (should (equal (grid-table-xlsx-test--raw first 2 2) "30"))
-      (should (equal (grid-get-computed-value-at first 2 4) 75.0))
+      (should (equal (grid-get-computed-value-at first 2 4) 75))
       (should (equal (grid-model-get-merges (gethash :model first))
                      '((6 1 7 3))))
       (should (equal (grid-table-xlsx-test--raw second 0 0) "=销售!E6*2"))

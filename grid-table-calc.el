@@ -166,6 +166,10 @@ AST: The Abstract Syntax Tree to evaluate."
      (grid-calc-eval-ifs-function model args))
     (`(FUNCTION-CALL "VLOOKUP" ,args)
      (grid-calc-eval-vlookup-function model args))
+    (`(FUNCTION-CALL "XLOOKUP" ,args)
+     (grid-calc-eval-xlookup-function model args))
+    (`(FUNCTION-CALL "IF" ,args)
+     (grid-calc-eval-if-function model args))
 
     ;; Elisp code execution
     (`(ELISP-CODE ,code-str)
@@ -225,14 +229,16 @@ AST: The Abstract Syntax Tree to evaluate."
   "Applies a binary operator."
   (pcase op
     ;; Arithmetic operations
-    ('+ (+ (grid-calc-to-number left) (grid-calc-to-number right)))
-    ('- (- (grid-calc-to-number left) (grid-calc-to-number right)))
-    ('* (* (grid-calc-to-number left) (grid-calc-to-number right)))
+    ('+ (grid-calc--tidy-number
+         (+ (grid-calc-to-number left) (grid-calc-to-number right))))
+    ('- (grid-calc--tidy-number
+         (- (grid-calc-to-number left) (grid-calc-to-number right))))
+    ('* (grid-calc--tidy-number
+         (* (grid-calc-to-number left) (grid-calc-to-number right))))
     ('/ (let ((r (grid-calc-to-number right)))
           (if (= r 0)
               (error "Division by zero")
             (grid-calc--tidy-number (/ (float (grid-calc-to-number left)) r)))))
-    ('% (mod (grid-calc-to-number left) (grid-calc-to-number right)))
     ('^ (expt (grid-calc-to-number left) (grid-calc-to-number right)))
     
     ;; Comparison operations
@@ -258,6 +264,7 @@ AST: The Abstract Syntax Tree to evaluate."
     ('+ (grid-calc-to-number operand))
     ('- (- (grid-calc-to-number operand)))
     ('NOT (not operand))
+    ('% (grid-calc--tidy-number (/ (grid-calc-to-number operand) 100.0)))
     (_ (error "Unknown unary operator: %s" op))))
 
 ;;;----------------------------------------------------------------------
@@ -599,26 +606,44 @@ and those that name it."
                  (< col (grid-data-model-cols model)))
         (grid-calc--value model row col)))))
 
+(defun grid-calc--reference-coords (ref-str)
+  "Return (ROW . COL) for REF-STR, zero-based.
+ROW is nil for a whole column such as A, COL is nil for a whole row such
+as 2.  Return nil when REF-STR is no reference."
+  (when (and (string-match "\\`\\$?\\([A-Za-z]+\\)?\\$?\\([0-9]+\\)?\\'" ref-str)
+             (or (match-beginning 1) (match-beginning 2)))
+    (cons (and (match-beginning 2)
+               (1- (string-to-number (match-string 2 ref-str))))
+          (and (match-beginning 1)
+               (grid-calc-col-letter-to-number (match-string 1 ref-str))))))
+
+(defun grid-calc--range-bounds (model start-cell-ref-ast end-cell-ref-ast)
+  "Return (MODEL ROW-START ROW-END COL-START COL-END) for a range.
+MODEL is the sheet the range reads.  Whole columns and whole rows reach
+the edges of the sheet, and the bounds are kept inside it; an end before
+its start means nothing of the range is on the sheet."
+  (let* ((model (grid-calc--sheet-model model (nth 2 start-cell-ref-ast)))
+         (start (grid-calc--reference-coords (cadr start-cell-ref-ast)))
+         (end (grid-calc--reference-coords (cadr end-cell-ref-ast)))
+         (last-row (1- (grid-data-model-rows model)))
+         (last-col (1- (grid-data-model-cols model))))
+    (unless (and start end)
+      (error "Invalid range"))
+    (let ((row-a (or (car start) 0)) (row-b (or (car end) last-row))
+          (col-a (or (cdr start) 0)) (col-b (or (cdr end) last-col)))
+      (list model
+            (max 0 (min row-a row-b)) (min last-row (max row-a row-b))
+            (max 0 (min col-a col-b)) (min last-col (max col-a col-b))))))
+
 (defun grid-calc-get-range-values (model start-cell-ref-ast end-cell-ref-ast)
   "Retrieves a flat list of computed values from a range."
-  (let* ((model (grid-calc--sheet-model model (nth 2 start-cell-ref-ast)))
-         (start-ref-str (cadr start-cell-ref-ast)) ; Extract "A1" from (CELL-REF "A1")
-         (end-ref-str (cadr end-cell-ref-ast))
-         (start-ref (grid-calc-parse-cell-ref start-ref-str))
-         (end-ref (grid-calc-parse-cell-ref end-ref-str))
-         (values '()))
-    
-    (when (and start-ref end-ref (plist-get start-ref :row) (plist-get end-ref :row))
-      (let* ((row-start (min (plist-get start-ref :row) (plist-get end-ref :row)))
-             (row-end   (max (plist-get start-ref :row) (plist-get end-ref :row)))
-             (col-start (min (plist-get start-ref :col) (plist-get end-ref :col)))
-             (col-end   (max (plist-get start-ref :col) (plist-get end-ref :col))))
-        (cl-loop for r from row-start to row-end do
-                 (cl-loop for c from col-start to col-end do
-                          (when (and (>= r 0) (>= c 0)
-                                     (< r (grid-data-model-rows model))
-                                     (< c (grid-data-model-cols model)))
-                            (push (grid-calc--value model r c) values))))))
+  (pcase-let ((`(,model ,row-start ,row-end ,col-start ,col-end)
+               (grid-calc--range-bounds model start-cell-ref-ast
+                                        end-cell-ref-ast))
+              (values '()))
+    (cl-loop for r from row-start to row-end do
+             (cl-loop for c from col-start to col-end do
+                      (push (grid-calc--value model r c) values)))
     (nreverse values)))
 
 (defun grid-calc-eval-index-function (model args-ast-list)
@@ -634,10 +659,10 @@ Returns the value at the specified row and column in the range."
          (col-num-ast (caddr args-ast-list)))
     (unless (eq (car range-ast) 'RANGE)
       (error "First argument to INDEX must be a range"))
-    (let* ((start-ref-str (cadr (cadr range-ast)))
-           (start-coords (grid-calc-parse-cell-ref start-ref-str))
-           (start-row (plist-get start-coords :row))
-           (start-col (plist-get start-coords :col))
+    (let* ((bounds (grid-calc--range-bounds model (cadr range-ast)
+                                            (caddr range-ast)))
+           (start-row (nth 1 bounds))
+           (start-col (nth 3 bounds))
            (row-num (grid-calc-eval-ast model row-num-ast))
            (col-num (if col-num-ast
                         (grid-calc-eval-ast model col-num-ast)
@@ -645,8 +670,7 @@ Returns the value at the specified row and column in the range."
            ;; Calculate absolute coordinates from relative 1-based indices
            (target-row (+ start-row row-num -1))
            (target-col (+ start-col col-num -1)))
-      (grid-calc--value (grid-calc--sheet-model model (nth 2 (cadr range-ast)))
-                        target-row target-col))))
+      (grid-calc--value (car bounds) target-row target-col))))
 
 (defun grid-calc-eval-iferror-function (model args-ast-list)
   "Special evaluator for the IFERROR function.
@@ -705,16 +729,13 @@ condition that evaluates to true. If no conditions are met, raises an error."
     (when exact-match
       (error "VLOOKUP only supports exact match (FALSE) at this time."))
 
-    (let* ((start-ref-str (cadr (cadr table-array-ast)))
-           (end-ref-str (cadr (caddr table-array-ast)))
-           (start-coords (grid-calc-parse-cell-ref start-ref-str))
-           (end-coords (grid-calc-parse-cell-ref end-ref-str))
-           (start-row (plist-get start-coords :row))
-           (end-row (plist-get end-coords :row))
-           (start-col (plist-get start-coords :col))
+    (let* ((bounds (grid-calc--range-bounds model (cadr table-array-ast)
+                                            (caddr table-array-ast)))
+           (start-row (nth 1 bounds))
+           (end-row (nth 2 bounds))
+           (start-col (nth 3 bounds))
            (target-col (+ start-col col-index-num -1))
-           (model (grid-calc--sheet-model
-                   model (nth 2 (cadr table-array-ast)))))
+           (model (car bounds)))
 
       (cl-loop for r from start-row to end-row
                do (let ((cell-val (grid-calc--value model r start-col)))
@@ -725,15 +746,64 @@ condition that evaluates to true. If no conditions are met, raises an error."
       ;; If loop finishes, no match was found
       (error "No match found in VLOOKUP")))))
 
+(defun grid-calc-eval-if-function (model args-ast-list)
+  "Special evaluator for the IF function.
+Only the branch the condition picks is evaluated, so an error in the
+other one does not matter.  Without a third argument a false condition
+gives FALSE."
+  (unless (memq (length args-ast-list) '(2 3))
+    (error "IF requires 2 or 3 arguments"))
+  (if (grid-calc-to-boolean (grid-calc-eval-ast model (nth 0 args-ast-list)))
+      (grid-calc-eval-ast model (nth 1 args-ast-list))
+    (and (nth 2 args-ast-list)
+         (grid-calc-eval-ast model (nth 2 args-ast-list)))))
+
+(defun grid-calc-eval-xlookup-function (model args-ast-list)
+  "Special evaluator for the XLOOKUP function.
+The arguments are the value to look up, the range to look in, the range
+to return from and, optionally, what to give when nothing matches, which
+is only evaluated then.  Only exact matches are found."
+  (unless (<= 3 (length args-ast-list) 6)
+    (error "XLOOKUP requires 3 to 6 arguments"))
+  (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
+         (lookup-array (grid-calc-eval-ast model (nth 1 args-ast-list)))
+         (return-array (grid-calc-eval-ast model (nth 2 args-ast-list)))
+         (match-mode (and (nth 4 args-ast-list)
+                          (grid-calc-eval-ast model (nth 4 args-ast-list))))
+         (search-mode (and (nth 5 args-ast-list)
+                           (grid-calc-eval-ast model (nth 5 args-ast-list)))))
+    (unless (listp lookup-array) (setq lookup-array (list lookup-array)))
+    (unless (listp return-array) (setq return-array (list return-array)))
+    (unless (member match-mode '(nil 0))
+      (error "XLOOKUP only supports exact match (match mode 0) at this time"))
+    (unless (member search-mode '(nil 1 -1))
+      (error "XLOOKUP only searches from the first or the last item"))
+    (unless (= (length lookup-array) (length return-array))
+      (error "XLOOKUP ranges must have the same size"))
+    (let ((pos (cl-position lookup-value lookup-array
+                            :test #'grid-calc--equal
+                            :from-end (eql search-mode -1))))
+      (cond (pos (nth pos return-array))
+            ((nth 3 args-ast-list)
+             (grid-calc-eval-ast model (nth 3 args-ast-list)))
+            (t (error "No match found in XLOOKUP"))))))
+
 ;;;----------------------------------------------------------------------
 ;;; Built-in Function Library
 ;;;----------------------------------------------------------------------
 
 ;;; Logical functions
-(grid-calc-defun COUNTA (range-values)
-  "Counts the number of cells that are not empty in a range."
+(defun grid-calc--flatten (arguments)
+  "Return the values of ARGUMENTS as one list.
+Each argument is a value or the list of values of a range."
+  (cl-loop for argument in arguments
+           if (listp argument) append argument
+           else collect argument))
+
+(grid-calc-defun COUNTA (&rest arguments)
+  "Counts the values that are not empty among numbers and ranges."
   (cl-count-if (lambda (v) (not (or (null v) (equal v ""))))
-               range-values))
+               (grid-calc--flatten arguments)))
 
 (grid-calc-defun ISBLANK (value)
   "Returns TRUE if the value is blank."
@@ -753,11 +823,19 @@ condition that evaluates to true. If no conditions are met, raises an error."
   (let* ((num (grid-calc-to-number number))
          (digits (grid-calc-to-number num_digits))
          (p (expt 10.0 digits)))
-    (/ (funcall round-fn (* num p)) p)))
+    (grid-calc--tidy-number (/ (funcall round-fn (* num p)) p))))
+
+(defun grid-calc--round-half-away (number)
+  "Round NUMBER to the nearest integer, a half going away from zero.
+A product that falls a hair short of a half, as 1.005 * 100 does, still
+counts as the half it stands for."
+  (let* ((size (abs number))
+         (rounded (floor (+ size 0.5 (* size 1e-12)))))
+    (if (< number 0) (- rounded) rounded)))
 
 (grid-calc-defun ROUND (number num_digits)
   "Rounds a number to a specified number of digits."
-  (grid-calc--round-by #'round number num_digits))
+  (grid-calc--round-by #'grid-calc--round-half-away number num_digits))
 
 (grid-calc-defun ROUNDUP (number num_digits)
   "Rounds a number up, away from zero."
@@ -817,29 +895,34 @@ Uses grid-calc-to-number for consistent conversion."
       (error "Unknown function: %s" func-name))))
 
 ;; Math functions
-(grid-calc-defun SUM (range-values)
-  "Sums numbers in a range. Ignores non-numeric values."
-  (apply #'+ (grid-calc--get-numeric-values range-values)))
+(defun grid-calc--numbers-among (arguments)
+  "Return the numbers among ARGUMENTS, each a value or a range's values."
+  (grid-calc--get-numeric-values (grid-calc--flatten arguments)))
 
-(grid-calc-defun AVERAGE (range-values)
-  "Averages numbers in a range. Ignores non-numeric values."
-  (let ((numbers (grid-calc--get-numeric-values range-values)))
+(grid-calc-defun SUM (&rest arguments)
+  "Sums numbers and ranges. Ignores non-numeric values."
+  (apply #'+ (grid-calc--numbers-among arguments)))
+
+(grid-calc-defun AVERAGE (&rest arguments)
+  "Averages numbers and ranges. Ignores non-numeric values."
+  (let ((numbers (grid-calc--numbers-among arguments)))
     (if (null numbers) 0
-      (/ (apply #'+ numbers) (float (length numbers))))))
+      (grid-calc--tidy-number
+       (/ (apply #'+ numbers) (float (length numbers)))))))
 
-(grid-calc-defun COUNT (range-values)
-  "Counts numbers in a range. Ignores non-numeric values."
-  (length (grid-calc--get-numeric-values range-values)))
+(grid-calc-defun COUNT (&rest arguments)
+  "Counts the numbers among values and ranges."
+  (length (grid-calc--numbers-among arguments)))
 
-(grid-calc-defun MAX (range-values)
-  "Returns the maximum value in a range. Ignores non-numeric values."
-  (let ((numbers (grid-calc--get-numeric-values range-values)))
+(grid-calc-defun MAX (&rest arguments)
+  "Returns the largest of numbers and ranges. Ignores non-numeric values."
+  (let ((numbers (grid-calc--numbers-among arguments)))
     (if (null numbers) 0
       (apply #'max numbers))))
 
-(grid-calc-defun MIN (range-values)
-  "Returns the minimum value in a range. Ignores non-numeric values."
-  (let ((numbers (grid-calc--get-numeric-values range-values)))
+(grid-calc-defun MIN (&rest arguments)
+  "Returns the smallest of numbers and ranges. Ignores non-numeric values."
+  (let ((numbers (grid-calc--numbers-among arguments)))
     (if (null numbers) 0
       (apply #'min numbers))))
 
@@ -938,9 +1021,6 @@ NOTE: Only exact match (match-type = 0) is currently implemented."
       (error "Value not available in MATCH"))))
 
 ;; Logical functions
-(grid-calc-defun IF (condition true-value false-value)
-  "Conditional function."
-  (if (grid-calc-to-boolean condition) true-value false-value))
 
 (defun grid-calc--every (pred list)
   "Returns non-nil if PRED is true for all elements in LIST."

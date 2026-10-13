@@ -26,8 +26,13 @@ Group 1 is a name written in apostrophes, where a doubled apostrophe
 stands for one; group 2 is a name written bare.")
 
 (defconst grid-parser--cells-regexp
-  "\\$?[A-Za-z]+\\$?[0-9]+\\(?::\\$?[A-Za-z]+\\$?[0-9]+\\)?"
-  "Matches a cell or a range of cells.")
+  (concat "\\(?:\\$?[A-Za-z]+\\$?[0-9]+\\(?::\\$?[A-Za-z]+\\$?[0-9]+\\)?"
+          "\\|\\$?[A-Za-z]+:\\$?[A-Za-z]+"
+          "\\|\\$?[0-9]+:\\$?[0-9]+\\)")
+  "Matches a cell, a range of cells, whole columns (A:C) or whole rows (2:5).")
+
+(defconst grid-parser--whole-rows-regexp "\\$?[0-9]+:\\$?[0-9]+"
+  "Matches a range of whole rows, such as 2:5.")
 
 (defun grid-parser-sheet-prefix-at (text pos)
   "Return (END . NAME) for the sheet prefix that starts at POS in TEXT.
@@ -99,6 +104,15 @@ prefix starts there."
                     tokens)
               (setq pos (match-end 0)))))
 
+         ;; Whole rows (e.g., 2:5, $2:$5)
+         ((and (or (eq char ?$) (and (>= char ?0) (<= char ?9)))
+               (eq (string-match grid-parser--whole-rows-regexp formula-str pos)
+                   pos))
+          (push (grid-parser-make-token grid-parser-token-type-cell-ref
+                                        (match-string 0 formula-str))
+                tokens)
+          (setq pos (match-end 0)))
+
          ;; Numbers (integers and floats)
          ((or (and (>= char ?0) (<= char ?9)) (eq char ?.))
           (let ((start pos))
@@ -150,6 +164,9 @@ prefix starts there."
               (push
                (cond
                 ((string-match "^\\(\\$?[A-Z]+\\$?[0-9]+\\)\\(:\\$?[A-Z]+\\$?[0-9]+\\)?$" text)
+                 (grid-parser-make-token grid-parser-token-type-cell-ref text))
+                ;; Whole columns (e.g., A:A, $B:$D)
+                ((string-match-p "^\\$?[A-Z]+:\\$?[A-Z]+$" text)
                  (grid-parser-make-token grid-parser-token-type-cell-ref text))
                 ((member text '("TRUE" "FALSE"))
                  (grid-parser-make-token grid-parser-token-type-boolean
@@ -370,13 +387,13 @@ Returns (ast . remaining-tokens)."
     (cons left remaining-tokens)))
 
 (defun grid-parser-parse-multiplicative-expression (tokens)
-  "Parses multiplicative expressions (*, /, %). Returns (ast . remaining-tokens)."
+  "Parses multiplicative expressions (*, /). Returns (ast . remaining-tokens)."
   (let* ((result (grid-parser-parse-power-expression tokens))
          (left (car result))
          (remaining-tokens (cdr result)))
     (while (and remaining-tokens
                 (let ((op (grid-parser-get-operator (car remaining-tokens))))
-                  (member op '("*" "/" "%"))))
+                  (member op '("*" "/"))))
       (let* ((op (grid-parser-get-operator (pop remaining-tokens)))
              (right-result (grid-parser-parse-power-expression remaining-tokens))
              (right (car right-result))
@@ -385,14 +402,27 @@ Returns (ast . remaining-tokens)."
         (setq remaining-tokens new-remaining)))
     (cons left remaining-tokens)))
 
+(defun grid-parser-parse-percent-expression (tokens)
+  "Parses a value followed by percent signs, each dividing it by 100.
+Returns (ast . remaining-tokens)."
+  (let* ((result (grid-parser-parse-unary-expression tokens))
+         (operand (car result))
+         (remaining-tokens (cdr result)))
+    (while (and remaining-tokens
+                (grid-parser-token-is-p (car remaining-tokens)
+                                        grid-parser-token-type-operator "%"))
+      (pop remaining-tokens)
+      (setq operand (grid-ast-make-unary-op '% operand)))
+    (cons operand remaining-tokens)))
+
 (defun grid-parser-parse-power-expression (tokens)
   "Parses power expressions (^). Returns (ast . remaining-tokens)."
-  (let* ((result (grid-parser-parse-unary-expression tokens))
+  (let* ((result (grid-parser-parse-percent-expression tokens))
          (left (car result))
          (remaining-tokens (cdr result)))
     (while (and remaining-tokens (grid-parser-token-is-p (car remaining-tokens) grid-parser-token-type-operator "^"))
       (pop remaining-tokens) ; Consume ^ token
-      (let* ((right-result (grid-parser-parse-unary-expression remaining-tokens))
+      (let* ((right-result (grid-parser-parse-percent-expression remaining-tokens))
              (right (car right-result))
              (new-remaining (cdr right-result)))
         (setq left (grid-ast-make-binary-op '^ left right))
@@ -547,7 +577,7 @@ Returns (ast . remaining-tokens)."
                        "=$A$1+B2"
                        "COUNT(C1:C5)"
                        "\"Hello World\" & \"!\""
-                       "100 / 5 % 2"
+                       "100 / 5%"
                        "NOT(TRUE)"
                        "2^3^4"
                        "A1=B1"

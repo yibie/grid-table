@@ -152,10 +152,11 @@ Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/che
 | 📊 Range    | `=RANGE(A1:B5)`   | `=SUM(A1:A10)`     | Continuous block      |
 | ✨ Function | `=FUNCTION(args)` | `=AVERAGE(B2:B10)` | Built-in function set |
 | 📌 Anchor   | `=$A$1`、`=A$1`   | `=B2*$C$1`         | `$` keeps a column or row fixed when a formula is copied |
-| ➗ Operator | `+ - * / % ^ &`   | `=A1&" kg"`        | Arithmetic, power and text joining; `/` gives `2.5` for `=10/4` |
+| ➗ Operator | `+ - * / ^ & %`   | `=A1&" kg"`、`=B2*15%` | Arithmetic, power and text joining; `/` gives `2.5` for `=10/4`; `%` after a value divides it by 100 (the remainder is `MOD(7,3)`) |
+| 📏 Whole    | `=A:A`、`=2:5`    | `=SUM(B:B)`        | Whole columns or rows, up to the edges of the sheet |
 | ⚖️ Compare  | `= <> < > <= >=`  | `=IF(A1<=5,"low","high")` | Numbers compare by value, text ignores case; `TRUE`/`FALSE` are literals |
 
-Function names and references may be typed in either case. Formulas are computed in dependency order wherever they sit in the sheet. A formula that cannot be computed shows an error value in its own cell and in the cells that read it: `#DIV/0!`, `#NAME?` (unknown function), `#N/A` (no match), `#REF!`, `#CYCLE!` (circular reference) or `#ERROR!`. Wrap a formula in `IFERROR` to replace the error.
+Function names and references may be typed in either case. `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MAX` and `MIN` take any number of values and ranges (`=SUM(A1:A5,C1,10)`). `IF` only computes the branch it picks, so `=IF(B2=0,0,A2/B2)` is safe. `ROUND` takes a half away from zero. `XLOOKUP(value, look_in, return_from, if_missing)` finds exact matches. Sorting moves a formula with its row, so `=B2*2` in a row still reads that row afterwards. Formulas are computed in dependency order wherever they sit in the sheet. A formula that cannot be computed shows an error value in its own cell and in the cells that read it: `#DIV/0!`, `#NAME?` (unknown function), `#N/A` (no match), `#REF!`, `#CYCLE!` (circular reference) or `#ERROR!`. Wrap a formula in `IFERROR` to replace the error.
 
 ### Official Built-in Function List
 
