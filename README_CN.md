@@ -364,7 +364,7 @@ grid-table 内置图表公式功能，可直接在单元格中渲染 ASCII/Unico
 - 引用其他工作表的公式，或用到 grid-table 没有的函数的公式，在表格里显示为错误值；公式本身原样保留，导出时不变。
 - 图表公式导出为文本。
 
-文件格式由一个 Rust 写的动态模块处理（`plugins/xlsx/`），所以 Emacs 需要带模块支持。把预编译的 `grid-table-xlsx-module.dylib`（Linux 为 `.so`，Windows 为 `.dll`）放进 `plugins/`，或者用 `M-x grid-table-xlsx-build-module` 或 `make module` 自行编译，编译需要 cargo。模块放在别处时用 `grid-table-xlsx-module-file` 指定。
+文件格式由一个 Rust 写的动态模块处理（`plugins/xlsx/`），所以 Emacs 需要带模块支持。`plugins/` 里带有 macOS 的预编译模块（`grid-table-xlsx-module.dylib`，同时支持 Apple 芯片和 Intel），直接加载即可。其他平台用 `M-x grid-table-xlsx-build-module` 或 `make module` 自行编译，编译需要 cargo。自己编译的模块优先于预编译的；模块放在别处时用 `grid-table-xlsx-module-file` 指定。
 
 ## 核心技术原理
 

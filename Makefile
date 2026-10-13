@@ -11,7 +11,7 @@ CLASSIC_TESTS = test/grid-table-merge-test.el \
 BATCH = $(EMACS) -Q --batch -L . -L plugins -L test
 ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
-.PHONY: test test-classic test-etaf test-xlsx module
+.PHONY: test test-classic test-etaf test-xlsx module module-dist
 
 test: test-classic test-etaf test-xlsx
 
@@ -27,6 +27,21 @@ test-etaf:
 # The xlsx plugin's dynamic module; needs cargo.
 module:
 	cd plugins/xlsx && cargo build --release
+
+# Refresh the prebuilt module kept in plugins/ for this platform.  On macOS
+# it holds both architectures, which needs both rustup targets installed.
+MODULE = grid-table-xlsx-module
+MODULE_LIB = libgrid_table_xlsx_module
+MAC_TARGETS = aarch64-apple-darwin x86_64-apple-darwin
+module-dist:
+ifeq ($(shell uname -s),Darwin)
+	cd plugins/xlsx && $(foreach target,$(MAC_TARGETS),cargo build --release --target $(target) &&) true
+	lipo -create $(foreach target,$(MAC_TARGETS),plugins/xlsx/target/$(target)/release/$(MODULE_LIB).dylib) \
+		-output plugins/$(MODULE).dylib
+else
+	cd plugins/xlsx && cargo build --release
+	cp plugins/xlsx/target/release/$(MODULE_LIB).so plugins/$(MODULE).so
+endif
 
 # Skips the tests that read or write a workbook when the module is not built.
 test-xlsx:

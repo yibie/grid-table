@@ -7,9 +7,10 @@
 ;; formats and conditional formats travel both ways.
 ;;
 ;; The file format is handled by a dynamic module written in Rust, whose
-;; source is in plugins/xlsx/.  Either put a prebuilt
-;; grid-table-xlsx-module.dylib (.so, .dll) next to this file, or build it
-;; with `grid-table-xlsx-build-module', which needs cargo.
+;; source is in plugins/xlsx/.  A prebuilt grid-table-xlsx-module.dylib
+;; (.so, .dll) next to this file is used when there is one for the
+;; platform; otherwise build the module with
+;; `grid-table-xlsx-build-module', which needs cargo.
 
 ;;; Code:
 
@@ -25,8 +26,8 @@
 
 (defcustom grid-table-xlsx-module-file nil
   "File of the xlsx dynamic module, or nil to look in the usual places.
-Those are a grid-table-xlsx-module file next to this plugin and the
-cargo build directory under plugins/xlsx/."
+Those are the cargo build directory under plugins/xlsx/ and then the
+prebuilt grid-table-xlsx-module file next to this plugin."
   :type '(choice (const :tag "Look in the usual places" nil) file)
   :group 'grid-table)
 
@@ -52,18 +53,20 @@ cargo build directory under plugins/xlsx/."
 ;;;----------------------------------------------------------------------
 
 (defun grid-table-xlsx--module-candidates ()
-  "Return the files the module may be in, most specific first."
+  "Return the files the module may be in, most specific first.
+A module built here comes before the prebuilt one: whoever built it
+meant it to be used."
   (let ((suffix (or module-file-suffix ".so"))
         (build (expand-file-name "xlsx/target/release/"
                                  grid-table-xlsx--directory)))
     (delq nil
           (list grid-table-xlsx-module-file
-                (expand-file-name (concat "grid-table-xlsx-module" suffix)
-                                  grid-table-xlsx--directory)
                 (expand-file-name (concat "libgrid_table_xlsx_module" suffix)
                                   build)
                 (expand-file-name (concat "grid_table_xlsx_module" suffix)
-                                  build)))))
+                                  build)
+                (expand-file-name (concat "grid-table-xlsx-module" suffix)
+                                  grid-table-xlsx--directory)))))
 
 (defun grid-table-xlsx--ensure-module ()
   "Load the xlsx module unless it is loaded; signal when there is none."
@@ -73,9 +76,8 @@ cargo build directory under plugins/xlsx/."
     (let ((file (cl-find-if #'file-exists-p
                             (grid-table-xlsx--module-candidates))))
       (unless file
-        (user-error "No xlsx module: put grid-table-xlsx-module%s in %s, or run M-x grid-table-xlsx-build-module"
-                    (or module-file-suffix ".so")
-                    (abbreviate-file-name grid-table-xlsx--directory)))
+        (user-error "No prebuilt xlsx module (grid-table-xlsx-module%s) for this platform; run M-x grid-table-xlsx-build-module"
+                    (or module-file-suffix ".so")))
       (module-load file))))
 
 (defun grid-table-xlsx-build-module ()

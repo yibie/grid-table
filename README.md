@@ -363,7 +363,7 @@ What does not travel:
 - A formula that reads another sheet, or uses a function grid-table lacks, shows an error value in the grid. It is kept as written and exported unchanged.
 - Chart formulas are exported as text.
 
-The file format is handled by a dynamic module written in Rust (`plugins/xlsx/`), so Emacs must be built with module support. Either put a prebuilt `grid-table-xlsx-module.dylib` (`.so` on Linux, `.dll` on Windows) in `plugins/`, or build it with `M-x grid-table-xlsx-build-module` or `make module`; building needs cargo. `grid-table-xlsx-module-file` names a module kept elsewhere.
+The file format is handled by a dynamic module written in Rust (`plugins/xlsx/`), so Emacs must be built with module support. `plugins/` holds a prebuilt module for macOS (`grid-table-xlsx-module.dylib`, Apple silicon and Intel), which is loaded as it is. On other platforms, build the module with `M-x grid-table-xlsx-build-module` or `make module`; building needs cargo. A module you build is used in place of the prebuilt one, and `grid-table-xlsx-module-file` names a module kept elsewhere.
 
 ## Core Technology Principles
 
