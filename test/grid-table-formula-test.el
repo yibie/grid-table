@@ -275,6 +275,11 @@
           (should (grid-workbook-name-problem workbook "a:b"))
           (should (equal (grid-workbook-fresh-name workbook) "Sheet1"))
           (should (equal (grid-workbook-fresh-name workbook "Data") "Sheet1"))
+          ;; A name with an apostrophe or an exclamation mark is a name.
+          (let ((odd (grid-workbook-new-sheet workbook "It's Q1!")))
+            (grid-set-raw-value-at odd 0 0 "7")
+            (grid-set-raw-value-at totals 2 0 "='It''s Q1!'!A1*2")
+            (should (equal (grid-get-computed-value-at totals 2 0) 14)))
           ;; Several sheets are saved together and come back together.
           (let ((inhibit-message t))
             (grid-table-persistence--save-to-file totals file))
@@ -283,11 +288,14 @@
                  (sheets (grid-workbook-sheets (grid-workbook-of back))))
             (should (equal (grid-workbook-sheet-name back) "Totals"))
             (should (equal (mapcar #'grid-workbook-sheet-name sheets)
-                           '("Data" "Totals")))
+                           '("Data" "Totals" "It's Q1!")))
+            (should (equal (grid-get-computed-value-at back 2 0) 14))
             (should (equal (gethash :title (car sheets)) "Data"))
             (should (equal (grid-get-computed-value-at back 1 0) 21))
             (should (equal (grid-get-computed-value-at (car sheets) 1 1) 22)))
           ;; One sheet alone is saved as it always was.
+          (grid-workbook-remove-sheet
+           workbook (grid-workbook-sheet workbook "It's Q1!"))
           (grid-workbook-remove-sheet workbook data)
           (should (equal (grid-get-computed-value-at totals 1 0) "#REF!"))
           (should-not

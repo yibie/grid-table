@@ -195,8 +195,8 @@ EXCEPT is a sheet allowed to have that name already."
   (cond
    ((or (not (stringp name)) (string-empty-p (string-trim name)))
     "A sheet name cannot be empty")
-   ((string-match-p "[][:*?/\\!]" name)
-    "A sheet name cannot contain any of [ ] : * ? / \\ !")
+   ((string-match-p "[][:*?/\\]" name)
+    "A sheet name cannot contain any of [ ] : * ? / \\")
    ((or (string-prefix-p "'" name) (string-suffix-p "'" name))
     "A sheet name cannot begin or end with an apostrophe")
    ((> (length name) 31) "A sheet name cannot be longer than 31 characters")
@@ -205,19 +205,24 @@ EXCEPT is a sheet allowed to have that name already."
     (format "There is already a sheet called %s" name))))
 
 (defun grid-workbook-fresh-name (workbook &optional wanted)
-  "Return a name no sheet of WORKBOOK has: WANTED, or the next SheetN."
-  (let ((wanted (and wanted
-                     (string-trim
-                      (replace-regexp-in-string "[][:*?/\\!']" " " wanted)))))
-    (when (and wanted (> (length wanted) 31))
-      (setq wanted (substring wanted 0 31)))
-    (if (and wanted (not (grid-workbook-name-problem workbook wanted)))
-        wanted
-      (let ((number 1))
-        (while (and workbook
-                    (grid-workbook-sheet workbook (format "Sheet%d" number)))
-          (setq number (1+ number)))
-        (format "Sheet%d" number)))))
+  "Return a name no sheet of WORKBOOK has: WANTED, or the next SheetN.
+WANTED is taken as it is when it can name a sheet, and otherwise without
+the characters that keep it from being one."
+  (let ((cleaned (and (stringp wanted)
+                      (string-trim
+                       (replace-regexp-in-string "[][:*?/\\']" " " wanted)))))
+    (when (and cleaned (> (length cleaned) 31))
+      (setq cleaned (substring cleaned 0 31)))
+    (cond
+     ((and (stringp wanted) (not (grid-workbook-name-problem workbook wanted)))
+      wanted)
+     ((and cleaned (not (grid-workbook-name-problem workbook cleaned)))
+      cleaned)
+     (t (let ((number 1))
+          (while (and workbook
+                      (grid-workbook-sheet workbook (format "Sheet%d" number)))
+            (setq number (1+ number)))
+          (format "Sheet%d" number))))))
 
 (defun grid-workbook--models (workbook)
   "Return the models of the sheets of WORKBOOK."
@@ -275,7 +280,8 @@ POSITION is the index it takes; it goes last by default."
             workbook
             (make-default-data-source
              headers
-             (cl-loop repeat 10 collect (make-list (length headers) "")))
+             (cl-loop repeat 10 collect (make-list (length headers) ""))
+             name)
             name position)
       ;; References to a sheet of that name were waiting for it.
       (grid-workbook-recalculate workbook))))
