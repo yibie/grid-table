@@ -219,9 +219,18 @@ Covered cells and horizontally merged anchors do not widen a column."
          (col (max left frozen))
          (scrolled nil)
          result)
-    (dotimes (kept frozen)
-      (setq budget (- budget (1+ (* char (+ 2 (aref widths kept))))))
-      (push kept result))
+    ;; A window too narrow for all of them shows the first ones, leaving
+    ;; room for a column that scrolls.
+    (let ((room (and (< frozen cols)
+                     (1+ (* char (+ 2 (aref widths frozen))))))
+          (kept 0))
+      (while (and (< kept frozen)
+                  (let ((need (1+ (* char (+ 2 (aref widths kept))))))
+                    (when (or (null room) (<= (+ need room) budget))
+                      (setq budget (- budget need))
+                      t)))
+        (push kept result)
+        (setq kept (1+ kept))))
     (while (and (< col cols)
                 (let ((need (1+ (* char (+ 2 (aref widths col))))))
                   (when (or (not scrolled) (<= need budget))
@@ -342,12 +351,20 @@ A header row holds the column titles and is always shown."
          result)
     ;; Frozen rows come first whatever the scroll position, and one row
     ;; after them is always shown.
+    ;; A window too low for all of them shows the first ones, leaving a
+    ;; line for a row that scrolls.
+    (while (and (< position count)
+                (< (grid-table-etaf--row-at state position) frozen)
+                (let ((need (grid-table-etaf--row-lines
+                             state (grid-table-etaf--row-at state position)
+                             cols merges)))
+                  (when (< need budget)
+                    (setq budget (- budget need))
+                    t)))
+      (push (grid-table-etaf--row-at state position) result)
+      (setq position (1+ position)))
     (while (and (< position count)
                 (< (grid-table-etaf--row-at state position) frozen))
-      (let ((row (grid-table-etaf--row-at state position)))
-        (setq budget (- budget (grid-table-etaf--row-lines
-                                state row cols merges)))
-        (push row result))
       (setq position (1+ position)))
     (setq position (max position (grid-table-etaf--row-position state top)))
     (while (and (< position count)
@@ -1139,14 +1156,17 @@ LINE, the grid line border."
       (etaf-set-value left-ref (cdr frozen)))
     (when (and (>= col (cdr frozen)) (< col (etaf-value left-ref)))
       (etaf-set-value left-ref col))
-    (while (not (memq col (grid-table-etaf--visible-cols
-                           state (etaf-value left-ref))))
+    ;; A frozen column the window has no room for cannot be scrolled to.
+    (while (and (>= col (cdr frozen))
+                (not (memq col (grid-table-etaf--visible-cols
+                                state (etaf-value left-ref)))))
       (etaf-set-value left-ref (1+ (etaf-value left-ref))))
     (when (and (>= row (car frozen)) (< row (etaf-value top-ref)))
       (etaf-set-value top-ref row))
     (let ((cols (grid-table-etaf--visible-cols state (etaf-value left-ref))))
-      (while (not (memq row (grid-table-etaf--visible-rows
-                             state (etaf-value top-ref) cols)))
+      (while (and (>= row (car frozen))
+                  (not (memq row (grid-table-etaf--visible-rows
+                                  state (etaf-value top-ref) cols))))
         (etaf-set-value top-ref (grid-table-etaf--step-row
                                  state (etaf-value top-ref) 1))))))
 
@@ -1236,9 +1256,14 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
   (let* ((state (grid-table-etaf--state-or-error))
          (cols (grid-table-etaf--visible-cols
                 state (etaf-value (grid-table-etaf--state-left state)))))
-    (max 1 (length (grid-table-etaf--visible-rows
-                    state (etaf-value (grid-table-etaf--state-top state))
-                    cols)))))
+    ;; Frozen rows are on every page.
+    (max 1 (cl-count-if
+            (lambda (row)
+              (>= row (car (grid-table-frozen
+                            (grid-table-etaf--source state)))))
+            (grid-table-etaf--visible-rows
+             state (etaf-value (grid-table-etaf--state-top state))
+             cols)))))
 
 (defun grid-table-etaf-page-down ()
   "Move the cursor one window of rows down."
@@ -1286,24 +1311,17 @@ scrolls again, as after `grid-table-unfreeze-panes'."
          (old (grid-table-frozen source)))
     (unless (grid-table-set-frozen source rows cols)
       (user-error "This grid cannot keep rows and columns in place"))
-    ;; What is frozen has to leave room for the cell under the cursor.
+    ;; A window shows the frozen rows and columns it has room for: all of
+    ;; them have to fit, with the cell under the cursor.
     (let* ((shown-cols (grid-table-etaf--visible-cols state cols))
            (shown-rows (grid-table-etaf--visible-rows state rows shown-cols))
-           (viewport (grid-table-etaf--viewport state))
-           (char (grid-table-etaf--char-width))
-           (widths (grid-table-etaf--state-widths state))
-           (merges (grid-get-merges source)))
-      (when (or (> (+ (grid-table-etaf--row-header-width source) 2
-                      (cl-loop for col in shown-cols
-                               when (<= col cols)
-                               sum (+ 3 (aref widths col))))
-                   (/ (car viewport) char))
-                (> (+ 3 (grid-table-etaf--title-lines state)
-                      (cl-loop for row in shown-rows
-                               when (<= row rows)
-                               sum (grid-table-etaf--row-lines
-                                    state row shown-cols merges)))
-                   (cdr viewport)))
+           (last-row (and (> rows 0)
+                          (grid-table-etaf--row-at
+                           state (1- (grid-table-etaf--row-position
+                                      state rows))))))
+      (unless (and (or (zerop cols) (memq (1- cols) shown-cols))
+                   (or (null last-row) (>= last-row rows)
+                       (memq last-row shown-rows)))
         (grid-table-set-frozen source (car old) (cdr old))
         (user-error "The window is too small to freeze that much")))
     (grid-table-etaf--bump state)

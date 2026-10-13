@@ -981,6 +981,18 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
                              file))
                            '(2 . 0))))
         (delete-file file)))
+    ;; A page is the rows that scroll.
+    (grid-table-etaf-goto 2 3)
+    (let ((page (grid-table-etaf--page-size)))
+      (grid-table-etaf-page-down)
+      (should (= (car (grid-table-etaf--cursor)) (+ 2 page))))
+    ;; Frozen rows a window has no room for give way to one that scrolls.
+    (grid-table-set-frozen source 30 0)
+    (grid-table-refresh)
+    (grid-table-etaf-goto 50 3)
+    (let ((rows (car (grid-table-etaf-test--window))))
+      (should (memq 50 rows))
+      (should (<= (length rows) 9)))
     (grid-table-unfreeze-panes)
     (should (equal (grid-table-frozen source) '(0 . 0)))
     (grid-table-etaf-goto 40 3)
