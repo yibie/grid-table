@@ -67,10 +67,12 @@
                    ("other" "a"))
                  '((1 0 1 1))))
          (sorted (grid-model-sort-by-column model 1 'ascending)))
+    ;; The covered key is empty, not the merge's "z", and empty cells sort
+    ;; last: the merged row moves below "other" and takes its merge along.
     (should (equal (grid-cell-raw-input
-                    (grid-model-get-cell sorted 1 0))
+                    (grid-model-get-cell sorted 2 0))
                    "z"))
-    (should (equal (grid-model-get-merges sorted) '((1 0 1 1))))))
+    (should (equal (grid-model-get-merges sorted) '((2 0 2 1))))))
 
 (ert-deftest grid-table-column-edits-transform-merges-atomically ()
   (let* ((model (grid-model-create

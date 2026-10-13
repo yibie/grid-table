@@ -94,6 +94,8 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 
   With several cells selected, `C-c m` merges them into one; the range can be a rectangle, not only a row or a column (the classic renderer shows a rectangular merge as separate cells). A chart formula is drawn inside its cell at the chart's own size, so its row and column grow to fit; `C-c v` still opens it in its own buffer.
 
+  `C-c s` sorts by what a column shows: numbers by value before text, text ignoring case, empty cells last in either direction. `C-c / f` filters the rows by a condition on the cursor's column, `C-c / v` keeps the rows holding the cursor cell's value, `C-c / c` clears that column's filter and `C-c / a` clears all. Filters on several columns combine, a filtered column shows `▼` after its letter, and moving, copying, clearing, formatting and the status bar figures leave hidden rows out. Rows are filtered when a filter is set and on refresh (`C-c C-r`), not after each edit.
+
 - `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete.
 
 Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/checkouts`.

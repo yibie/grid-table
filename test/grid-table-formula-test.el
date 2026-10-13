@@ -144,6 +144,45 @@
                  "=elisp:(cell \"A1\")")))
 
 ;;;----------------------------------------------------------------------
+;;; Sorting
+;;;----------------------------------------------------------------------
+
+(defun grid-table-formula-test--sorted-column (values order)
+  "Return column A below its header after sorting VALUES in ORDER."
+  (let* ((rows (cons '("h") (mapcar #'list values)))
+         (sorted (grid-model-sort-by-column
+                  (grid-model-create (length rows) 1 rows) 0 order)))
+    (cl-loop for row from 1 below (length rows) collect
+             (grid-cell-raw-input (grid-model-get-cell sorted row 0)))))
+
+(ert-deftest grid-table-sort-orders-numbers-by-value ()
+  (should (equal (grid-table-formula-test--sorted-column
+                  '("10" "9" "100" "-1" "2.5") 'ascending)
+                 '("-1" "2.5" "9" "10" "100")))
+  (should (equal (grid-table-formula-test--sorted-column
+                  '("10" "9" "100") 'descending)
+                 '("100" "10" "9"))))
+
+(ert-deftest grid-table-sort-puts-numbers-before-text-and-blanks-last ()
+  (should (equal (grid-table-formula-test--sorted-column
+                  '("pear" "" "3" "Apple" "20" "banana") 'ascending)
+                 '("3" "20" "Apple" "banana" "pear" "")))
+  (should (equal (grid-table-formula-test--sorted-column
+                  '("pear" "" "3" "Apple" "20" "banana") 'descending)
+                 '("pear" "banana" "Apple" "20" "3" ""))))
+
+(ert-deftest grid-table-sort-uses-formula-results-and-is-stable ()
+  ;; Column B computes from column A; sorting by B orders by the results.
+  (let* ((model (grid-model-create
+                 4 2 '(("h" "h") ("b" "=10*3") ("a" "=5+5") ("c" "=10*3"))))
+         (sorted (grid-model-sort-by-column model 1 'ascending)))
+    (should (equal (cl-loop for row from 1 to 3 collect
+                            (grid-cell-raw-input
+                             (grid-model-get-cell sorted row 0)))
+                   ;; Equal results keep their original order.
+                   '("a" "b" "c")))))
+
+;;;----------------------------------------------------------------------
 ;;; Cell styles and conditional formats
 ;;;----------------------------------------------------------------------
 

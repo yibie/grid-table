@@ -60,7 +60,10 @@
   undo redo model
   ;; Column widths set by dragging, as a hash from column to width, and the
   ;; width a resize drag started from.
-  manual resize-start)
+  manual resize-start
+  ;; Filters, as an alist from column to (OP VALUE), and the vector of
+  ;; model rows they leave shown; nil while nothing is filtered.
+  filters shown)
 
 (defvar-local grid-table-etaf--state nil
   "Renderer state of the current ETAF grid buffer.")
@@ -246,23 +249,87 @@ Covered cells and horizontally merged anchors do not widen a column."
                                    (grid-table-etaf--state-buffer state))))
     (if (and title (not (string-empty-p title))) 2 0)))
 
+(defun grid-table-etaf--row-count (state)
+  "Return how many rows STATE shows once its filters are applied."
+  (let ((shown (grid-table-etaf--state-shown state)))
+    (if shown
+        (length shown)
+      (grid-get-row-count (grid-table-etaf--source state)))))
+
+(defun grid-table-etaf--row-at (state position)
+  "Return the model row at POSITION among the rows STATE shows.
+POSITION is clamped to the shown rows."
+  (let* ((shown (grid-table-etaf--state-shown state))
+         (position (max 0 (min (1- (grid-table-etaf--row-count state))
+                               position))))
+    (if shown (aref shown position) position)))
+
+(defun grid-table-etaf--row-position (state row)
+  "Return the position of model ROW among the rows STATE shows.
+A filtered-out row gives the position of the next shown row, or of the
+last one when none follows."
+  (let ((shown (grid-table-etaf--state-shown state)))
+    (if (null shown)
+        (max 0 (min (1- (grid-table-etaf--row-count state)) row))
+      (let ((low 0) (high (length shown)))
+        (while (< low high)
+          (let ((middle (/ (+ low high) 2)))
+            (if (< (aref shown middle) row)
+                (setq low (1+ middle))
+              (setq high middle))))
+        (min low (1- (length shown)))))))
+
+(defun grid-table-etaf--row-shown-p (state row)
+  "Return non-nil when model ROW passes STATE's filters."
+  (or (null (grid-table-etaf--state-shown state))
+      (= (grid-table-etaf--row-at
+          state (grid-table-etaf--row-position state row))
+         row)))
+
+(defun grid-table-etaf--step-row (state row count)
+  "Return the shown row COUNT positions after model ROW in STATE."
+  (grid-table-etaf--row-at
+   state (+ (grid-table-etaf--row-position state row) count)))
+
+(defun grid-table-etaf--apply-filters (state)
+  "Recompute which rows of STATE its filters leave shown.
+The first row holds the column titles and is always shown."
+  (let* ((source (grid-table-etaf--source state))
+         (filters (grid-table-etaf--state-filters state)))
+    (setf (grid-table-etaf--state-shown state)
+          (and filters
+               (vconcat
+                (cons 0
+                      (cl-loop
+                       for row from 1 below (grid-get-row-count source)
+                       when (cl-every
+                             (lambda (filter)
+                               (grid-table-conditional-match-p
+                                (nth 1 filter) (nth 2 filter)
+                                (grid-get-computed-value-at
+                                 source row (car filter))))
+                             filters)
+                       collect row)))))))
+
 (defun grid-table-etaf--visible-rows (state top cols)
   "Return the model rows STATE shows over COLS when the first one is TOP."
   (let* ((source (grid-table-etaf--source state))
-         (rows (grid-get-row-count source))
+         (count (grid-table-etaf--row-count state))
          (merges (grid-get-merges source))
          ;; The letter row, the formula bar and the status bar take a line each.
          (budget (- (cdr (grid-table-etaf--viewport state))
                     3 (grid-table-etaf--title-lines state)))
-         (row top)
+         (position (grid-table-etaf--row-position state top))
          result)
-    (while (and (< row rows)
-                (let ((need (grid-table-etaf--row-lines state row cols merges)))
+    (while (and (< position count)
+                (let ((need (grid-table-etaf--row-lines
+                             state (grid-table-etaf--row-at state position)
+                             cols merges)))
                   (when (or (null result) (<= need budget))
                     (setq budget (- budget need))
                     t)))
-      (push row result)
-      (setq row (1+ row)))
+      (push (grid-table-etaf--row-at state position) result)
+      (setq position (1+ position)))
     (nreverse result)))
 
 ;;;----------------------------------------------------------------------
@@ -456,6 +523,10 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-M-_" grid-table-etaf-redo "Redo")
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
+    ("C-c / f" grid-table-etaf-filter-column "Filter column")
+    ("C-c / v" grid-table-etaf-filter-by-cell "Filter by this value")
+    ("C-c / c" grid-table-etaf-clear-column-filter "Clear column filter")
+    ("C-c / a" grid-table-etaf-clear-filters "Clear all filters")
     ("C-c f b" grid-table-etaf-toggle-bold "Bold")
     ("C-c f i" grid-table-etaf-toggle-italic "Italic")
     ("s-b" grid-table-etaf-toggle-bold "Bold")
@@ -706,15 +777,22 @@ line border."
               'text nil
               (list (string-replace "\n" "⏎" raw)))))))))
 
-(defun grid-table-etaf--status-text (source range)
-  "Return the status bar text for SOURCE.
-RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
+(defun grid-table-etaf--status-text (state source range)
+  "Return the status bar text for SOURCE as STATE shows it.
+RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell.
+Rows hidden by a filter are left out of the figures."
   (if (null range)
-      (format "%d rows × %d columns"
-              (grid-get-row-count source) (grid-get-column-count source))
+      (if (grid-table-etaf--state-shown state)
+          (format "%d of %d rows shown (filtered) × %d columns"
+                  (1- (grid-table-etaf--row-count state))
+                  (1- (grid-get-row-count source))
+                  (grid-get-column-count source))
+        (format "%d rows × %d columns"
+                (grid-get-row-count source) (grid-get-column-count source)))
     (let ((count 0) (numbers 0) (sum 0))
       (cl-loop
-       for row from (nth 0 range) to (nth 2 range) do
+       for row from (nth 0 range) to (nth 2 range)
+       when (grid-table-etaf--row-shown-p state row) do
        (cl-loop
         for col from (nth 1 range) to (nth 3 range) do
         (let* ((value (grid-get-computed-value-at source row col))
@@ -731,8 +809,8 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
                 (grid-table-etaf--format-number sum)
                 (grid-table-etaf--format-number (/ (float sum) numbers)))))))
 
-(defun grid-table-etaf--status-node (source range)
-  "Return the status bar View node for SOURCE and the selected RANGE."
+(defun grid-table-etaf--status-node (state source range)
+  "Return the status bar View node of STATE for SOURCE and the selected RANGE."
   (etaf-node
    'box
    (list :key 'status
@@ -742,7 +820,7 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
          :overflow 'hidden
          :color (grid-table-etaf--face-color 'shadow :foreground))
    (list (etaf-node 'text nil
-                    (list (grid-table-etaf--status-text source range))))))
+                    (list (grid-table-etaf--status-text state source range))))))
 
 (defun grid-table-etaf--render (state)
   "Return the View of STATE's visible window."
@@ -762,7 +840,6 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
          (rows (grid-table-etaf--visible-rows state top cols))
          (first-col (car cols))
          (last-col (car (last cols)))
-         (last-row (car (last rows)))
          (merges (grid-get-merges source))
          (rules (grid-get-conditional-formats source))
          (cursor-merge (grid-table--merge-at merges (car cursor) (cdr cursor)))
@@ -785,7 +862,10 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
      for col in cols for slot from 0 do
      (push (grid-table-etaf--header-node
             (format "c%d" slot) 1 (+ 2 slot)
-            (grid-table--col-number-to-letter col) 'center
+            (concat (grid-table--col-number-to-letter col)
+                    (and (assq col (grid-table-etaf--state-filters state))
+                         " ▼"))
+            'center
             (and (<= sel-left col) (<= col sel-right)) line
             (grid-table-etaf--drag-header
              buffer (lambda () (grid-table-etaf-select-column col)))
@@ -803,7 +883,14 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
      (cl-loop
       for col in cols for col-slot from 0 do
       (let* ((merge (and merges (grid-table--merge-at merges row col)))
-             (vis-top (and merge (max (nth 0 merge) top)))
+             ;; Filters can hide rows inside a merge: it spans the rows of
+             ;; it that are shown, starting at the first of them.
+             (merge-rows (and merge
+                              (cl-remove-if-not
+                               (lambda (shown)
+                                 (<= (nth 0 merge) shown (nth 2 merge)))
+                               rows)))
+             (vis-top (car merge-rows))
              (vis-left (and merge (max (nth 1 merge) first-col)))
              (cell-row (if merge (nth 0 merge) row))
              (cell-col (if merge (nth 1 merge) col)))
@@ -814,7 +901,7 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
              (grid-table-etaf--cell-node
               state source cell-row cell-col
               (and merge
-                   (cons (1+ (- (min (nth 2 merge) last-row) vis-top))
+                   (cons (length merge-rows)
                          (1+ (- (min (nth 3 merge) last-col) vis-left))))
               (list :key (+ (* 10000 row-slot) col-slot)
                     :rules rules
@@ -856,7 +943,7 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
                                  cols)))
              (nreverse children))
             (grid-table-etaf--status-node
-             source
+             state source
              (and ranged (list sel-top sel-left sel-bottom sel-right))))))))
 
 (etaf-define-component grid-table-etaf-sheet (&key state)
@@ -907,7 +994,8 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
     (let ((cols (grid-table-etaf--visible-cols state (etaf-value left-ref))))
       (while (not (memq row (grid-table-etaf--visible-rows
                              state (etaf-value top-ref) cols)))
-        (etaf-set-value top-ref (1+ (etaf-value top-ref)))))))
+        (etaf-set-value top-ref (grid-table-etaf--step-row
+                                 state (etaf-value top-ref) 1))))))
 
 (defun grid-table-etaf--settle (state)
   "Show STATE's cursor and put point on it.
@@ -926,14 +1014,17 @@ painted cursor fits."
                 (with-current-buffer (grid-table-etaf--state-buffer state)
                   (> (line-number-at-pos position) lines)))
       (setq guard (1+ guard))
-      (etaf-set-value top-ref (1+ (etaf-value top-ref))))))
+      (etaf-set-value top-ref (grid-table-etaf--step-row
+                               state (etaf-value top-ref) 1)))))
 
 (defun grid-table-etaf-goto (row col &optional extend)
   "Move the cursor to model ROW and COL.
 With EXTEND non-nil keep the selection anchor, extending the range."
   (let* ((state (grid-table-etaf--state-or-error))
          (source (grid-table-etaf--source state))
-         (row (max 0 (min (1- (grid-get-row-count source)) row)))
+         ;; A filtered-out row is not a place to be: take the next shown.
+         (row (grid-table-etaf--row-at
+               state (grid-table-etaf--row-position state row)))
          (col (max 0 (min (1- (grid-get-column-count source)) col))))
     (grid-table-etaf--finish-edit state)
     (etaf-batch
@@ -954,11 +1045,18 @@ With EXTEND non-nil keep the selection anchor, extending the range."
 (defun grid-table-etaf-move (rows cols &optional extend)
   "Move the cursor ROWS down and COLS right, stepping over merged cells.
 With EXTEND non-nil extend the selection instead."
-  (let* ((cursor (grid-table-etaf--cursor))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (cursor (grid-table-etaf--cursor))
          (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor))))
     (grid-table-etaf-goto
-     (cond ((> rows 0) (+ (nth 2 extent) rows))
-           ((< rows 0) (+ (nth 0 extent) rows))
+     ;; Rows are counted among the shown ones, so filtered rows are
+     ;; stepped over.
+     (cond ((> rows 0) (grid-table-etaf--step-row state (nth 2 extent) rows))
+           ((< rows 0)
+            (let ((target (+ (grid-table-etaf--row-position
+                              state (nth 0 extent))
+                             rows)))
+              (grid-table-etaf--row-at state target)))
            (t (car cursor)))
      (cond ((> cols 0) (+ (nth 3 extent) cols))
            ((< cols 0) (+ (nth 1 extent) cols))
@@ -968,16 +1066,17 @@ With EXTEND non-nil extend the selection instead."
 (defun grid-table-etaf-move-tab (direction)
   "Move to the next cell in reading order, or the previous one.
 DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
-  (let* ((source grid-table--data-source)
-         (rows (grid-get-row-count source))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source grid-table--data-source)
+         (rows (grid-table-etaf--row-count state))
          (cols (grid-get-column-count source))
          (cursor (grid-table-etaf--cursor))
          (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor)))
-         (row (car cursor))
+         (position (grid-table-etaf--row-position state (car cursor)))
          (col (if (> direction 0) (1+ (nth 3 extent)) (1- (nth 1 extent)))))
-    (cond ((>= col cols) (setq col 0 row (mod (1+ row) rows)))
-          ((< col 0) (setq col (1- cols) row (mod (1- row) rows))))
-    (grid-table-etaf-goto row col)))
+    (cond ((>= col cols) (setq col 0 position (mod (1+ position) rows)))
+          ((< col 0) (setq col (1- cols) position (mod (1- position) rows))))
+    (grid-table-etaf-goto (grid-table-etaf--row-at state position) col)))
 
 (defun grid-table-etaf--page-size ()
   "Return how many rows the window currently shows."
@@ -1001,9 +1100,9 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
 (defun grid-table-etaf--scroll (rows)
   "Scroll the window ROWS down without moving the cursor."
   (let* ((state (grid-table-etaf--state-or-error))
-         (top (grid-table-etaf--state-top state))
-         (last (1- (grid-get-row-count (grid-table-etaf--source state)))))
-    (etaf-set-value top (max 0 (min last (+ (etaf-value top) rows))))))
+         (top (grid-table-etaf--state-top state)))
+    (etaf-set-value top (grid-table-etaf--step-row
+                         state (etaf-value top) rows))))
 
 (defun grid-table-etaf-scroll-down ()
   "Scroll the sheet three rows down."
@@ -1025,6 +1124,72 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
   (interactive)
   (grid-table-etaf-goto (1- (grid-get-row-count grid-table--data-source))
                         (1- (grid-get-column-count grid-table--data-source))))
+
+;;;----------------------------------------------------------------------
+;;; Filters
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--refilter (state)
+  "Apply STATE's filters again and show the result."
+  (grid-table-etaf--finish-edit state)
+  (grid-table-etaf--apply-filters state)
+  (etaf-set-value (grid-table-etaf--state-top state) 0)
+  (grid-table-etaf--bump state)
+  (let ((cursor (etaf-value (grid-table-etaf--state-cursor state))))
+    (grid-table-etaf-goto (car cursor) (cdr cursor))))
+
+(defun grid-table-etaf-filter-column (col op value)
+  "Show only the rows whose cell in model column COL satisfies OP and VALUE.
+OP is one of `grid-table-conditional-operators'.  The first row holds
+the column titles and stays.  Filters on several columns combine.  Rows
+are filtered when the filter is set and on `grid-table-refresh', not
+after each edit."
+  (interactive
+   (let* ((col (cdr (grid-table-etaf--cursor)))
+          (choices (mapcar (lambda (entry) (cons (cdr entry) (car entry)))
+                           grid-table-conditional-operators))
+          (op (cdr (assoc (completing-read
+                           (format "Show rows whose column %s: "
+                                   (grid-table--col-number-to-letter col))
+                           choices nil t)
+                          choices))))
+     (list col op (if (member op '("empty" "error")) "" (read-string "Value: ")))))
+  (unless (assoc op grid-table-conditional-operators)
+    (user-error "Unknown condition: %s" op))
+  (let ((state (grid-table-etaf--state-or-error)))
+    (setf (alist-get col (grid-table-etaf--state-filters state))
+          (list op value))
+    (grid-table-etaf--refilter state)
+    (message "Showing %d of %d rows"
+             (1- (grid-table-etaf--row-count state))
+             (1- (grid-get-row-count (grid-table-etaf--source state))))))
+
+(defun grid-table-etaf-filter-by-cell ()
+  "Show only the rows that hold the cursor cell's value in its column."
+  (interactive)
+  (let* ((cursor (grid-table-etaf--cursor))
+         (value (grid-table-etaf--display-text
+                 (grid-get-computed-value-at grid-table--data-source
+                                             (car cursor) (cdr cursor)))))
+    (if (string-empty-p value)
+        (grid-table-etaf-filter-column (cdr cursor) "empty" "")
+      (grid-table-etaf-filter-column (cdr cursor) "=" value))))
+
+(defun grid-table-etaf-clear-column-filter ()
+  "Remove the filter on the cursor's column."
+  (interactive)
+  (let ((state (grid-table-etaf--state-or-error)))
+    (setf (grid-table-etaf--state-filters state)
+          (assq-delete-all (cdr (grid-table-etaf--cursor))
+                           (grid-table-etaf--state-filters state)))
+    (grid-table-etaf--refilter state)))
+
+(defun grid-table-etaf-clear-filters ()
+  "Remove every filter and show all rows."
+  (interactive)
+  (let ((state (grid-table-etaf--state-or-error)))
+    (setf (grid-table-etaf--state-filters state) nil)
+    (grid-table-etaf--refilter state)))
 
 (defun grid-table-etaf-row-start ()
   "Move the cursor to the first column of its row."
@@ -1208,7 +1373,8 @@ TAB or the mouse, stores the text too."
   (let ((state (grid-table-etaf--state-or-error))
         (range (grid-table-etaf-selection))
         changes)
-    (cl-loop for row from (nth 0 range) to (nth 2 range) do
+    (cl-loop for row from (nth 0 range) to (nth 2 range)
+             when (grid-table-etaf--row-shown-p state row) do
              (cl-loop for col from (nth 1 range) to (nth 3 range) do
                       (push (list row col "") changes)))
     (grid-table-etaf--set-cells state (nreverse changes))))
@@ -1269,8 +1435,16 @@ previous model is all that undoing them needs."
          (known (grid-table-etaf--state-model state)))
     (when (and model known (not (eq model known)))
       (setf (grid-table-etaf--state-manual state) nil)
+      (grid-table-etaf--forget-moved-filters state known model)
       (grid-table-etaf--record state (list 'model known model)))
     (setf (grid-table-etaf--state-model state) model)))
+
+(defun grid-table-etaf--forget-moved-filters (state old new)
+  "Drop STATE's filters when model NEW has other columns than OLD.
+A filter names its column by index, which an inserted or deleted column
+shifts."
+  (unless (= (grid-data-model-cols old) (grid-data-model-cols new))
+    (setf (grid-table-etaf--state-filters state) nil)))
 
 (defun grid-table-etaf--replay (state record forward)
   "Apply undo RECORD to STATE: its new side when FORWARD, else its old side."
@@ -1301,8 +1475,11 @@ previous model is all that undoing them needs."
              (cursor (etaf-value (grid-table-etaf--state-cursor state))))
          (puthash :model model source)
          ;; Dragged widths belong to the columns of the model they were set on.
+         (grid-table-etaf--forget-moved-filters
+          state (if forward old new) model)
          (setf (grid-table-etaf--state-model state) model
                (grid-table-etaf--state-manual state) nil)
+         (grid-table-etaf--apply-filters state)
          (grid-table-etaf--fit-widths state)
          (grid-table-etaf--bump state)
          (grid-table-etaf-goto (car cursor) (cdr cursor)))))))
@@ -1362,7 +1539,8 @@ change is one undoable step.  Covered cells of a merge are skipped."
     (unless (gethash :set-style-at source)
       (user-error "This grid's data source does not store cell styles"))
     (cl-loop
-     for row from (nth 0 range) to (nth 2 range) do
+     for row from (nth 0 range) to (nth 2 range)
+     when (grid-table-etaf--row-shown-p state row) do
      (cl-loop
       for col from (nth 1 range) to (nth 3 range) do
       (let ((merge (and merges (grid-table--merge-at merges row col))))
@@ -1552,9 +1730,11 @@ Quoted fields may hold tabs, newlines and doubled quotes."
       (push (nreverse row) rows))
     (nreverse rows)))
 
-(defun grid-table-etaf--range-rows (source range reader)
-  "Return the cells of RANGE in SOURCE as rows of strings read by READER."
-  (cl-loop for row from (nth 0 range) to (nth 2 range) collect
+(defun grid-table-etaf--range-rows (state source range reader)
+  "Return the cells of RANGE in SOURCE as rows of strings read by READER.
+Rows hidden by STATE's filters are left out."
+  (cl-loop for row from (nth 0 range) to (nth 2 range)
+           when (grid-table-etaf--row-shown-p state row) collect
            (cl-loop for col from (nth 1 range) to (nth 3 range) collect
                     (funcall reader source row col))))
 
@@ -1568,7 +1748,7 @@ back into a grid restores the raw values, formulas included."
          (range (grid-table-etaf-selection))
          (text (grid-table-etaf--tsv-encode
                 (grid-table-etaf--range-rows
-                 source range
+                 state source range
                  (lambda (source row col)
                    (grid-table-etaf--display-text
                     (grid-get-computed-value-at source row col)))))))
@@ -1576,7 +1756,7 @@ back into a grid restores the raw values, formulas included."
     (setq grid-table-etaf--clipboard
           (list text
                 (grid-table-etaf--range-rows
-                 source range
+                 state source range
                  (lambda (source row col)
                    (or (grid-get-raw-value-at source row col) "")))
                 (nth 0 range) (nth 1 range) nil))
@@ -1690,6 +1870,7 @@ cursor moves to: display column is model column plus one."
          (col (if restore-col (max 0 (1- restore-col)) (cdr cursor))))
     (grid-table-etaf--end-session state)
     (grid-table-etaf--track-model state)
+    (grid-table-etaf--apply-filters state)
     (grid-table-etaf--fit-widths state)
     (grid-table-etaf--bump state)
     (grid-table-etaf-goto row col)))

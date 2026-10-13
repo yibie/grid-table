@@ -408,6 +408,35 @@ Returns a list of raw values for the given column."
       (push (grid-cell-raw-input (grid-model-get-cell model r col-idx)) values))
     (nreverse values)))
 
+(defun grid-model--sort-key (value)
+  "Return the sort key of computed VALUE as (CLASS . KEY).
+Numbers, typed or computed, come first and compare by value; then text,
+ignoring case; empty cells always come last."
+  (let ((number (and (not (member value '(nil "")))
+                     (grid-calc--numeric value))))
+    (cond (number (cons 0 number))
+          ((member value '(nil "")) (cons 2 nil))
+          (t (cons 1 (downcase (format "%s" value)))))))
+
+(defun grid-model--compare-sort-keys (left right descending)
+  "Compare sort keys LEFT and RIGHT, returning -1, 0 or 1.
+DESCENDING reverses the order inside a class.  Empty cells stay last in
+both directions."
+  (let ((order
+         (cond ((/= (car left) (car right))
+                (if (< (car left) (car right)) -1 1))
+               ((= (car left) 2) 0)
+               ((= (car left) 0)
+                (cond ((< (cdr left) (cdr right)) -1)
+                      ((> (cdr left) (cdr right)) 1)
+                      (t 0)))
+               ((string< (cdr left) (cdr right)) -1)
+               ((string< (cdr right) (cdr left)) 1)
+               (t 0))))
+    (if (and descending (/= (car left) 2) (/= (car right) 2))
+        (- order)
+      order)))
+
 (defun grid-model-sort-by-column (model col-idx sort-order)
   "Sorts the model's data rows based on the values in COL-IDX.
 SORT-ORDER can be 'ascending or 'descending.
@@ -429,23 +458,25 @@ which is considered user-defined headers. The first row will remain in place."
          (all-raw-values (grid-model-get-all-raw-values model))
          (user-defined-headers (car all-raw-values)) ; Get user-defined headers (first row)
          (data-rows (cdr all-raw-values)) ; Actual data rows (excluding user-defined headers)
-         (decorated-data-rows (cl-loop for row in data-rows
-                                       for old-idx from 0
-                                       collect (list old-idx row)))
-         (sorted-data-rows (sort decorated-data-rows
-                                 (lambda (row1 row2)
-                                   (let* ((old1 (nth 0 row1))
-                                          (old2 (nth 0 row2))
-                                          (val1 (or (nth col-idx (nth 1 row1)) ""))
-                                          (val2 (or (nth col-idx (nth 1 row2)) "")))
-                                     (pcase sort-order
-                                       ('ascending (if (equal val1 val2)
-                                                       (< old1 old2)
-                                                     (string< val1 val2)))
-                                       ('descending (if (equal val1 val2)
-                                                        (< old1 old2)
-                                                      (string> val1 val2)))
-                                       (_ (error "Invalid sort order: %s" sort-order))))))))
+         ;; Rows sort by what the column shows, so a formula sorts by its
+         ;; result.
+         (decorated-data-rows
+          (cl-loop for row in data-rows
+                   for old-idx from 0
+                   collect (list old-idx row
+                                 (grid-model--sort-key
+                                  (grid-model-get-computed-value
+                                   model (1+ old-idx) col-idx)))))
+         (sorted-data-rows
+          (sort decorated-data-rows
+                (lambda (row1 row2)
+                  (let ((order (grid-model--compare-sort-keys
+                                (nth 2 row1) (nth 2 row2)
+                                (eq sort-order 'descending))))
+                    ;; Equal values keep their order, in either direction.
+                    (if (= order 0)
+                        (< (nth 0 row1) (nth 0 row2))
+                      (< order 0)))))))
     ;; Reconstruct the new raw values list with user-defined headers at the top
     (let* ((new-raw-values (cons user-defined-headers
                                  (mapcar #'cadr sorted-data-rows)))
