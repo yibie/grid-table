@@ -94,7 +94,9 @@ TITLE is an optional string for the grid title."
     (puthash :sort-by-column
              (lambda (s col-idx sort-order)
                 (let* ((old-model (gethash :model s))
-                       (new-model (grid-model-sort-by-column old-model col-idx sort-order)))
+                       (new-model (grid-model-sort-by-column
+                                   old-model col-idx sort-order
+                                   (gethash :no-header-row s))))
                   (puthash :model new-model s)
                   ;; headers stored in :headers remain the same (first data row),
                   ;; grid-model-sort-by-column preserves header row at index 0.
@@ -368,7 +370,7 @@ moved, as when a line is added at the end."
         (cols (grid-data-model-cols old-model)))
     (pcase key
       ;; A row is counted from the first row under the header row.
-      (:add-row (and index (< -1 index (1- rows)) (list 'row (1+ index) 1)))
+      (:add-row (and index (< -2 index (1- rows)) (list 'row (1+ index) 1)))
       (:delete-row (and index (list 'row (1+ index) -1)))
       (:add-column (and index (< -1 index cols) (list 'col index 1)))
       (:delete-column (and index (list 'col index -1))))))
@@ -416,7 +418,8 @@ change rewrote in other sheets go back with it."
      key
      (lambda (s &rest args)
        (let ((workbook (grid-workbook-of s))
-             (old-model (gethash :model s)))
+             (old-model (gethash :model s))
+             (grid-model-first-row-is-header (not (gethash :no-header-row s))))
          (prog1 (if (null workbook)
                     (apply function s args)
                   (prog1 (let ((grid-calc-defer t)

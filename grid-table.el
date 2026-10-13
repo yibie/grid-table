@@ -159,6 +159,25 @@ See `grid-table-read-entry' for how dates and percentages are read."
     (cond (workbook (grid-workbook-recalculate workbook))
           (model (grid-table-calc-evaluate model)))))
 
+(defun grid-table-header-row-p (source)
+  "Return non-nil when the first row of SOURCE holds its column titles.
+That row then stays in place when the sheet is sorted or filtered and
+cannot be deleted.  A sheet without a header row treats its first row as
+any other."
+  (not (gethash :no-header-row source)))
+
+(defun grid-table-set-header-row (source header)
+  "Say whether the first row of SOURCE holds its column titles: HEADER."
+  (when (and header (not (grid-table-header-row-p source)))
+    (when (cl-some (lambda (merge)
+                     (and (= (nth 0 merge) 0) (< (nth 0 merge) (nth 2 merge))))
+                   (grid-get-merges source))
+      (user-error "A merge reaches down from the first row; unmerge it first")))
+  (if header
+      (remhash :no-header-row source)
+    (puthash :no-header-row t source))
+  header)
+
 (defun grid-get-column-widths (source)
   "Return SOURCE's table of column widths set by hand, or nil.
 It maps a column index to a width in characters."
@@ -1160,9 +1179,13 @@ If called interactively, adds a row below the current cell."
                        (plist-get coords :slice-row))))
   (when grid-table--data-source
     (cl-block grid-table-add-row
-      ;; Validate row-idx before proceeding
-      (unless (and row-idx (numberp row-idx) (>= row-idx 0))
+      ;; Validate row-idx before proceeding; -1 is above the first row
+      (unless (and row-idx (numberp row-idx) (>= row-idx -1))
         (message "Error: Invalid row index. Please place cursor on a valid table cell.")
+        (cl-return-from grid-table-add-row))
+      (when (and (= row-idx -1)
+                 (grid-table-header-row-p grid-table--data-source))
+        (message "Cannot insert above the header row.")
         (cl-return-from grid-table-add-row))
       (let* ((current-coords (grid-table-get-cell-at-point))
              (restore-row-idx
@@ -1188,7 +1211,8 @@ If called interactively, deletes the current row."
         (message "Error: Invalid row index. Please place cursor on a valid table cell.")
         (cl-return-from grid-table-delete-row))
       ;; Row index 0 is the user-defined header row, not allowed to be deleted
-      (when (= row-idx 0)
+      (when (and (= row-idx 0)
+                 (grid-table-header-row-p grid-table--data-source))
         (message "Cannot delete header row.")
         (cl-return-from grid-table-delete-row))
       (let* ((current-coords (grid-table-get-cell-at-point))
@@ -1268,10 +1292,11 @@ If called interactively, deletes the current column."
           (error (message "Error deleting column: %s" (error-message-string err))))))))
 
 (defun grid-table-insert-row-above ()
-  "Insert a new row above the current row."
+  "Insert a new row above the current row.
+In a sheet with a header row, nothing goes above that row."
   (interactive)
   (when-let ((coords (grid-table-get-cell-at-point)))
-    (grid-table-add-row (plist-get coords :slice-row))))
+    (grid-table-add-row (1- (plist-get coords :slice-row)))))
 
 (defun grid-table-insert-column-left ()
   "Insert a new column to the left of the current column."
@@ -1490,6 +1515,21 @@ EXCEPT is a sheet allowed to have that name already."
     (grid-table--sheet-changed
      (grid-workbook-new-sheet workbook name (1+ index)))))
 
+(defun grid-table-toggle-header-row ()
+  "Say whether the first row of the current sheet holds column titles.
+With a header row, which every sheet starts with, the first row stays in
+place when the sheet is sorted or filtered and cannot be deleted.
+Without one the first row is a row like any other, for a sheet that is
+not a single table."
+  (interactive)
+  (let ((source (or grid-table--data-source
+                    (user-error "No grid in this buffer"))))
+    (grid-table-set-header-row source (not (grid-table-header-row-p source)))
+    (grid-table-refresh)
+    (message (if (grid-table-header-row-p source)
+                 "The first row is the header row again"
+               "The first row is now a row like any other"))))
+
 (defun grid-table-sheet-rename (name)
   "Call the current sheet NAME.
 Formulas that read the sheet are rewritten to use the new name."
@@ -1654,6 +1694,8 @@ skipping regions with a `display' property (like images)."
     (define-key map (kbd "C-c w s") 'grid-table-sheet-select)
     (define-key map (kbd "C-c w <") 'grid-table-sheet-move-left)
     (define-key map (kbd "C-c w >") 'grid-table-sheet-move-right)
+    (define-key map (kbd "C-c w h") 'grid-table-toggle-header-row)
+    (define-key map (kbd "C-c r i") 'grid-table-insert-row-above)
     (define-key map (kbd "C-c m") 'grid-table-merge-cells)
     (define-key map (kbd "C-c u") 'grid-table-unmerge-cell)
      (define-key map (kbd "C-c v") 'grid-table-view-chart)

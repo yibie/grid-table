@@ -188,7 +188,9 @@ HOOKS is an alist keyed by :set-raw-value-at, :add-row or :unmerge-cell."
       (grid-table-vertical-nav-test--goto-text "mix-slice-5")
       (cl-letf (((symbol-function 'grid-table-refresh) #'ignore))
         (grid-table-insert-row-above))
-      (should (= inserted-row 4)))))
+      ;; The source adds a row below the one it is given, so the row
+      ;; above the cursor's puts the new one above the cursor.
+      (should (= inserted-row 3)))))
 
 (ert-deftest grid-table-unmerge-on-vertical-slice-uses-anchor-cell ()
   (let (unmerged)

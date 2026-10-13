@@ -295,15 +295,17 @@ last one when none follows."
 
 (defun grid-table-etaf--apply-filters (state)
   "Recompute which rows of STATE its filters leave shown.
-The first row holds the column titles and is always shown."
+A header row holds the column titles and is always shown."
   (let* ((source (grid-table-etaf--source state))
-         (filters (grid-table-etaf--state-filters state)))
+         (filters (grid-table-etaf--state-filters state))
+         (kept (if (grid-table-header-row-p source) 1 0)))
     (setf (grid-table-etaf--state-shown state)
           (and filters
                (vconcat
-                (cons 0
+                (append
+                      (number-sequence 0 (1- kept))
                       (cl-loop
-                       for row from 1 below (grid-get-row-count source)
+                       for row from kept below (grid-get-row-count source)
                        when (cl-every
                              (lambda (filter)
                                (grid-table-conditional-match-p
@@ -548,6 +550,8 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c w s" grid-table-sheet-select "Go to sheet")
     ("C-c w <" grid-table-sheet-move-left "Move sheet left")
     ("C-c w >" grid-table-sheet-move-right "Move sheet right")
+    ("C-c w h" grid-table-toggle-header-row "Header row on or off")
+    ("C-c r i" grid-table-insert-row-above "Insert row above")
     ("C-c / f" grid-table-etaf-filter-column "Filter column")
     ("C-c / v" grid-table-etaf-filter-by-cell "Filter by this value")
     ("C-c / c" grid-table-etaf-clear-column-filter "Clear column filter")

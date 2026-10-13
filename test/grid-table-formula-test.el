@@ -419,6 +419,55 @@
   (should (equal (grid-calc-shift-formula "=LOG10(A1)&\"A:A\"" 0 1)
                  "=LOG10(B1)&\"A:A\"")))
 
+(ert-deftest grid-table-sheet-without-a-header-row ()
+  (let ((source (make-default-data-source
+                 '("" "")
+                 '(("pear" "3") ("apple" "=B1*2") ("fig" "1")))))
+    (should (grid-table-header-row-p source))
+    ;; With a header row the first row stays where it is.
+    (funcall (gethash :sort-by-column source) source 0 'ascending)
+    (should (equal (grid-get-raw-value-at source 0 0) "pear"))
+    (should (equal (grid-get-raw-value-at source 1 0) "apple"))
+    ;; Without one it is sorted like any other row.
+    (grid-table-set-header-row source nil)
+    (funcall (gethash :sort-by-column source) source 0 'ascending)
+    (should (equal (mapcar (lambda (row) (grid-get-raw-value-at source row 0))
+                           '(0 1 2))
+                   '("apple" "fig" "pear")))
+    ;; A formula that moved with its row still reads the same distance up.
+    (should (equal (grid-get-raw-value-at source 0 1) "=#REF!*2"))
+    (grid-set-raw-value-at source 0 1 "7")
+    ;; A row can go above the first row, and the first row can go.
+    (funcall (gethash :add-row source) source -1)
+    (should (equal (grid-get-row-count source) 4))
+    (should (equal (grid-get-raw-value-at source 0 0) ""))
+    (should (equal (grid-get-raw-value-at source 1 0) "apple"))
+    (grid-set-raw-value-at source 3 1 "=B2+1")
+    (funcall (gethash :delete-row source) source -1)
+    (should (equal (grid-get-raw-value-at source 0 0) "apple"))
+    (should (equal (grid-get-raw-value-at source 2 1) "=B1+1"))
+    (should (equal (grid-get-computed-value-at source 2 1) 8))
+    ;; A merge may reach down from the first row.
+    (grid-set-raw-value-at source 1 0 "")
+    (grid-merge-cells source 0 0 1 0)
+    (should (equal (grid-get-merges source) '((0 0 1 0))))
+    ;; It keeps the header row from coming back.
+    (should-error (grid-table-set-header-row source t) :type 'user-error)
+    ;; The setting and the merge are saved with the grid.
+    (let ((file (make-temp-file "grid-noheader-" nil ".grid")))
+      (unwind-protect
+          (progn
+            (grid-table-persistence--save-to-file source file)
+            (let ((back (grid-table-persistence-create-data-source-from-file
+                         file)))
+              (should-not (grid-table-header-row-p back))
+              (should (equal (grid-get-merges back) '((0 0 1 0))))))
+        (delete-file file)))
+    (grid-unmerge-cell source 0 0)
+    (grid-table-set-header-row source t)
+    (should (grid-table-header-row-p source))
+    (should-error (funcall (gethash :merge-cells source) source 0 0 1 0))))
+
 ;;;----------------------------------------------------------------------
 ;;; Number formats and dates
 ;;;----------------------------------------------------------------------

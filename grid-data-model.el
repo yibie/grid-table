@@ -47,6 +47,11 @@
 ;;; Data Model
 ;;;----------------------------------------------------------------------
 
+(defvar grid-model-first-row-is-header t
+  "Non-nil when the first row of the model at work holds column titles.
+A merge may then not reach from that row into the rows below it.  A data
+source whose sheet has no header row binds this to nil.")
+
 ;; Manual grid data model implementation
 (defun make-grid-data-model (rows cols cells &optional merges styles
                                  conditionals)
@@ -312,7 +317,8 @@ The new cells are empty; nothing that was there moves."
    ((and (= (nth 0 merge) (nth 2 merge))
          (= (nth 1 merge) (nth 3 merge)))
     "merge must span at least two cells")
-   ((and (= (nth 0 merge) 0)
+   ((and grid-model-first-row-is-header
+         (= (nth 0 merge) 0)
          (< (nth 0 merge) (nth 2 merge)))
     "vertical merges cannot cross row 0")
    (t nil)))
@@ -487,13 +493,14 @@ both directions."
         (- order)
       order)))
 
-(defun grid-model-sort-by-column (model col-idx sort-order)
+(defun grid-model-sort-by-column (model col-idx sort-order &optional whole)
   "Sorts the model's data rows based on the values in COL-IDX.
 SORT-ORDER can be 'ascending or 'descending.
 Returns a new model instance with sorted data.
 
 Note: This function sorts the actual data rows, excluding the first row
 which is considered user-defined headers. The first row will remain in place.
+With WHOLE, the sheet has no header row and its first row is sorted too.
 
 A formula in a row that moves has its relative references moved by as
 many rows, as if the row had been cut and pasted; anchored parts and
@@ -510,8 +517,10 @@ references that name a sheet stay."
                            (grid-data-model-merges model))
               (error "Cannot sort a model containing vertical merges; unmerge them first")))
          (all-raw-values (grid-model-get-all-raw-values model))
-         (user-defined-headers (car all-raw-values)) ; Get user-defined headers (first row)
-         (data-rows (cdr all-raw-values)) ; Actual data rows (excluding user-defined headers)
+         ;; How many rows stay at the top: the header row, or none
+         (kept (if whole 0 1))
+         (user-defined-headers (cl-subseq all-raw-values 0 kept))
+         (data-rows (nthcdr kept all-raw-values))
          ;; Rows sort by what the column shows, so a formula sorts by its
          ;; result.
          (decorated-data-rows
@@ -520,7 +529,7 @@ references that name a sheet stay."
                    collect (list old-idx row
                                  (grid-model--sort-key
                                   (grid-model-get-computed-value
-                                   model (1+ old-idx) col-idx)))))
+                                   model (+ kept old-idx) col-idx)))))
          (sorted-data-rows
           (sort decorated-data-rows
                 (lambda (row1 row2)
@@ -533,7 +542,7 @@ references that name a sheet stay."
                       (< order 0)))))))
     ;; Reconstruct the new raw values list with user-defined headers at the top
     (let* ((new-raw-values
-            (cons user-defined-headers
+            (append user-defined-headers
                   ;; A formula moves with its row, so what it reads in its
                   ;; own row is still its own row afterwards.
                   (cl-loop for (old-idx row) in sorted-data-rows
@@ -549,11 +558,11 @@ references that name a sheet stay."
            (new-idx 0)
            (new-merges
             (mapcar (lambda (merge)
-                      (if (= (nth 0 merge) 0)
+                      (if (< (nth 0 merge) kept)
                           merge
-                        (list (1+ (aref old-to-new (1- (nth 0 merge))))
+                        (list (+ kept (aref old-to-new (- (nth 0 merge) kept)))
                               (nth 1 merge)
-                              (1+ (aref old-to-new (1- (nth 2 merge))))
+                              (+ kept (aref old-to-new (- (nth 2 merge) kept)))
                               (nth 3 merge))))
                     (progn
                       (dolist (row sorted-data-rows)
@@ -566,7 +575,10 @@ references that name a sheet stay."
        ;; A style travels with its row; conditional ranges stay in place.
        (grid-model--map-styles
         model (lambda (row col)
-                (cons (if (= row 0) 0 (1+ (aref old-to-new (1- row)))) col)))
+                (cons (if (< row kept)
+                          row
+                        (+ kept (aref old-to-new (- row kept))))
+                      col)))
        (grid-data-model-conditionals model)))))
 
 (defun grid-model-get-all-raw-values (model)
@@ -607,10 +619,15 @@ Returns a new model instance."
                                     (cl-subseq new-data-rows row-idx)))
       (setf new-data-rows (append new-data-rows (list new-row))))
     ;; Reconstruct the complete raw values with user-defined headers at the top
-    (let* ((new-raw-values (cons user-defined-headers new-data-rows))
-           (insert-row (if (and row-idx (>= row-idx 0) (< row-idx (length data-rows)))
-                           (1+ row-idx)
-                         current-rows))
+    ;; A row index of -1 puts the new row above the first row.
+    (let* ((above (eql row-idx -1))
+           (new-raw-values (if above
+                               (cons new-row (cons user-defined-headers data-rows))
+                             (cons user-defined-headers new-data-rows)))
+           (insert-row (cond (above 0)
+                             ((and row-idx (>= row-idx 0) (< row-idx (length data-rows)))
+                              (1+ row-idx))
+                             (t current-rows)))
            (new-merges (mapcar (lambda (merge)
                                  (let ((top (nth 0 merge))
                                        (left (nth 1 merge))
@@ -642,9 +659,10 @@ Returns a new model instance. Errors if ROW-IDX is invalid or only one row remai
          (user-defined-headers (car all-raw-values)) ; Get user-defined headers (first row)
          (data-rows (cdr all-raw-values)) ; Actual data rows (excluding user-defined headers)
          (new-data-rows (copy-sequence data-rows)))
-    (unless (and (>= row-idx 0) (< row-idx (length data-rows)))
+    ;; A row index of -1 names the first row of the sheet.
+    (unless (and (>= row-idx -1) (< row-idx (length data-rows)))
       (error "Invalid row index: %s" row-idx))
-    (when (= (length data-rows) 1)
+    (when (if (= row-idx -1) (null data-rows) (= (length data-rows) 1))
       (error "Cannot delete the last row."))
     (let ((delete-row (1+ row-idx)))
       (dolist (merge (grid-data-model-merges model))
@@ -653,8 +671,11 @@ Returns a new model instance. Errors if ROW-IDX is invalid or only one row remai
           (let ((raw-rows (cons user-defined-headers new-data-rows)))
             (setf (nth (nth 1 merge) (nth (1+ delete-row) raw-rows))
                   (nth (nth 1 merge) (nth delete-row raw-rows)))))))
-    (setf new-data-rows (append (cl-subseq new-data-rows 0 row-idx)
-                                (cl-subseq new-data-rows (1+ row-idx))))
+    (if (= row-idx -1)
+        (setq user-defined-headers (car new-data-rows)
+              new-data-rows (cdr new-data-rows))
+      (setf new-data-rows (append (cl-subseq new-data-rows 0 row-idx)
+                                  (cl-subseq new-data-rows (1+ row-idx)))))
     ;; Reconstruct the complete raw values with user-defined headers at the top
     (let* ((new-raw-values (cons user-defined-headers new-data-rows))
            (delete-row (1+ row-idx))
