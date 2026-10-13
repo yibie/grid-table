@@ -11,9 +11,9 @@ CLASSIC_TESTS = test/grid-table-merge-test.el \
 BATCH = $(EMACS) -Q --batch -L . -L plugins -L test
 ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
-.PHONY: test test-classic test-etaf
+.PHONY: test test-classic test-etaf test-xlsx module
 
-test: test-classic test-etaf
+test: test-classic test-etaf test-xlsx
 
 # The classic suite, with the model and formula tests, runs without ETAF on
 # the load path, so every grid falls back to the classic renderer.
@@ -23,3 +23,11 @@ test-classic:
 test-etaf:
 	@test -n "$(ETAF_SRC)" || { echo "Set ETAF_SRC to the directory holding ecss, ebox and etaf"; exit 1; }
 	$(BATCH) $(ETAF_PATH) -l test/grid-table-etaf-test.el -f ert-run-tests-batch-and-exit
+
+# The xlsx plugin's dynamic module; needs cargo.
+module:
+	cd plugins/xlsx && cargo build --release
+
+# Skips the tests that read or write a workbook when the module is not built.
+test-xlsx:
+	$(BATCH) -l test/grid-table-xlsx-test.el -f ert-run-tests-batch-and-exit

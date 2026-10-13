@@ -110,6 +110,7 @@ Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/che
 | Open      | `M-x grid-table-find-file`     | `C-c C-f`   | Open .grid file       |
 | Save      | -                              | `C-c C-w`   | Smart path suggestion |
 | CSV       | `M-x grid-table-find-file-csv` | -           | Directly read CSV     |
+| Excel     | `M-x grid-table-xlsx-find-file` | -          | Open a sheet of an xlsx workbook |
 
 ### Editing Operations Quick Reference
 
@@ -344,6 +345,26 @@ here display table preview (static preview)
 | from grid export          | `M-x grid-table-export-as-rst`              | 📄 standard RST format    |
 | insert existing grid file | `M-x grid-table-rst-insert-table-from-file` | 🔗 smart path recognition |
 
+### Excel workbooks (xlsx)
+
+`(require 'grid-table-xlsx)` adds two commands:
+
+| Command | What it does |
+| ------- | ------------ |
+| `M-x grid-table-xlsx-find-file` | Open one sheet of a workbook as a grid; asks which sheet when there are several |
+| `M-x grid-table-xlsx-export` | Write the grid as a sheet of a workbook; an existing workbook keeps its other sheets |
+
+Values, formulas, merges, bold, italic, text and fill color, alignment and conditional formats travel both ways. The first row of the sheet becomes the header row. A grid opened from a workbook is not tied to it: `C-c C-w` saves a `.grid` file, and exporting writes the workbook.
+
+What does not travel:
+
+- Dates come in as text written year first (`2026-10-12`, `18:00:00`), because grid-table has no date type, and go back out as text. Text that reads as a number, such as `007`, goes out as a number. Number formats such as `0.00` or `0%` are dropped, and the cell keeps its number.
+- Borders, fonts, column widths, and conditional formats other than comparisons, "contains text", "is blank" and "is an error" are left out on import. On export the cells, merges and conditional formats of the sheet are replaced by the grid's, so those of them that were left out are gone; column widths and the rest of the sheet stay as they were, and the other sheets are untouched.
+- A formula that reads another sheet, or uses a function grid-table lacks, shows an error value in the grid. It is kept as written and exported unchanged.
+- Chart formulas are exported as text.
+
+The file format is handled by a dynamic module written in Rust (`plugins/xlsx/`), so Emacs must be built with module support. Either put a prebuilt `grid-table-xlsx-module.dylib` (`.so` on Linux, `.dll` on Windows) in `plugins/`, or build it with `M-x grid-table-xlsx-build-module` or `make module`; building needs cargo. `grid-table-xlsx-module-file` names a module kept elsewhere.
+
 ## Core Technology Principles
 
 ### Data Flow Architecture Diagram
@@ -385,6 +406,8 @@ grid-table/                    # project root directory
 └── grid-table-persistence.el  # persistence support
 ├── plugins/                   # plugin extension system
 │   ├── grid-table-csv.el      # CSV format support
+│   ├── grid-table-xlsx.el     # Excel workbook support
+│   ├── xlsx/                  # Rust source of the xlsx module
 │   ├── grid-table-org.el      # Org mode integration
 │   ├── grid-table-markdown.el # Markdown integration
 │   ├── grid-table-rst.el      # reStructuredText export

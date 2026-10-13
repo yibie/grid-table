@@ -14,3 +14,9 @@ tp/
 # Emacs byte-compiled files
 *.elc
 .DS_Store
+
+# xlsx plugin: cargo build output and a locally placed module
+plugins/xlsx/target/
+plugins/grid-table-xlsx-module.dylib
+plugins/grid-table-xlsx-module.so
+plugins/grid-table-xlsx-module.dll

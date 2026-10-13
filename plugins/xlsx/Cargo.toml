@@ -1,0 +1,19 @@
+[package]
+name = "grid-table-xlsx-module"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Emacs dynamic module that reads and writes xlsx files for grid-table"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+emacs = "0.23"
+umya-spreadsheet = "3.1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

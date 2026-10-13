@@ -110,6 +110,7 @@
 | 打开    | `M-x grid-table-find-file`     | `C-c C-f` | 打开.grid文件 |
 | 保存    | -                              | `C-c C-w` | 智能提示路径  |
 | CSV     | `M-x grid-table-find-file-csv` | -         | 直接读取CSV   |
+| Excel   | `M-x grid-table-xlsx-find-file` | -        | 打开 xlsx 工作簿里的一张表 |
 
 ### 编辑操作速记
 
@@ -345,6 +346,26 @@ grid-table 内置图表公式功能，可直接在单元格中渲染 ASCII/Unico
 | 从grid导出       | `M-x grid-table-export-as-rst`              | 📄 标准RST格式  |
 | 插入现有机构文件 | `M-x grid-table-rst-insert-table-from-file` | 🔗 智能路径识别 |
 
+### Excel 工作簿（xlsx）
+
+`(require 'grid-table-xlsx)` 提供两个命令：
+
+| 命令 | 作用 |
+| ---- | ---- |
+| `M-x grid-table-xlsx-find-file` | 把工作簿里的一张工作表打开为表格；有多张时询问打开哪一张 |
+| `M-x grid-table-xlsx-export` | 把表格写成工作簿里的一张工作表；已有工作簿的其他工作表保持不变 |
+
+值、公式、合并单元格、加粗、斜体、文字颜色、填充色、对齐和条件格式可以双向往返。工作表的第一行成为表头行。从工作簿打开的表格不与该文件绑定：`C-c C-w` 保存的是 `.grid` 文件，导出才写回工作簿。
+
+不能往返的内容：
+
+- 日期按年在前的文本导入（`2026-10-12`、`18:00:00`），因为 grid-table 没有日期类型，导出时也是文本。看起来像数字的文本（如 `007`）导出为数字。`0.00`、`0%` 这类数字格式会被丢弃，单元格保留数值本身。
+- 边框、字体、列宽，以及比较、「文本包含」、「为空」、「是错误值」之外的条件格式，导入时会被略去。导出时该工作表的单元格、合并和条件格式会被表格里的内容替换，所以其中被略去的部分会消失；列宽和这张表的其余设置保持原样，其他工作表不受影响。
+- 引用其他工作表的公式，或用到 grid-table 没有的函数的公式，在表格里显示为错误值；公式本身原样保留，导出时不变。
+- 图表公式导出为文本。
+
+文件格式由一个 Rust 写的动态模块处理（`plugins/xlsx/`），所以 Emacs 需要带模块支持。把预编译的 `grid-table-xlsx-module.dylib`（Linux 为 `.so`，Windows 为 `.dll`）放进 `plugins/`，或者用 `M-x grid-table-xlsx-build-module` 或 `make module` 自行编译，编译需要 cargo。模块放在别处时用 `grid-table-xlsx-module-file` 指定。
+
 ## 核心技术原理
 
 ### 数据流架构图
@@ -386,6 +407,8 @@ grid-table/                    # 项目根目录
 └── grid-table-persistence.el  # 持久化支持
 ├── plugins/                   # 插件扩展系统
 │   ├── grid-table-csv.el      # CSV格式支持
+│   ├── grid-table-xlsx.el     # Excel 工作簿支持
+│   ├── xlsx/                  # xlsx 模块的 Rust 源码
 │   ├── grid-table-org.el      # Org模式集成
 │   ├── grid-table-markdown.el # Markdown集成
 │   ├── grid-table-rst.el      # reStructuredText导出
