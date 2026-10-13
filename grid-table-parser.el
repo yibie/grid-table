@@ -16,6 +16,7 @@
 (defconst grid-parser-token-type-lparen 'LPAREN)
 (defconst grid-parser-token-type-rparen 'RPAREN)
 (defconst grid-parser-token-type-comma 'COMMA)
+(defconst grid-parser-token-type-boolean 'BOOLEAN)
 (defconst grid-parser-token-type-eof 'EOF)
 
 ;; Helper to create a token
@@ -43,7 +44,7 @@
 (defun grid-parser-get-operator (token)
   "Gets the operator value from an OPERATOR token as string."
   (when (eq (car token) grid-parser-token-type-operator)
-    (char-to-string (cadr token))))
+    (cadr token)))
 
 ;;;----------------------------------------------------------------------
 ;;; Lexical Analyzer (Tokenizer)
@@ -95,29 +96,43 @@
           (push (grid-parser-make-token grid-parser-token-type-comma char) tokens)
           (setq pos (1+ pos)))
 
-         ;; Cell references (e.g., A1, $A$1, A1:B5) or Function names (e.g., SUM)
-         ((and (>= char ?A) (<= char ?Z))
+         ;; Cell references (e.g., A1, $A$1, A1:B5), TRUE/FALSE or function
+         ;; names (e.g., SUM).  Letters are read in either case.
+         ((or (and (>= char ?A) (<= char ?Z))
+              (and (>= char ?a) (<= char ?z))
+              (eq char ?$))
           (let ((start pos))
             (while (and (< pos len)
-                        (or (and (>= (aref formula-str pos) ?A)
-                                 (<= (aref formula-str pos) ?Z))
-                            (and (>= (aref formula-str pos) ?0)
-                                 (<= (aref formula-str pos) ?9))
-                            (eq (aref formula-str pos) ?$)
-                            (eq (aref formula-str pos) ?:)))
+                        (let ((c (aref formula-str pos)))
+                          (or (and (>= c ?A) (<= c ?Z))
+                              (and (>= c ?a) (<= c ?z))
+                              (and (>= c ?0) (<= c ?9))
+                              (memq c '(?$ ?: ?_ ?.)))))
               (setq pos (1+ pos)))
-            (let* ((text (substring formula-str start pos))
-                   (token-type (cond
-                               ;; Check for cell reference pattern (e.g., A1, $A$1, A1:B5)
-                               ((string-match "^\\(\\$?[A-Z]+\\$?[0-9]+\\)\\(:\\$?[A-Z]+\\$?[0-9]+\\)?$" text)
-                                grid-parser-token-type-cell-ref)
-                               ;; Otherwise, assume it's a function name
-                               (t grid-parser-token-type-function))))
-              (push (grid-parser-make-token token-type text) tokens))))
+            (let ((text (upcase (substring formula-str start pos))))
+              (push
+               (cond
+                ((string-match "^\\(\\$?[A-Z]+\\$?[0-9]+\\)\\(:\\$?[A-Z]+\\$?[0-9]+\\)?$" text)
+                 (grid-parser-make-token grid-parser-token-type-cell-ref text))
+                ((member text '("TRUE" "FALSE"))
+                 (grid-parser-make-token grid-parser-token-type-boolean
+                                         (equal text "TRUE")))
+                (t (grid-parser-make-token grid-parser-token-type-function text)))
+               tokens))))
 
-         ;; Operators and delimiters
+         ;; Two-character comparison operators
+         ((and (< (1+ pos) len)
+               (member (substring formula-str pos (+ pos 2)) '("<=" ">=" "<>")))
+          (push (grid-parser-make-token grid-parser-token-type-operator
+                                        (substring formula-str pos (+ pos 2)))
+                tokens)
+          (setq pos (+ pos 2)))
+
+         ;; Single-character operators
          (t
-          (push (grid-parser-make-token grid-parser-token-type-operator char) tokens)
+          (push (grid-parser-make-token grid-parser-token-type-operator
+                                        (char-to-string char))
+                tokens)
           (setq pos (1+ pos))))))
     ;; Add EOF token
     (push (grid-parser-make-token grid-parser-token-type-eof nil) tokens)
@@ -284,18 +299,18 @@
     (cons left remaining-tokens)))
 
 (defun grid-parser-parse-comparison-expression (tokens)
-  "Parses comparison expressions. Returns (ast . remaining-tokens)."
+  "Parses string concatenation (&), which binds tighter than comparison.
+Returns (ast . remaining-tokens)."
   (let* ((result (grid-parser-parse-additive-expression tokens))
          (left (car result))
          (remaining-tokens (cdr result)))
     (while (and remaining-tokens
-                (let ((op (grid-parser-get-operator (car remaining-tokens))))
-                  (member op '("<" ">" "<=" ">="))))
-      (let* ((op (grid-parser-get-operator (pop remaining-tokens)))
-             (right-result (grid-parser-parse-additive-expression remaining-tokens))
+                (equal (grid-parser-get-operator (car remaining-tokens)) "&"))
+      (pop remaining-tokens)
+      (let* ((right-result (grid-parser-parse-additive-expression remaining-tokens))
              (right (car right-result))
              (new-remaining (cdr right-result)))
-        (setq left (grid-ast-make-binary-op (intern op) left right))
+        (setq left (grid-ast-make-binary-op '& left right))
         (setq remaining-tokens new-remaining)))
     (cons left remaining-tokens)))
 
@@ -350,19 +365,19 @@
   (cond
    ((and tokens (grid-parser-token-is-p (car tokens) grid-parser-token-type-operator "+"))
     (pop tokens)
-    (let* ((result (grid-parser-parse-primary-expression tokens))
+    (let* ((result (grid-parser-parse-unary-expression tokens))
            (operand (car result))
            (remaining (cdr result)))
       (cons (grid-ast-make-unary-op '+ operand) remaining)))
    ((and tokens (grid-parser-token-is-p (car tokens) grid-parser-token-type-operator "-"))
     (pop tokens)
-    (let* ((result (grid-parser-parse-primary-expression tokens))
+    (let* ((result (grid-parser-parse-unary-expression tokens))
            (operand (car result))
            (remaining (cdr result)))
       (cons (grid-ast-make-unary-op '- operand) remaining)))
    ((and tokens (grid-parser-token-is-p (car tokens) grid-parser-token-type-operator "NOT"))
     (pop tokens)
-    (let* ((result (grid-parser-parse-primary-expression tokens))
+    (let* ((result (grid-parser-parse-unary-expression tokens))
            (operand (car result))
            (remaining (cdr result)))
       (cons (grid-ast-make-unary-op 'NOT operand) remaining)))
@@ -385,6 +400,11 @@
      ((eq (car token) grid-parser-token-type-string)
       (pop tokens)
       (cons (grid-ast-make-string (cadr token)) tokens))
+
+     ;; TRUE and FALSE
+     ((eq (car token) grid-parser-token-type-boolean)
+      (pop tokens)
+      (cons (list 'LITERAL (cadr token)) tokens))
 
      ;; Cell references or ranges
      ((eq (car token) grid-parser-token-type-cell-ref)
@@ -454,8 +474,13 @@
   "Parse a formula string into an AST."
   (if (string-prefix-p "elisp:" formula-str)
       (list grid-ast-type-elisp-code (substring formula-str 6))
-    (let ((tokens (grid-parser-tokenize formula-str)))
-      (car (grid-parser-parse-expression tokens)))))
+    (let* ((tokens (grid-parser-tokenize formula-str))
+           (result (grid-parser-parse-expression tokens))
+           (rest (cdr result)))
+      (unless (or (null rest)
+                  (grid-parser-token-is-p (car rest) grid-parser-token-type-eof))
+        (error "Unexpected %s" (grid-parser-token-value (car rest))))
+      (car result))))
 
 ;;;----------------------------------------------------------------------
 ;;; AST Evaluator (Moved to grid-table-calc.el)

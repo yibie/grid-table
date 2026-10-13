@@ -6,21 +6,85 @@
 ;;; Main Calculation Entry Point
 ;;;----------------------------------------------------------------------
 
+(define-error 'grid-calc-error "Formula error")
+(define-error 'grid-calc-cycle "Circular reference" 'grid-calc-error)
+
+(defconst grid-calc-error-values
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#CYCLE!" "#ERROR!")
+  "Values a cell shows when its formula cannot be computed.")
+
+(defvar grid-calc--pass nil
+  "State of the recalculation in progress, or nil.
+A vector with one entry per cell: nil when the cell has not been
+computed yet, `visiting' while its formula is being evaluated and
+`done' afterwards.")
+
+(defvar grid-calc--depth 0
+  "How many formulas are being evaluated on top of each other.")
+
+(defun grid-calc--error-value (err)
+  "Return the value shown for a formula that signaled ERR."
+  (let ((message (error-message-string err)))
+    (cond ((eq (car err) 'grid-calc-cycle) "#CYCLE!")
+          ((and (eq (car err) 'grid-calc-error)
+                (member (cadr err) grid-calc-error-values))
+           (cadr err))
+          ((or (eq (car err) 'arith-error)
+               (string-match-p "Division by zero" message))
+           "#DIV/0!")
+          ((string-match-p "Unknown function" message) "#NAME?")
+          ((string-match-p "No match\\|not available\\|No condition" message)
+           "#N/A")
+          (t "#ERROR!"))))
+
+(defun grid-calc--compute-cell (model index)
+  "Compute the cell at INDEX of MODEL unless this pass already did.
+A formula that fails gives its cell one of `grid-calc-error-values'
+instead of stopping the recalculation."
+  (let ((cell (aref (grid-data-model-cells model) index)))
+    (pcase (aref grid-calc--pass index)
+      ('done nil)
+      ('visiting (signal 'grid-calc-cycle nil))
+      (_
+       (aset grid-calc--pass index 'visiting)
+       (let ((raw (grid-cell-raw-input cell))
+             cycle)
+         (set-grid-cell-computed-value
+          cell
+          (if (string-prefix-p "=" raw)
+              (condition-case err
+                  (let ((grid-calc--depth (1+ grid-calc--depth)))
+                    (grid-calc-eval-ast
+                     model (grid-parser-parse (substring raw 1))))
+                (grid-calc-cycle (setq cycle t) "#CYCLE!")
+                (error (grid-calc--error-value err)))
+            raw))
+         (aset grid-calc--pass index 'done)
+         ;; Every formula on a cycle is part of it, not only the one that
+         ;; closed it.
+         (when (and cycle (> grid-calc--depth 0))
+           (signal 'grid-calc-cycle nil)))))))
+
+(defun grid-calc--value (model row col)
+  "Return the computed value at ROW and COL of MODEL for a formula.
+During a recalculation the cell is computed first, so a formula never
+reads a stale value.  An error value is signaled on to the reader."
+  (when grid-calc--pass
+    (grid-calc--compute-cell model (+ (* row (grid-data-model-cols model)) col)))
+  (let ((value (grid-model-get-computed-value model row col)))
+    (if (and (stringp value) (member value grid-calc-error-values))
+        (signal 'grid-calc-error (list value))
+      value)))
+
 (defun grid-table-calc-evaluate (model)
   "Main entry point for evaluating all formulas in the model.
-This function will iterate through all cells, parse their formulas,
-and evaluate them. It's a full recalculation."
-  (let* ((cells-vec (grid-data-model-cells model))
-         (total-cells (length cells-vec)))
+Every cell is computed once; a formula computes the cells it reads
+before itself, whatever their position in the sheet."
+  (let* ((total-cells (length (grid-data-model-cells model)))
+         (grid-calc--pass (make-vector total-cells nil))
+         (grid-calc--depth 0))
     (dotimes (i total-cells)
-      (let* ((cell (aref cells-vec i))
-             (raw-input (grid-cell-raw-input cell)))
-        (when (string-prefix-p "=" raw-input) ; Only process if it's a formula
-          (let* ((formula-str (substring raw-input 1)) ; Remove leading "="
-                 (ast (grid-parser-parse formula-str)))
-            (set-grid-cell-computed-value cell (grid-calc-eval-ast model ast))))
-        (unless (string-prefix-p "=" raw-input) ; If it's not a formula, computed value is raw input
-          (set-grid-cell-computed-value cell raw-input))))))
+      (grid-calc--compute-cell model i))))
 
 (defvar grid-calc-functions (make-hash-table :test 'equal))
 
@@ -79,6 +143,9 @@ AST: The Abstract Syntax Tree to evaluate."
 
     ;; Number literal
     (`(NUMBER ,value) value)
+
+    ;; TRUE and FALSE
+    (`(LITERAL ,value) value)
     
     ;; String literal
     (`(STRING ,value) value)
@@ -126,13 +193,13 @@ AST: The Abstract Syntax Tree to evaluate."
     ('/ (let ((r (grid-calc-to-number right)))
           (if (= r 0)
               (error "Division by zero")
-            (/ (grid-calc-to-number left) r))))
-    ('% (% (grid-calc-to-number left) (grid-calc-to-number right)))
+            (grid-calc--tidy-number (/ (float (grid-calc-to-number left)) r)))))
+    ('% (mod (grid-calc-to-number left) (grid-calc-to-number right)))
     ('^ (expt (grid-calc-to-number left) (grid-calc-to-number right)))
     
     ;; Comparison operations
-    ('= (equal left right))
-    ('<> (not (equal left right)))
+    ('= (grid-calc--equal left right))
+    ('<> (not (grid-calc--equal left right)))
     ('< (< (grid-calc-to-number left) (grid-calc-to-number right)))
     ('> (> (grid-calc-to-number left) (grid-calc-to-number right)))
     ('<= (<= (grid-calc-to-number left) (grid-calc-to-number right)))
@@ -159,6 +226,31 @@ AST: The Abstract Syntax Tree to evaluate."
 ;;; Type Conversion and Utility Functions
 ;;;----------------------------------------------------------------------
 
+(defun grid-calc--tidy-number (number)
+  "Return NUMBER as an integer when it has no fraction."
+  (if (and (floatp number) (= number (ftruncate number))
+           (< (abs number) 1e15))
+      (truncate number)
+    number))
+
+(defun grid-calc--numeric (value)
+  "Return VALUE as a number when it is one or reads as one, else nil."
+  (cond ((numberp value) value)
+        ((and (stringp value)
+              (string-match-p "\\`[ \t]*[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)[ \t]*\\'"
+                              value))
+         (string-to-number value))))
+
+(defun grid-calc--equal (left right)
+  "Return non-nil when LEFT and RIGHT are the same spreadsheet value.
+Numbers compare by value whether typed or computed; text ignores case."
+  (let ((left-number (grid-calc--numeric left))
+        (right-number (grid-calc--numeric right)))
+    (cond ((and left-number right-number) (= left-number right-number))
+          ((and (stringp left) (stringp right))
+           (string= (downcase left) (downcase right)))
+          (t (equal left right)))))
+
 (defun grid-calc-to-number (value)
   "Converts a value to a number.
 Returns 0 for non-numeric values instead of throwing an error."
@@ -167,9 +259,7 @@ Returns 0 for non-numeric values instead of throwing an error."
    ((stringp value)
     (if (string-empty-p value)
         0
-      (if (string-match "^-?[0-9]+\\.?[0-9]*$" value)
-          (string-to-number value)
-        0))) ; Return 0 for non-numeric strings instead of throwing error
+      (or (grid-calc--numeric value) 0)))
    ((null value) 0)
    (t 0))) ; Return 0 for any other type instead of throwing error
 
@@ -264,8 +354,66 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
   "Converts column letters (e.g., A, B, AA) to a 0-based number."
   (let ((result 0))
     (dolist (char (string-to-list (upcase letters)))
-      (setq result (+ (* result 26) (- char ?A))))
+      (setq result (+ (* result 26) (1+ (- char ?A)))))
+    (1- result)))
+
+(defun grid-calc-col-number-to-letter (col)
+  "Convert 0-based COL to column letters (0 is A, 26 is AA)."
+  (let ((result ""))
+    (while (>= col 0)
+      (setq result (concat (char-to-string (+ ?A (mod col 26))) result)
+            col (1- (/ col 26))))
     result))
+
+(defun grid-calc-shift-formula (formula rows cols)
+  "Return FORMULA with its relative references moved ROWS down and COLS right.
+Parts of a reference anchored with $ stay.  A reference pushed off the
+sheet's top or left edge becomes #REF!.  Text inside double quotes and
+anything that is not a formula are returned unchanged."
+  (if (or (not (string-prefix-p "=" formula))
+          (string-prefix-p "=elisp:" formula))
+      formula
+    (let ((pos 0) (len (length formula)) (parts nil) (case-fold-search t))
+      (while (< pos len)
+        (cond
+         ;; Quoted text
+         ((eq (aref formula pos) ?\")
+          (let ((end (or (string-search "\"" formula (1+ pos)) (1- len))))
+            (push (substring formula pos (1+ end)) parts)
+            (setq pos (1+ end))))
+         ;; A reference: not the tail of a name, not a function call
+         ((and (eq (string-match
+                    "\\(\\$?\\)\\([A-Za-z]+\\)\\(\\$?\\)\\([0-9]+\\)" formula pos)
+                   pos)
+               (not (and (> pos 0)
+                         (string-match-p "[A-Za-z0-9_.$]"
+                                         (substring formula (1- pos) pos))))
+               (not (and (< (match-end 0) len)
+                         (string-match-p "[A-Za-z0-9_.(]"
+                                         (substring formula (match-end 0)
+                                                    (1+ (match-end 0)))))))
+          (let* ((end (match-end 0))
+                 (col-fixed (match-string 1 formula))
+                 (row-fixed (match-string 3 formula))
+                 (col (grid-calc-col-letter-to-number (match-string 2 formula)))
+                 (row (string-to-number (match-string 4 formula)))
+                 (new-col (if (string-empty-p col-fixed) (+ col cols) col))
+                 (new-row (if (string-empty-p row-fixed) (+ row rows) row)))
+            (push (if (or (< new-col 0) (< new-row 1))
+                      "#REF!"
+                    (concat col-fixed (grid-calc-col-number-to-letter new-col)
+                            row-fixed (number-to-string new-row)))
+                  parts)
+            (setq pos end)))
+         ;; A name or number: skip it whole so its tail is not read as a
+         ;; reference
+         ((eq (string-match "[A-Za-z0-9_.$]+" formula pos) pos)
+          (push (match-string 0 formula) parts)
+          (setq pos (match-end 0)))
+         (t
+          (push (substring formula pos (1+ pos)) parts)
+          (setq pos (1+ pos)))))
+      (apply #'concat (nreverse parts)))))
 
 (defun grid-calc-get-cell-value (model ref-str)
   "Retrieves the computed value of a cell from the model."
@@ -275,7 +423,7 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
     (when (and ref (>= row 0) (>= col 0))
       (when (and (< row (grid-data-model-rows model))
                  (< col (grid-data-model-cols model)))
-        (grid-model-get-computed-value model row col)))))
+        (grid-calc--value model row col)))))
 
 (defun grid-calc-get-range-values (model start-cell-ref-ast end-cell-ref-ast)
   "Retrieves a flat list of computed values from a range."
@@ -295,7 +443,7 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
                           (when (and (>= r 0) (>= c 0)
                                      (< r (grid-data-model-rows model))
                                      (< c (grid-data-model-cols model)))
-                            (push (grid-model-get-computed-value model r c) values))))))
+                            (push (grid-calc--value model r c) values))))))
     (nreverse values)))
 
 (defun grid-calc-eval-index-function (model args-ast-list)
@@ -322,7 +470,7 @@ Returns the value at the specified row and column in the range."
            ;; Calculate absolute coordinates from relative 1-based indices
            (target-row (+ start-row row-num -1))
            (target-col (+ start-col col-num -1)))
-      (grid-model-get-computed-value model target-row target-col))))
+      (grid-calc--value model target-row target-col))))
 
 (defun grid-calc-eval-iferror-function (model args-ast-list)
   "Special evaluator for the IFERROR function.
@@ -353,7 +501,8 @@ Evaluates each condition in turn. Returns the value corresponding to the first
 condition that evaluates to true. If no conditions are met, raises an error."
   (when (oddp (length args-ast-list))
     (error "IFS requires an even number of arguments"))
-  (let ((remaining-args args-ast-list))
+  (cl-block grid-calc-eval-ifs-function
+   (let ((remaining-args args-ast-list))
     (while remaining-args
       (let* ((test-ast (car remaining-args))
              (value-ast (cadr remaining-args))
@@ -362,13 +511,14 @@ condition that evaluates to true. If no conditions are met, raises an error."
             (cl-return-from grid-calc-eval-ifs-function
               (grid-calc-eval-ast model value-ast)))
         (setq remaining-args (cddr remaining-args)))))
-  (error "No condition in IFS was met")) ; Return #N/A error
+   (error "No condition in IFS was met"))) ; Return #N/A error
 
 (defun grid-calc-eval-vlookup-function (model args-ast-list)
   "Special evaluator for the VLOOKUP function."
   (when (< (length args-ast-list) 3)
     (error "VLOOKUP requires at least 3 arguments"))
-  (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
+  (cl-block grid-calc-eval-vlookup-function
+   (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
          (table-array-ast (nth 1 args-ast-list))
          (col-index-num (grid-calc-eval-ast model (nth 2 args-ast-list)))
          (exact-match (if (nth 3 args-ast-list)
@@ -389,13 +539,13 @@ condition that evaluates to true. If no conditions are met, raises an error."
            (target-col (+ start-col col-index-num -1)))
 
       (cl-loop for r from start-row to end-row
-               do (let ((cell-val (grid-model-get-computed-value model r start-col)))
-                    (when (equal cell-val lookup-value)
+               do (let ((cell-val (grid-calc--value model r start-col)))
+                    (when (grid-calc--equal cell-val lookup-value)
                       (cl-return-from grid-calc-eval-vlookup-function
-                        (grid-model-get-computed-value model r target-col)))))
+                        (grid-calc--value model r target-col)))))
 
       ;; If loop finishes, no match was found
-      (error "No match found in VLOOKUP"))))
+      (error "No match found in VLOOKUP")))))
 
 ;;;----------------------------------------------------------------------
 ;;; Built-in Function Library
@@ -475,7 +625,7 @@ Uses grid-calc-to-number for consistent conversion."
   (let ((numbers '()))
     (dolist (v values)
       (let ((num (grid-calc-to-number v)))
-        (when (and num (not (= num 0)) (or (numberp v) (and (stringp v) (string-match "^-?[0-9]+\\.?[0-9]*$" v))))
+        (when (and num (or (numberp v) (grid-calc--numeric v)))
           (push num numbers))))
     (nreverse numbers)))
 
@@ -564,7 +714,7 @@ Returns a list of (list-of-values . predicate-lambda)."
          (count 0))
     (dotimes (i num-rows)
       (let ((all-match t))
-        (dolist (pair parsed-pairs)
+        (cl-dolist (pair parsed-pairs)
           (let* ((range (car pair))
                  (predicate (cdr pair)))
             (unless (funcall predicate (nth i range))
@@ -588,7 +738,7 @@ Returns a list of (list-of-values . predicate-lambda)."
     
     (dotimes (i num-rows)
       (let ((all-match t))
-        (dolist (pair parsed-pairs)
+        (cl-dolist (pair parsed-pairs)
           (let* ((range (car pair))
                  (predicate (cdr pair)))
             (unless (funcall predicate (nth i range))

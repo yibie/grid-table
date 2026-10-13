@@ -142,6 +142,11 @@ Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/che
 | 📍 Cell     | `=A1`、`=B2`      | `=B2*C2`           | Relative reference    |
 | 📊 Range    | `=RANGE(A1:B5)`   | `=SUM(A1:A10)`     | Continuous block      |
 | ✨ Function | `=FUNCTION(args)` | `=AVERAGE(B2:B10)` | Built-in function set |
+| 📌 Anchor   | `=$A$1`、`=A$1`   | `=B2*$C$1`         | `$` keeps a column or row fixed when a formula is copied |
+| ➗ Operator | `+ - * / % ^ &`   | `=A1&" kg"`        | Arithmetic, power and text joining; `/` gives `2.5` for `=10/4` |
+| ⚖️ Compare  | `= <> < > <= >=`  | `=IF(A1<=5,"low","high")` | Numbers compare by value, text ignores case; `TRUE`/`FALSE` are literals |
+
+Function names and references may be typed in either case. Formulas are computed in dependency order wherever they sit in the sheet. A formula that cannot be computed shows an error value in its own cell and in the cells that read it: `#DIV/0!`, `#NAME?` (unknown function), `#N/A` (no match), `#REF!`, `#CYCLE!` (circular reference) or `#ERROR!`. Wrap a formula in `IFERROR` to replace the error.
 
 ### Official Built-in Function List
 

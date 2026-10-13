@@ -6,7 +6,8 @@ CLASSIC_TESTS = test/grid-table-merge-test.el \
 	test/grid-table-render-characterization-test.el \
 	test/grid-table-vertical-model-test.el \
 	test/grid-table-vertical-nav-test.el \
-	test/grid-table-vertical-render-test.el
+	test/grid-table-vertical-render-test.el \
+	test/grid-table-formula-test.el
 BATCH = $(EMACS) -Q --batch -L . -L plugins -L test
 ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
@@ -14,8 +15,8 @@ ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
 test: test-classic test-etaf
 
-# The classic suite runs without ETAF on the load path, so every grid falls
-# back to the classic renderer it characterizes.
+# The classic suite, with the model and formula tests, runs without ETAF on
+# the load path, so every grid falls back to the classic renderer.
 test-classic:
 	$(BATCH) $(foreach file,$(CLASSIC_TESTS),-l $(file)) -f ert-run-tests-batch-and-exit
 

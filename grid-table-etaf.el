@@ -1265,9 +1265,11 @@ previous model is all that undoing them needs."
 ;;;----------------------------------------------------------------------
 
 (defvar grid-table-etaf--clipboard nil
-  "The last copied range as (TEXT . ROWS).
+  "The last copied range as (TEXT ROWS TOP LEFT CUT).
 TEXT is what went to the kill ring and ROWS the raw values, formulas
-included.  Pasting uses ROWS while TEXT is still the current kill.")
+included, copied from model row TOP and column LEFT.  Pasting uses ROWS
+while TEXT is still the current kill.  CUT is non-nil when the range was
+cut, so its formulas move without being adjusted.")
 
 (defun grid-table-etaf--tsv-field (text)
   "Return TEXT as one tab-separated field, quoted when it needs to be."
@@ -1331,11 +1333,12 @@ back into a grid restores the raw values, formulas included."
                     (grid-get-computed-value-at source row col)))))))
     (kill-new text)
     (setq grid-table-etaf--clipboard
-          (cons text
+          (list text
                 (grid-table-etaf--range-rows
                  source range
                  (lambda (source row col)
-                   (or (grid-get-raw-value-at source row col) "")))))
+                   (or (grid-get-raw-value-at source row col) "")))
+                (nth 0 range) (nth 1 range) nil))
     (message "Copied %d × %d cells"
              (1+ (- (nth 2 range) (nth 0 range)))
              (1+ (- (nth 3 range) (nth 1 range))))))
@@ -1344,22 +1347,36 @@ back into a grid restores the raw values, formulas included."
   "Copy the selected range and empty it."
   (interactive)
   (grid-table-etaf-copy)
+  (setf (nth 4 grid-table-etaf--clipboard) t)
   (grid-table-etaf-clear-cells))
+
+(defun grid-table-etaf--shifted (value origin row col)
+  "Return VALUE as it reads when its range moves from ORIGIN to ROW and COL.
+ORIGIN is the (ROW . COL) the copied range started at, or nil when the
+value should be pasted as it is."
+  (if origin
+      (grid-calc-shift-formula value (- row (car origin)) (- col (cdr origin)))
+    value))
 
 (defun grid-table-etaf-paste ()
   "Paste the current kill at the selected range.
 The top left cell of the range receives the first value.  A single
 copied cell fills the whole range.  Values that would fall outside the
-grid are dropped."
+grid are dropped.  Copied formulas have their relative references moved
+by the distance they travel, as in a spreadsheet; cut formulas do not."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
          (source (grid-table-etaf--source state))
          (text (current-kill 0))
-         (rows (if (and grid-table-etaf--clipboard
-                        (equal text (car grid-table-etaf--clipboard)))
-                   (cdr grid-table-etaf--clipboard)
+         (own (and grid-table-etaf--clipboard
+                   (equal text (car grid-table-etaf--clipboard))
+                   grid-table-etaf--clipboard))
+         (rows (if own
+                   (nth 1 own)
                  (grid-table-etaf--tsv-decode
                   (substring-no-properties text))))
+         ;; Where a copied range came from, to move its references.
+         (origin (and own (not (nth 4 own)) (cons (nth 2 own) (nth 3 own))))
          (range (grid-table-etaf-selection))
          (top (nth 0 range))
          (left (nth 1 range))
@@ -1373,14 +1390,20 @@ grid are dropped."
     (if single
         (cl-loop for row from top to (nth 2 range) do
                  (cl-loop for col from left to (nth 3 range) do
-                          (push (list row col (caar rows)) changes))
+                          (push (list row col
+                                      (grid-table-etaf--shifted
+                                       (caar rows) origin row col))
+                                changes))
                  finally (setq bottom (nth 2 range) right (nth 3 range)))
       (cl-loop
        for values in rows for row from top to max-row do
        (setq bottom row)
        (cl-loop for value in values for col from left to max-col do
                 (setq right (max right col))
-                (push (list row col value) changes))))
+                (push (list row col
+                            ;; Every cell travels as far as the first one.
+                            (grid-table-etaf--shifted value origin top left))
+                      changes))))
     (let ((count (grid-table-etaf--set-cells state (nreverse changes))))
       (grid-table-etaf-goto bottom right)
       (grid-table-etaf-goto top left t)
