@@ -357,6 +357,25 @@
                    ;; Equal results keep their original order.
                    '("a" "b" "c")))))
 
+(ert-deftest grid-table-sort-keeps-a-formula-reading-its-own-row ()
+  (let* ((model (grid-model-create
+                 4 4 '(("Key" "Amount" "Double" "Share")
+                       ("b" "10" "=B2*2" "=B2/$B$4+Rates!B2")
+                       ("a" "20" "=B3*2" "=SUM(B$2:B3)")
+                       ("" "30" "" ""))))
+         (sorted (grid-model-sort-by-column model 0 'ascending))
+         (raw (lambda (row col)
+                (grid-cell-raw-input (grid-model-get-cell sorted row col)))))
+    (should (equal (funcall raw 1 0) "a"))
+    ;; Each row still doubles its own amount.
+    (should (equal (funcall raw 1 2) "=B2*2"))
+    (should (equal (funcall raw 2 2) "=B3*2"))
+    (should (equal (grid-model-get-computed-value sorted 1 2) 40))
+    (should (equal (grid-model-get-computed-value sorted 2 2) 20))
+    ;; Anchored parts and references into another sheet stay.
+    (should (equal (funcall raw 2 3) "=B3/$B$4+Rates!B2"))
+    (should (equal (funcall raw 1 3) "=SUM(B$2:B2)"))))
+
 ;;;----------------------------------------------------------------------
 ;;; Cell styles and conditional formats
 ;;;----------------------------------------------------------------------

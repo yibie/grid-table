@@ -445,7 +445,11 @@ SORT-ORDER can be 'ascending or 'descending.
 Returns a new model instance with sorted data.
 
 Note: This function sorts the actual data rows, excluding the first row
-which is considered user-defined headers. The first row will remain in place."
+which is considered user-defined headers. The first row will remain in place.
+
+A formula in a row that moves has its relative references moved by as
+many rows, as if the row had been cut and pasted; anchored parts and
+references that name a sheet stay."
   (let* ((num-rows (grid-data-model-rows model))
          (num-cols (grid-data-model-cols model))
          (_ (unless (and (integerp col-idx)
@@ -480,8 +484,19 @@ which is considered user-defined headers. The first row will remain in place."
                         (< (nth 0 row1) (nth 0 row2))
                       (< order 0)))))))
     ;; Reconstruct the new raw values list with user-defined headers at the top
-    (let* ((new-raw-values (cons user-defined-headers
-                                 (mapcar #'cadr sorted-data-rows)))
+    (let* ((new-raw-values
+            (cons user-defined-headers
+                  ;; A formula moves with its row, so what it reads in its
+                  ;; own row is still its own row afterwards.
+                  (cl-loop for (old-idx row) in sorted-data-rows
+                           for new-row from 0
+                           collect
+                           (if (= old-idx new-row)
+                               row
+                             (mapcar (lambda (raw)
+                                       (grid-calc-shift-formula
+                                        raw (- new-row old-idx) 0 t))
+                                     row)))))
            (old-to-new (make-vector (length data-rows) nil))
            (new-idx 0)
            (new-merges

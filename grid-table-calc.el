@@ -507,11 +507,12 @@ START and END are as `grid-calc--map-references' passes them."
       (concat (funcall function start) ":" (funcall function end))
     (funcall function start)))
 
-(defun grid-calc-shift-formula (formula rows cols)
+(defun grid-calc-shift-formula (formula rows cols &optional local-only)
   "Return FORMULA with its relative references moved ROWS down and COLS right.
 Parts of a reference anchored with $ stay.  A reference pushed off the
 sheet's top or left edge becomes #REF!.  Text inside double quotes and
-anything that is not a formula are returned unchanged."
+anything that is not a formula are returned unchanged.  With LOCAL-ONLY,
+references that name a sheet stay as they are."
   (let ((shift (lambda (reference)
                  (pcase-let ((`(,col-anchor ,col ,row-anchor ,row) reference))
                    (grid-calc--reference-text
@@ -521,8 +522,10 @@ anything that is not a formula are returned unchanged."
                           (if (string-empty-p row-anchor) (+ row rows) row)))))))
     (grid-calc--map-references
      formula
-     (lambda (start end _sheet)
-       (grid-calc--range-text start end shift)))))
+     (lambda (start end sheet)
+       (grid-calc--range-text
+        start end
+        (if (and sheet local-only) #'grid-calc--reference-text shift))))))
 
 (defun grid-calc-rename-sheet-in-formula (formula old new)
   "Return FORMULA with its references into sheet OLD naming NEW instead."
