@@ -523,6 +523,12 @@ The column follows the pointer; a cancelled drag restores its width."
     ("M-w" grid-table-etaf-copy "Copy")
     ("C-w" grid-table-etaf-cut "Cut")
     ("C-y" grid-table-etaf-paste "Paste")
+    ("C-d" grid-table-etaf-fill-down "Fill down")
+    ("C-r" grid-table-etaf-fill-right "Fill right")
+    ("C-c C-s" grid-table-etaf-fill-series "Fill series")
+    ("C-s" grid-table-etaf-find "Find")
+    ("s-f" grid-table-etaf-find "Find")
+    ("M-%" grid-table-etaf-replace "Replace")
     ("s-c" grid-table-etaf-copy "Copy")
     ("s-x" grid-table-etaf-cut "Cut")
     ("s-v" grid-table-etaf-paste "Paste")
@@ -2105,6 +2111,254 @@ the formats of the cells it lands in."
       (grid-table-etaf-goto bottom right)
       (grid-table-etaf-goto top left t)
       (message "Pasted %d cell%s" count (if (= count 1) "" "s")))))
+
+;;;----------------------------------------------------------------------
+;;; Filling
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--fill (state changes styles)
+  "Store CHANGES and STYLES, lists of (ROW COL VALUE), as one step in STATE.
+Return the number of cells whose value changed."
+  (grid-table-etaf--as-one-step
+   state
+   (lambda ()
+     (prog1 (grid-table-etaf--set-cells state changes)
+       (grid-table-etaf--set-styles state styles)))))
+
+(defun grid-table-etaf--fill-from-edge (down)
+  "Copy the first row of the selection down, or its first column right.
+DOWN chooses the direction.  Formulas have their relative references
+moved along, and the cells take the formats of the ones they copy."
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (top (nth 0 range)) (left (nth 1 range))
+         (styled (gethash :set-style-at source))
+         changes styles)
+    (when (if down (= top (nth 2 range)) (= left (nth 3 range)))
+      (user-error "Select the cells to fill, starting with the one to copy"))
+    (cl-loop
+     for row from top to (nth 2 range)
+     when (grid-table-etaf--row-shown-p state row) do
+     (cl-loop
+      for col from left to (nth 3 range) do
+      (let ((from-row (if down top row))
+            (from-col (if down col left)))
+        (unless (and (= row from-row) (= col from-col))
+          (push (list row col
+                      (grid-calc-shift-formula
+                       (or (grid-get-raw-value-at source from-row from-col) "")
+                       (- row from-row) (- col from-col)))
+                changes)
+          (when styled
+            (push (list row col (grid-get-style-at source from-row from-col))
+                  styles))))))
+    (let ((count (grid-table-etaf--fill state (nreverse changes)
+                                        (nreverse styles))))
+      (message "Filled %d cell%s" count (if (= count 1) "" "s")))))
+
+(defun grid-table-etaf-fill-down ()
+  "Copy the first row of the selection into the rows below it."
+  (interactive)
+  (grid-table-etaf--fill-from-edge t))
+
+(defun grid-table-etaf-fill-right ()
+  "Copy the first column of the selection into the columns right of it."
+  (interactive)
+  (grid-table-etaf--fill-from-edge nil))
+
+(defun grid-table-etaf--series (seeds count)
+  "Return COUNT values that continue SEEDS, a list of raw cell values.
+Numbers go on by the step between the last two seeds, or by one from a
+single seed.  Text that ends in a number, such as Week 1, counts on the
+same way.  Anything else repeats the seeds in turn.  Each value is
+\(RAW . SEED-INDEX), the index naming the seed it takes after."
+  (let* ((size (length seeds))
+         (last (car (last seeds)))
+         (previous (and (> size 1) (nth (- size 2) seeds)))
+         (numbered "\\`\\(\\(?:.\\|\n\\)*?\\)\\([0-9]+\\)\\'")
+         (number (and (not (string-prefix-p "=" last))
+                      (grid-format-number last)))
+         (before (and previous (grid-format-number previous))))
+    (cond
+     ((and number (or (null previous) before))
+      (let ((step (if before (- number before) 1)))
+        (cl-loop for k from 1 to count collect
+                 (cons (grid-format-general
+                        (let ((value (+ number (* k step))))
+                          ;; Steps such as 0.1 would pile up binary noise.
+                          (if (floatp value)
+                              (/ (grid-format-round (* value 1e10)) 1e10)
+                            value)))
+                       (1- size)))))
+     ((and (not (string-prefix-p "=" last)) (string-match numbered last))
+      (let* ((prefix (match-string 1 last))
+             (digits (match-string 2 last))
+             (start (string-to-number digits))
+             (step (if (and previous (string-match numbered previous)
+                            (equal (match-string 1 previous) prefix))
+                       (- start (string-to-number (match-string 2 previous)))
+                     1)))
+        (cl-loop for k from 1 to count collect
+                 (cons (concat prefix
+                               (format (format "%%0%dd" (length digits))
+                                       (max 0 (+ start (* k step)))))
+                       (1- size)))))
+     (t (cl-loop for k from 0 below count collect
+                 (cons (nth (% k size) seeds) (% k size)))))))
+
+(defun grid-table-etaf-fill-series ()
+  "Continue the values that start the selection through the rest of it.
+A selection several rows tall is filled down each of its columns; one
+row is filled to the right.  The cells that start a line, up to its
+first empty cell, are what the line continues: 1, 2 goes on 3, 4; a
+single 5 goes on 6, 7; Jan 1 dates go on day by day; Week 1 goes on
+Week 2; a formula is copied with its references moved along."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (down (/= (nth 0 range) (nth 2 range)))
+         (styled (gethash :set-style-at source))
+         changes styles)
+    (when (and (= (nth 0 range) (nth 2 range)) (= (nth 1 range) (nth 3 range)))
+      (user-error "Select the starting values and the cells to fill"))
+    (cl-loop
+     for line from (if down (nth 1 range) (nth 0 range))
+     to (if down (nth 3 range) (nth 2 range)) do
+     (let* ((cells (if down
+                       (cl-loop for row from (nth 0 range) to (nth 2 range)
+                                when (grid-table-etaf--row-shown-p state row)
+                                collect (cons row line))
+                     (cl-loop for col from (nth 1 range) to (nth 3 range)
+                              collect (cons line col))))
+            (raws (mapcar (lambda (cell)
+                            (or (grid-get-raw-value-at source
+                                                       (car cell) (cdr cell))
+                                ""))
+                          cells))
+            (run (or (cl-position "" raws :test #'equal) (length raws)))
+            ;; A line that is full already continues its first cell.
+            (seeded (cond ((= run 0) 0)
+                          ((= run (length raws)) 1)
+                          (t run)))
+            (seeds (cl-subseq raws 0 seeded))
+            (targets (nthcdr seeded cells)))
+       (when (and seeds targets)
+         (let ((first (car (last (cl-subseq cells 0 seeded)))))
+           (cl-loop
+            for target in targets
+            for (raw . index) in (grid-table-etaf--series seeds
+                                                          (length targets))
+            do
+            (let ((seed (nth index cells)))
+              (push (list (car target) (cdr target)
+                          (if (string-prefix-p "=" raw)
+                              (grid-calc-shift-formula
+                               raw (- (car target) (car seed))
+                               (- (cdr target) (cdr seed)))
+                            raw))
+                    changes)
+              (when styled
+                (push (list (car target) (cdr target)
+                            (grid-get-style-at source (car first) (cdr first)))
+                      styles))))))))
+    (unless changes
+      (user-error "Nothing to continue: the selection starts with empty cells"))
+    (let ((count (grid-table-etaf--fill state (nreverse changes)
+                                        (nreverse styles))))
+      (message "Filled %d cell%s" count (if (= count 1) "" "s")))))
+
+;;;----------------------------------------------------------------------
+;;; Find and replace
+;;;----------------------------------------------------------------------
+
+(defvar-local grid-table-etaf--last-search nil
+  "The text `grid-table-etaf-find' last looked for in this grid.")
+
+(defun grid-table-etaf--cell-matches-p (source row col text)
+  "Return non-nil when the cell at ROW and COL of SOURCE holds TEXT.
+What the cell shows and what it stores are both looked at, ignoring
+case."
+  (let ((case-fold-search t)
+        (pattern (regexp-quote text))
+        (shown (grid-get-display-value-at source row col))
+        (raw (grid-get-raw-value-at source row col)))
+    (or (and (stringp shown) (string-match-p pattern shown))
+        (and (stringp raw) (string-match-p pattern raw)))))
+
+(defun grid-table-etaf-find (text &optional backward)
+  "Move to the next cell that holds TEXT, wrapping around the sheet.
+What a cell shows and its formula are both searched, ignoring case.
+Empty input repeats the last search.  With a prefix argument, BACKWARD,
+the search goes the other way."
+  (interactive
+   (list (read-string (if grid-table-etaf--last-search
+                          (format "Find (default %s): "
+                                  grid-table-etaf--last-search)
+                        "Find: ")
+                      nil nil grid-table-etaf--last-search)
+         current-prefix-arg))
+  (when (or (null text) (string-empty-p text))
+    (user-error "Nothing to find"))
+  (setq grid-table-etaf--last-search text)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (rows (grid-get-row-count source))
+         (cols (grid-get-column-count source))
+         (total (* rows cols))
+         (cursor (grid-table-etaf--cursor))
+         (start (+ (* (car cursor) cols) (cdr cursor)))
+         found)
+    (cl-loop for step from 1 to total until found do
+             (let* ((index (mod (+ start (if backward (- step) step)) total))
+                    (row (/ index cols))
+                    (col (% index cols)))
+               (when (and (grid-table-etaf--row-shown-p state row)
+                          (grid-table-etaf--cell-matches-p source row col text))
+                 (setq found (cons row col)))))
+    (if (null found)
+        (message "No cell holds %s" text)
+      (grid-table-etaf-goto (car found) (cdr found))
+      (when (equal found (grid-table-etaf--cursor))
+        (message "Found in %s"
+                 (grid-table-etaf--address (car found) (cdr found)))))))
+
+(defun grid-table-etaf-replace (from to)
+  "Replace FROM with TO in the cells of the selection, or of the sheet.
+A selection of several cells limits the change to them; otherwise every
+cell is looked at.  What cells store is changed, formulas included,
+ignoring the case of FROM.  The whole is one undoable step."
+  (interactive
+   (let ((from (read-string "Replace: ")))
+     (list from (read-string (format "Replace %s with: " from)))))
+  (when (string-empty-p from)
+    (user-error "Nothing to replace"))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (selection (grid-table-etaf-selection))
+         (range (if (and (= (nth 0 selection) (nth 2 selection))
+                         (= (nth 1 selection) (nth 3 selection)))
+                    (list 0 0 (1- (grid-get-row-count source))
+                          (1- (grid-get-column-count source)))
+                  selection))
+         (case-fold-search t)
+         (pattern (regexp-quote from))
+         changes)
+    (cl-loop
+     for row from (nth 0 range) to (nth 2 range)
+     when (grid-table-etaf--row-shown-p state row) do
+     (cl-loop
+      for col from (nth 1 range) to (nth 3 range) do
+      (let ((raw (grid-get-raw-value-at source row col)))
+        (when (and (stringp raw) (string-match-p pattern raw))
+          (push (list row col
+                      (replace-regexp-in-string pattern to raw t t))
+                changes)))))
+    (let ((count (if changes
+                     (grid-table-etaf--set-cells state (nreverse changes))
+                   0)))
+      (message "Replaced in %d cell%s" count (if (= count 1) "" "s")))))
 
 ;;;----------------------------------------------------------------------
 ;;; Mode and entry points
