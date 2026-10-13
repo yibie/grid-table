@@ -187,7 +187,7 @@ Covered cells and horizontally merged anchors do not widen a column."
   "Recompute STATE's column widths, keeping the ones set by dragging."
   (let ((widths (grid-table-etaf--compute-widths
                  (grid-table-etaf--source state)))
-        (manual (grid-table-etaf--state-manual state)))
+        (manual (grid-table-etaf--manual state)))
     (when manual
       (maphash (lambda (col width)
                  (when (< col (length widths))
@@ -447,14 +447,22 @@ held; dragging extends the selection to the cell under the pointer."
       (with-current-buffer buffer
         (funcall function)))))
 
+(defun grid-table-etaf--manual (state)
+  "Return the table of STATE's column widths set by hand, or nil.
+The data source keeps them when it can, so that they are saved with the
+grid and follow their columns; otherwise they live as long as the view."
+  (or (grid-get-column-widths (grid-table-etaf--source state))
+      (grid-table-etaf--state-manual state)))
+
 (defun grid-table-etaf-set-column-width (col width)
   "Give model column COL a content width of WIDTH characters.
-The width stays until the sheet's structure changes."
+The width is saved with the grid and moves with its column."
   (let* ((state (grid-table-etaf--state-or-error))
          (width (max 1 (min 200 width))))
-    (unless (grid-table-etaf--state-manual state)
-      (setf (grid-table-etaf--state-manual state) (make-hash-table)))
-    (puthash col width (grid-table-etaf--state-manual state))
+    (unless (grid-set-column-width (grid-table-etaf--source state) col width)
+      (unless (grid-table-etaf--state-manual state)
+        (setf (grid-table-etaf--state-manual state) (make-hash-table)))
+      (puthash col width (grid-table-etaf--state-manual state)))
     (aset (grid-table-etaf--state-widths state) col width)
     (grid-table-etaf--bump state)))
 
@@ -1332,7 +1340,7 @@ An edit can change any formula cell, so every shown cell is measured.
 Columns only shrink on `grid-table-refresh'."
   (let* ((source (grid-table-etaf--source state))
          (widths (grid-table-etaf--state-widths state))
-         (manual (grid-table-etaf--state-manual state))
+         (manual (grid-table-etaf--manual state))
          (merges (grid-get-merges source))
          (cols (grid-table-etaf--visible-cols
                 state (etaf-value (grid-table-etaf--state-left state))))
@@ -2015,8 +2023,9 @@ value should be pasted as it is."
 (defun grid-table-etaf-paste ()
   "Paste the current kill at the selected range.
 The top left cell of the range receives the first value.  A single
-copied cell fills the whole range.  Values that would fall outside the
-grid are dropped.  Copied formulas have their relative references moved
+copied cell fills the whole range.  The grid grows to take values that
+reach past its last row or column; a data source that cannot grow drops
+them.  Copied formulas have their relative references moved
 by the distance they travel, as in a spreadsheet; cut formulas do not.
 Cells copied in a grid bring their formats; text from elsewhere leaves
 the formats of the cells it lands in."
@@ -2036,9 +2045,18 @@ the formats of the cells it lands in."
          (range (grid-table-etaf-selection))
          (top (nth 0 range))
          (left (nth 1 range))
-         (max-row (1- (grid-get-row-count source)))
-         (max-col (1- (grid-get-column-count source)))
          (single (and (null (cdr rows)) (null (cdr (car rows)))))
+         ;; How far the pasted block reaches past the grid
+         (more-rows (if (or single (null (gethash :grow source)))
+                        0
+                      (max 0 (- (+ top (length rows))
+                                (grid-get-row-count source)))))
+         (more-cols (if (or single (null (gethash :grow source)))
+                        0
+                      (max 0 (- (+ left (apply #'max (mapcar #'length rows)))
+                                (grid-get-column-count source)))))
+         (max-row (+ more-rows (1- (grid-get-row-count source))))
+         (max-col (+ more-cols (1- (grid-get-column-count source))))
          (bottom top)
          (right left)
          (styled (and own (nth 5 own)))
@@ -2070,6 +2088,12 @@ the formats of the cells it lands in."
     (let ((count (grid-table-etaf--as-one-step
                   state
                   (lambda ()
+                    (when (or (> more-rows 0) (> more-cols 0))
+                      (funcall (gethash :grow source) source
+                               more-rows more-cols)
+                      (grid-table-etaf--track-model state)
+                      (grid-table-etaf--apply-filters state)
+                      (grid-table-etaf--fit-widths state))
                     (if own
                         (prog1 (grid-table-etaf--set-cells
                                 state (nreverse changes))

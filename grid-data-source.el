@@ -50,6 +50,24 @@ TITLE is an optional string for the grid title."
              (lambda (s row col style)
                (grid-model-set-style (gethash :model s) row col style))
              source)
+    (puthash :get-column-widths
+             (lambda (s)
+               (grid-data-model-widths (gethash :model s)))
+             source)
+    (puthash :set-column-width
+             (lambda (s col width)
+               (grid-model-set-column-width (gethash :model s) col width))
+             source)
+    (puthash :grow
+             (lambda (s rows cols)
+               (puthash :model (grid-model-grow (gethash :model s) rows cols) s)
+               (when (> cols 0)
+                 (puthash :headers
+                          (append (gethash :headers s)
+                                  (make-list cols (make-string 1 ?\s)))
+                          s))
+               s)
+             source)
     (puthash :get-conditional-formats
              (lambda (s)
                (grid-model-get-conditionals (gethash :model s)))
@@ -163,7 +181,7 @@ TITLE is an optional string for the grid title."
 
 (defconst grid-workbook--changing-keys
   '(:set-raw-value-at :merge-cells :unmerge-cell :sort-by-column
-    :add-row :delete-row :add-column :delete-column)
+    :add-row :delete-row :add-column :delete-column :grow)
   "Data source functions after which a workbook recalculates.")
 
 (defvar grid-workbook--rewrites (make-hash-table :test 'eq :weakness 'key)
@@ -397,14 +415,22 @@ change rewrote in other sheets go back with it."
     (puthash
      key
      (lambda (s &rest args)
-       (let ((workbook (grid-workbook-of s)))
-         (if (null workbook)
-             (apply function s args)
-           (let ((old-model (gethash :model s)))
-             (prog1 (let ((grid-calc-defer t)
-                          (grid-calc-current-sheet (grid-workbook-sheet-name s)))
-                      (apply function s args))
-               (grid-workbook--changed workbook s key args old-model))))))
+       (let ((workbook (grid-workbook-of s))
+             (old-model (gethash :model s)))
+         (prog1 (if (null workbook)
+                    (apply function s args)
+                  (prog1 (let ((grid-calc-defer t)
+                               (grid-calc-current-sheet
+                                (grid-workbook-sheet-name s)))
+                           (apply function s args))
+                    (grid-workbook--changed workbook s key args old-model)))
+           ;; Column widths set by hand stay with their columns.
+           (let ((model (gethash :model s)))
+             (unless (or (eq model old-model) (null old-model))
+               (pcase (grid-workbook--line-change key args old-model)
+                 (`(col ,at ,delta)
+                  (grid-model-carry-widths old-model model at delta))
+                 (_ (grid-model-carry-widths old-model model))))))))
      source)))
 
 (provide 'grid-data-source)

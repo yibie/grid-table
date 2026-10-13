@@ -755,6 +755,59 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (grid-table-etaf-undo)
       (should (equal (grid-get-computed-value-at source 4 2) 1)))))
 
+(ert-deftest grid-table-etaf-paste-grows-the-grid ()
+  (grid-table-etaf-test--with-grid (4 3)
+    (let (kill-ring kill-ring-yank-pointer interprogram-cut-function
+                    interprogram-paste-function)
+      (kill-new "a\tb\tc\nd\te\tf\ng\th\ti")
+      (grid-table-etaf-goto 2 1)
+      (grid-table-etaf-paste)
+      (should (equal (list (grid-get-row-count source)
+                           (grid-get-column-count source))
+                     '(5 4)))
+      (should (equal (grid-get-raw-value-at source 4 3) "i"))
+      (should (equal (grid-get-raw-value-at source 1 1) "2"))
+      (should (string-match-p "i" (grid-table-etaf-test--body)))
+      ;; The new lines and the values go back in one step.
+      (grid-table-etaf-undo)
+      (should (equal (list (grid-get-row-count source)
+                           (grid-get-column-count source))
+                     '(4 3)))
+      (should (equal (grid-get-raw-value-at source 2 1) "4"))
+      (grid-table-etaf-redo)
+      (should (equal (grid-get-row-count source) 5))
+      (should (equal (grid-get-raw-value-at source 4 3) "i")))))
+
+(ert-deftest grid-table-etaf-column-widths-stay-with-their-columns ()
+  (grid-table-etaf-test--with-grid (4 4)
+    (grid-table-etaf-set-column-width 1 20)
+    (should (= (aref (grid-table-etaf--state-widths grid-table-etaf--state) 1)
+               20))
+    ;; A column inserted before it moves the width along.
+    (funcall (gethash :add-column source) source 0)
+    (grid-table-refresh)
+    (should (= (gethash 2 (grid-get-column-widths source)) 20))
+    (should (= (aref (grid-table-etaf--state-widths grid-table-etaf--state) 2)
+               20))
+    ;; Rows and sorting leave it alone.
+    (funcall (gethash :add-row source) source 1)
+    (funcall (gethash :sort-by-column source) source 0 'descending)
+    (grid-table-refresh)
+    (should (= (gethash 2 (grid-get-column-widths source)) 20))
+    ;; It is saved with the grid.
+    (let ((file (make-temp-file "grid-widths-" nil ".grid")))
+      (unwind-protect
+          (progn
+            (grid-table-persistence--save-to-file source file)
+            (let ((back (grid-table-persistence-create-data-source-from-file
+                         file)))
+              (should (= (gethash 2 (grid-get-column-widths back)) 20))))
+        (delete-file file)))
+    ;; Deleting the column forgets it.
+    (funcall (gethash :delete-column source) source 2)
+    (grid-table-refresh)
+    (should (= (hash-table-count (grid-get-column-widths source)) 0))))
+
 (ert-deftest grid-table-etaf-in-place-edit-cancels-cleanly ()
   (grid-table-etaf-test--with-grid (6 5)
     (switch-to-buffer buffer)

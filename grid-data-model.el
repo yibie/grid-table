@@ -55,7 +55,9 @@ STYLES is a hash table from (ROW . COL) to a style plist and
 CONDITIONALS a list of conditional format rules."
   (vector rows cols cells merges
           (or styles (make-hash-table :test 'equal))
-          conditionals))
+          conditionals
+          ;; Column widths set by hand: column index to characters
+          (make-hash-table)))
 
 (defun grid-data-model-rows (model) (aref model 0))
 (defun grid-data-model-cols (model) (aref model 1))
@@ -71,6 +73,10 @@ CONDITIONALS a list of conditional format rules."
 (defun grid-data-model-conditionals (model)
   (when (> (length model) 5)
     (aref model 5)))
+(defun grid-data-model-widths (model)
+  "Return MODEL's table of column widths set by hand, column to characters."
+  (when (> (length model) 6)
+    (aref model 6)))
 
 ;;;----------------------------------------------------------------------
 ;;; Model Creation and Access
@@ -201,6 +207,48 @@ entirely is dropped."
                 ((= start end) nil)
                 (t (setf (nth last rule) (1- end)) rule))))
            rules))))
+
+(defun grid-model-set-column-width (model col width)
+  "Give column COL of MODEL a width of WIDTH characters; nil forgets it."
+  (when-let* ((widths (grid-data-model-widths model)))
+    (if width
+        (puthash col width widths)
+      (remhash col widths))
+    width))
+
+(defun grid-model-carry-widths (old new &optional at delta)
+  "Give model NEW the column widths of model OLD and return NEW.
+AT and DELTA describe a column inserted at AT (DELTA 1) or deleted there
+\(DELTA -1) on the way from OLD to NEW; the widths move with their
+columns."
+  (let ((from (grid-data-model-widths old))
+        (to (grid-data-model-widths new)))
+    (when (and from to (not (eq old new)))
+      (clrhash to)
+      (maphash (lambda (col width)
+                 (let ((moved (if at
+                                  (grid-model--shift-index col at delta)
+                                col)))
+                   (when (and moved (< moved (grid-data-model-cols new)))
+                     (puthash moved width to))))
+               from))
+    new))
+
+(defun grid-model-grow (model rows cols)
+  "Return MODEL with ROWS more rows at the bottom and COLS more columns.
+The new cells are empty; nothing that was there moves."
+  (let* ((old-cols (grid-data-model-cols model))
+         (values (mapcar (lambda (row) (append row (make-list cols "")))
+                         (grid-model-get-all-raw-values model))))
+    (grid-model-carry-widths
+     model
+     (grid-model-create
+      (+ (grid-data-model-rows model) rows) (+ old-cols cols)
+      (append values
+              (cl-loop repeat rows collect (make-list (+ old-cols cols) "")))
+      (grid-data-model-merges model)
+      (grid-model--same-styles model)
+      (grid-data-model-conditionals model)))))
 
 (defun grid-model--same-styles (model)
   "Return a copy of MODEL's styles for a change that moves no cell."

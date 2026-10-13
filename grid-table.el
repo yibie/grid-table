@@ -145,6 +145,19 @@ See `grid-table-read-entry' for how dates and percentages are read."
     (cond (workbook (grid-workbook-recalculate workbook))
           (model (grid-table-calc-evaluate model)))))
 
+(defun grid-get-column-widths (source)
+  "Return SOURCE's table of column widths set by hand, or nil.
+It maps a column index to a width in characters."
+  (when-let* ((function (gethash :get-column-widths source)))
+    (funcall function source)))
+
+(defun grid-set-column-width (source col width)
+  "Give column COL of SOURCE a width of WIDTH characters; nil forgets it.
+Return non-nil when SOURCE keeps column widths."
+  (when-let* ((function (gethash :set-column-width source)))
+    (funcall function source col width)
+    t))
+
 (defun grid-get-conditional-formats (source)
   "Return SOURCE's conditional format rules.
 Each rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE)."

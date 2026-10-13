@@ -63,7 +63,13 @@ Its keys are :title, :headers, :rows, :merges, :styles and
           :merges validated
           :styles styles
           :conditional-formats (and model
-                                    (grid-data-model-conditionals model)))))
+                                    (grid-data-model-conditionals model))
+          :column-widths
+          (let (entries)
+            (when-let* ((table (grid-get-column-widths data-source)))
+              (maphash (lambda (col width) (push (cons col width) entries))
+                       table))
+            (sort entries (lambda (a b) (< (car a) (car b))))))))
 
 (defun grid-table-persistence--file-data (data-source)
   "Return the form a file holds for DATA-SOURCE and the sheets beside it.
@@ -88,21 +94,29 @@ releases keep reading the files they can represent."
         (cond
          ((or (plist-get data :styles) (plist-get data :conditional-formats))
           (cons 'grid-table-file (append (list :version 4) data)))
+         ;; Column widths are an extra key older releases pass over, so
+         ;; they do not raise the version.
          (merges
-          (list 'grid-table-file
-                :version (if has-vertical 3 2)
-                :title (plist-get data :title)
-                :headers (plist-get data :headers)
-                :rows (plist-get data :rows)
-                :merges (if has-vertical
-                            merges
-                          (mapcar (lambda (merge)
-                                    (list (nth 0 merge) (nth 1 merge)
-                                          (nth 3 merge)))
-                                  merges))))
-         (t (list :title (plist-get data :title)
-                  :headers (plist-get data :headers)
-                  :rows (plist-get data :rows))))))))
+          (append
+           (list 'grid-table-file
+                 :version (if has-vertical 3 2)
+                 :title (plist-get data :title)
+                 :headers (plist-get data :headers)
+                 :rows (plist-get data :rows)
+                 :merges (if has-vertical
+                             merges
+                           (mapcar (lambda (merge)
+                                     (list (nth 0 merge) (nth 1 merge)
+                                           (nth 3 merge)))
+                                   merges)))
+           (and (plist-get data :column-widths)
+                (list :column-widths (plist-get data :column-widths)))))
+         (t (append
+             (list :title (plist-get data :title)
+                   :headers (plist-get data :headers)
+                   :rows (plist-get data :rows))
+             (and (plist-get data :column-widths)
+                  (list :column-widths (plist-get data :column-widths))))))))))
 
 (defun grid-table-persistence--save-to-file (data-source file-path)
   "Save the DATA-SOURCE to FILE-PATH using Lisp's S-expression format.
@@ -140,8 +154,10 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
         conditionals)))))
 
 (defun grid-table-persistence--make-source (file-path headers rows title
-                                                   merges styles conditionals)
-  "Return a data source for the fields a file at FILE-PATH holds for a sheet."
+                                                   merges styles conditionals
+                                                   &optional widths)
+  "Return a data source for the fields a file at FILE-PATH holds for a sheet.
+WIDTHS is a list of (COLUMN . WIDTH) for the columns sized by hand."
   (unless (grid-table-persistence--table-data-p headers rows)
     (error "Invalid grid file format in %s" file-path))
   (let ((source (make-default-data-source
@@ -154,6 +170,12 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
           (display-warning 'grid-table "Discarding malformed merge metadata"))))
     (grid-table-persistence--restore-formats
      (gethash :model source) styles conditionals)
+    (when (listp widths)
+      (dolist (entry widths)
+        (when (and (consp entry) (integerp (car entry)) (integerp (cdr entry))
+                   (< -1 (car entry) (grid-get-column-count source))
+                   (< 0 (cdr entry) 1000))
+          (grid-set-column-width source (car entry) (cdr entry)))))
     source))
 
 (defun grid-table-persistence--make-workbook (file-path plist)
@@ -171,7 +193,8 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
         file-path
         (plist-get sheet :headers) (plist-get sheet :rows)
         (plist-get sheet :title) (plist-get sheet :merges)
-        (plist-get sheet :styles) (plist-get sheet :conditional-formats))
+        (plist-get sheet :styles) (plist-get sheet :conditional-formats)
+        (plist-get sheet :column-widths))
        ;; A name another sheet has, or none, would lose the sheet.
        (grid-workbook-fresh-name workbook (plist-get sheet :name))))
     ;; Each sheet was calculated before the ones after it existed.
@@ -193,7 +216,7 @@ saved; the others are in its workbook."
                  (grid-table-persistence--plist-p (cdr data))
                  (eql (plist-get (cdr data) :version) 5))
             (grid-table-persistence--make-workbook file-path (cdr data))
-        (let (headers rows title merges styles conditionals)
+        (let (headers rows title merges styles conditionals widths)
           (cond
            ;; Case 1: Tagged v2 format with merge metadata
            ((eq (car-safe data) 'grid-table-file)
@@ -206,6 +229,7 @@ saved; the others are in its workbook."
                     title (plist-get plist :title)
                     styles (plist-get plist :styles)
                     conditionals (plist-get plist :conditional-formats)
+                    widths (plist-get plist :column-widths)
                     merges (let ((raw-merges (plist-get plist :merges)))
                              (if (and (eq (plist-get plist :version) 2)
                                       (listp raw-merges))
@@ -227,7 +251,8 @@ saved; the others are in its workbook."
               (error "Unsupported grid file version in %s" file-path))
             (setq headers (plist-get data :headers)
                   rows (plist-get data :rows)
-                  title (plist-get data :title)))
+                  title (plist-get data :title)
+                  widths (plist-get data :column-widths)))
 
            ;; Case 2: Alist format (legacy/example files)
            ((listp (car data))
@@ -246,7 +271,8 @@ saved; the others are in its workbook."
            (t (error "Unknown grid file format in %s" file-path)))
 
           (grid-table-persistence--make-source
-           file-path headers rows title merges styles conditionals)))))))
+           file-path headers rows title merges styles conditionals
+           widths)))))))
 
 (provide 'grid-table-persistence)
 
