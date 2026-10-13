@@ -15,7 +15,6 @@
 ;;; Code:
 
 (require 'cl-lib)
-(require 'calendar)
 (require 'color)
 (require 'grid-table)
 (require 'grid-table-plugins)
@@ -141,53 +140,31 @@ meant it to be used."
   (car (read-from-string
         (grid-table-xlsx-module-sheets (expand-file-name file)))))
 
-(defun grid-table-xlsx--date-format-p (code)
-  "Return non-nil when the number format CODE shows a date or a time."
-  (let ((case-fold-search t))
-    (string-match-p
-     "[ymdhs]"
-     (replace-regexp-in-string "\"[^\"]*\"\\|\\[[^]]*\\]\\|\\\\." "" code))))
-
-(defun grid-table-xlsx--date-text (serial)
-  "Return the date, time or both that the workbook number SERIAL stands for.
-The date is written year first, whatever format the workbook shows it
-in: a built-in date format follows the locale of the reader, and
-10/12/2026 does not say which number is the month.  SERIAL counts days
-from the end of 1899, as workbooks do by default."
-  (let* ((days (floor serial))
-         (seconds (round (* 86400 (- serial days))))
-         (date (calendar-gregorian-from-absolute
-                (+ days (calendar-absolute-from-gregorian '(12 30 1899)))))
-         (day (format "%04d-%02d-%02d" (nth 2 date) (nth 0 date) (nth 1 date)))
-         (time (format "%02d:%02d:%02d" (/ seconds 3600)
-                       (% (/ seconds 60) 60) (% seconds 60))))
-    (cond ((zerop seconds) day)
-          ((zerop days) time)
-          (t (concat day " " time)))))
-
 (defun grid-table-xlsx--raw (cell)
   "Return the raw input for CELL, a (ROW COL VALUE . PROPERTIES) entry.
-grid-table has no date type, so a date comes in as text."
-  (let ((value (nth 2 cell))
-        (format (plist-get (nthcdr 3 cell) :format)))
-    (if (and format
-             (grid-table-xlsx--date-format-p format)
-             (string-match-p grid-table-xlsx--number-regexp value))
-        (grid-table-xlsx--date-text (string-to-number value))
+Text that reads as a number is marked with an apostrophe, so it stays
+text."
+  (let ((value (nth 2 cell)))
+    (if (plist-get (nthcdr 3 cell) :text)
+        (concat "'" value)
       value)))
 
 (defun grid-table-xlsx--style (properties)
   "Return the grid-table style for the module's cell PROPERTIES.
-Black text is the default of a workbook and is not taken as a color."
+Black text is the default of a workbook and is not taken as a color.
+A number format the grid has no counterpart for is kept as it is, to be
+written back."
   (let ((color (plist-get properties :color))
         (fill (plist-get properties :fill))
-        (align (plist-get properties :align)))
+        (align (plist-get properties :align))
+        (format (grid-format-from-code (plist-get properties :format))))
     (append (and (plist-get properties :bold) (list :bold t))
             (and (plist-get properties :italic) (list :italic t))
             (and color (not (equal color "000000"))
                  (list :color (concat "#" color)))
             (and fill (list :background (concat "#" fill)))
-            (and align (list :align (intern align))))))
+            (and align (list :align (intern align)))
+            (and format (list :format format)))))
 
 (defun grid-table-xlsx--unquote (text)
   "Return TEXT without the double quotes of a formula string."
@@ -355,7 +332,8 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
         (grid-table-xlsx--rgb (plist-get style :background))
         (if-let* ((align (plist-get style :align)))
             (format "%s" align)
-          "")))
+          "")
+        (or (grid-format-to-code (plist-get style :format)) "")))
 
 (defun grid-table-xlsx--cell-record (row col raw style)
   "Return the record for the cell at ROW and COL, or nil for nothing.
@@ -363,6 +341,11 @@ RAW is its raw input and STYLE its style."
   (let* ((case-fold-search t)
          (text (grid-table-xlsx--clean (format "%s" (or raw ""))))
          (kind (cond
+                ;; Text by its apostrophe or by its format
+                ((string-prefix-p "'" text)
+                 (setq text (substring text 1))
+                 "s")
+                ((eq (car-safe (plist-get style :format)) 'text) "s")
                 ((and (string-prefix-p "=" text) (> (length text) 1)
                       (not (string-match-p
                             grid-table-xlsx--own-formula-regexp text)))
@@ -397,8 +380,8 @@ RAW is its raw input and STYLE its style."
                      value
                    quoted)))
             value)
-      ;; A conditional format has no alignment.
-      (butlast (grid-table-xlsx--style-fields style)))
+      ;; A conditional format has no alignment and no number format.
+      (butlast (grid-table-xlsx--style-fields style) 2))
      grid-table-xlsx--field)))
 
 (defun grid-table-xlsx--payload (source)
@@ -408,10 +391,17 @@ RAW is its raw input and STYLE its style."
         records)
     (dotimes (row rows)
       (dotimes (col cols)
-        (when-let* ((record (grid-table-xlsx--cell-record
-                             row col
-                             (grid-get-raw-value-at source row col)
-                             (grid-get-style-at source row col))))
+        (when-let* ((record
+                     (grid-table-xlsx--cell-record
+                      row col
+                      (grid-get-raw-value-at source row col)
+                      ;; A date formula is shown as a date without having
+                      ;; the format; a workbook needs to be told.
+                      (let ((style (grid-get-style-at source row col))
+                            (format (grid-table-cell-format source row col)))
+                        (if (and format (not (plist-get style :format)))
+                            (plist-put (copy-sequence style) :format format)
+                          style)))))
           (push record records))))
     (dolist (merge (grid-get-merges source))
       (push (concat "M" grid-table-xlsx--field

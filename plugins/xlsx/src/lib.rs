@@ -112,12 +112,17 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
         } else {
             let value = cell.value();
             quote(out, &value);
-            let style = cell.style();
-            if let Some(format) = style.number_format() {
-                let code = format.format_code();
-                if code != "General" && !value.is_empty() {
-                    keyword(out, ":format", code);
-                }
+            // Text that reads as a number, such as 007, must stay text.
+            if matches!(cell.data_type(), "s" | "str" | "inlineStr")
+                && value.trim().parse::<f64>().is_ok()
+            {
+                keyword(out, ":text", "1");
+            }
+        }
+        if let Some(format) = cell.style().number_format() {
+            let code = format.format_code();
+            if code != "General" {
+                keyword(out, ":format", code);
             }
         }
         push_style(out, cell.style(), theme, false);
@@ -195,7 +200,8 @@ fn argb(rgb: &str) -> String {
     format!("FF{}", rgb)
 }
 
-/// Give STYLE the look of FIELDS: bold, italic, color, fill, align.
+/// Give STYLE the look of FIELDS: bold, italic, color, fill, align and
+/// number format code.
 fn apply_style(style: &mut Style, fields: &[&str], differential: bool) {
     let field = |index: usize| fields.get(index).copied().unwrap_or("");
     if field(0) == "1" {
@@ -226,6 +232,9 @@ fn apply_style(style: &mut Style, fields: &[&str], differential: bool) {
     };
     if let Some(align) = align {
         style.alignment_mut().set_horizontal(align);
+    }
+    if !differential && !field(5).is_empty() {
+        style.number_format_mut().set_format_code(field(5));
     }
 }
 
@@ -291,7 +300,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     for record in payload.split(RECORD) {
         let fields: Vec<&str> = record.split(FIELD).collect();
         match fields[0] {
-            // C row col kind text bold italic color fill align
+            // C row col kind text bold italic color fill align format
             "C" if fields.len() >= 5 => {
                 let row: u32 = fields[1].parse()?;
                 let col: u32 = fields[2].parse()?;

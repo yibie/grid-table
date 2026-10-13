@@ -54,22 +54,26 @@
   (should-not (grid-table-xlsx--parse-range "Sheet1"))
   (should (equal (grid-table-xlsx--range-name 6 1 7 3) "B7:D8")))
 
-(ert-deftest grid-table-xlsx-test-date-formats ()
-  (should (grid-table-xlsx--date-format-p "yyyy-mm-dd"))
-  (should (grid-table-xlsx--date-format-p "h:mm AM/PM"))
-  (should-not (grid-table-xlsx--date-format-p "0.00"))
-  (should-not (grid-table-xlsx--date-format-p "0.0%"))
-  (should-not (grid-table-xlsx--date-format-p "#,##0 \"days\""))
-  (should-not (grid-table-xlsx--date-format-p "[Red]0.00"))
-  (should (equal (grid-table-xlsx--date-text 46307) "2026-10-12"))
-  (should (equal (grid-table-xlsx--date-text 61) "1900-03-01"))
-  (should (equal (grid-table-xlsx--date-text 0.75) "18:00:00"))
-  (should (equal (grid-table-xlsx--date-text 46307.5) "2026-10-12 12:00:00"))
+(ert-deftest grid-table-xlsx-test-number-formats ()
+  ;; A date stays the number it is and takes a date format.
   (should (equal (grid-table-xlsx--raw '(0 0 "46307" :format "m/d/yyyy"))
-                 "2026-10-12"))
-  (should (equal (grid-table-xlsx--raw '(0 0 "0.125" :format "0.0%")) "0.125"))
-  (should (equal (grid-table-xlsx--raw '(0 0 "text" :format "yyyy-mm-dd"))
-                 "text")))
+                 "46307"))
+  (should (equal (grid-table-xlsx--style '(:format "m/d/yyyy"))
+                 '(:format (date "m/d/yyyy"))))
+  (should (equal (grid-table-xlsx--style '(:bold t :format "0.0%"))
+                 '(:bold t :format (percent 1))))
+  (should-not (grid-table-xlsx--style '(:format "General")))
+  ;; A format without a counterpart is kept for the way back.
+  (should (equal (grid-table-xlsx--style '(:format "#,##0 \"days\""))
+                 '(:format (code "#,##0 \"days\""))))
+  (should (equal (nth 5 (grid-table-xlsx--style-fields
+                         '(:format (code "#,##0 \"days\""))))
+                 "#,##0 \"days\""))
+  (should (equal (nth 5 (grid-table-xlsx--style-fields
+                         '(:format (date "yyyy-mm-dd"))))
+                 "yyyy-mm-dd"))
+  ;; Text that reads as a number is marked as text.
+  (should (equal (grid-table-xlsx--raw '(0 0 "007" :text "1")) "'007")))
 
 (ert-deftest grid-table-xlsx-test-cell-records ()
   (let ((fields (lambda (record)
@@ -89,13 +93,21 @@
                                                 0 0 "=barplot(A1:A3)" nil))
                                3 5)
                    '("s" "=barplot(A1:A3)")))
+    ;; Text marked as text leaves as text, without its mark.
+    (should (equal (seq-subseq (funcall fields (grid-table-xlsx--cell-record
+                                                0 0 "'007" nil))
+                               3 5)
+                   '("s" "007")))
+    (should (equal (nth 3 (funcall fields (grid-table-xlsx--cell-record
+                                           0 0 "12" '(:format (text)))))
+                   "s"))
     (should-not (grid-table-xlsx--cell-record 0 0 "" nil))
     (should (equal (seq-drop (funcall fields
                                       (grid-table-xlsx--cell-record
                                        0 0 "" '(:bold t :background "#ffc7ce"
                                                 :align center)))
                              5)
-                   '("1" "" "" "FFC7CE" "center")))))
+                   '("1" "" "" "FFC7CE" "center" "")))))
 
 (ert-deftest grid-table-xlsx-test-reads-a-workbook ()
   (skip-unless grid-table-xlsx-test--available)
@@ -115,16 +127,20 @@
     (should (equal (grid-get-computed-value-at source 2 4) 7.5))
     (should (equal (grid-get-computed-value-at source 5 4) 56.25))
     (should (equal (grid-table-xlsx-test--raw source 2 5) "TRUE"))
-    ;; A date comes in as text, a percentage as the number it holds.
-    (should (equal (grid-table-xlsx-test--raw source 3 5) "2026-10-12"))
+    ;; A date and a percentage come in as the numbers they hold, shown
+    ;; through their formats.
+    (should (equal (grid-table-xlsx-test--raw source 3 5) "46307"))
+    (should (equal (grid-get-display-value-at source 3 5) "2026-10-12"))
     (should (equal (grid-table-xlsx-test--raw source 4 5) "0.125"))
+    (should (equal (grid-get-display-value-at source 4 5) "12.5%"))
     (should (equal (grid-model-get-merges model) '((6 1 7 3))))
     (should (equal (grid-model-get-style model 1 1)
                    '(:bold t :color "#FFFFFF" :background "#4472C4"
                            :align center)))
     (should (equal (grid-model-get-style model 2 1)
                    '(:italic t :color "#00B050")))
-    (should (equal (grid-model-get-style model 3 3) '(:align right)))
+    (should (equal (grid-model-get-style model 3 3)
+                   '(:align right :format (number 2 nil))))
     (should (equal (grid-model-get-conditionals model)
                    '((2 2 4 2 ">" "5" (:bold t :background "#FFC7CE")))))
     (should (equal (gethash :xlsx-skipped-conditionals source) 0)))
@@ -132,6 +148,35 @@
                  grid-table-xlsx-test--fixture "Sheet2")))
     (should (equal (grid-table-xlsx-test--raw source 0 0) "=销售!E6*2"))
     (should (equal (grid-table-xlsx-test--raw source 1 0) "line1\nline2"))))
+
+(ert-deftest grid-table-xlsx-test-formats-round-trip ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let ((source (make-default-data-source
+                   '("" "")
+                   '(("label" "value") ("date" "") ("pct" "") ("money" "")
+                     ("text" "") ("later" "") ("days" "5")))))
+      (grid-table-enter-value source 1 1 "2026-10-13")
+      (grid-table-enter-value source 2 1 "12.5%")
+      (grid-table-enter-value source 3 1 "¥1,234.50")
+      (grid-table-enter-value source 4 1 "'007")
+      (grid-set-raw-value-at source 5 1 "=DATE(2026,10,13)+7")
+      (grid-set-style-at source 6 1 '(:format (code "#,##0 \"days\"")))
+      (grid-table-xlsx-write-data-source source file "Formats")
+      (let ((back (grid-table-xlsx-create-data-source file "Formats")))
+        (should (equal (grid-get-raw-value-at back 1 1) "46308"))
+        (should (equal (grid-get-display-value-at back 1 1) "2026-10-13"))
+        (should (equal (grid-get-display-value-at back 2 1) "12.5%"))
+        (should (equal (grid-get-display-value-at back 3 1) "¥1,234.50"))
+        ;; Text that reads as a number is still text.
+        (should (equal (grid-get-raw-value-at back 4 1) "'007"))
+        ;; A date formula is given its format on the way out.
+        (should (equal (grid-get-display-value-at back 5 1) "2026-10-20"))
+        (should (equal (plist-get (grid-get-style-at back 5 1) :format)
+                       '(date "yyyy-mm-dd")))
+        ;; A format the grid does not know comes back untouched.
+        (should (equal (plist-get (grid-get-style-at back 6 1) :format)
+                       '(code "#,##0 \"days\"")))))))
 
 (ert-deftest grid-table-xlsx-test-round-trip ()
   (skip-unless grid-table-xlsx-test--available)
