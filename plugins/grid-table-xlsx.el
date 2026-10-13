@@ -249,9 +249,17 @@ the header row."
                       (copy-sequence (car values)) values sheet))
              (model (gethash :model source))
              (rules (grid-table-xlsx--rules (plist-get data :conditionals))))
+        ;; A merge that reaches down from the first row, such as a title
+        ;; over two rows, only exists in a sheet without a header row.
+        (when (cl-some (lambda (merge)
+                         (and (= (nth 0 merge) 0) (< (nth 0 merge) (nth 2 merge))))
+                       merges)
+          (puthash :no-header-row t source))
         (when merges
-          (set-grid-data-model-merges
-           model (grid-model-validate-merges model merges t)))
+          (let ((grid-model-first-row-is-header
+                 (not (gethash :no-header-row source))))
+            (set-grid-data-model-merges
+             model (grid-model-validate-merges model merges t))))
         (dolist (cell cells)
           (when-let* ((style (grid-table-xlsx--style (nthcdr 3 cell))))
             (grid-model-set-style model (nth 0 cell) (nth 1 cell) style)))

@@ -176,7 +176,17 @@
                        '(date "yyyy-mm-dd")))
         ;; A format the grid does not know comes back untouched.
         (should (equal (plist-get (grid-get-style-at back 6 1) :format)
-                       '(code "#,##0 \"days\"")))))))
+                       '(code "#,##0 \"days\"")))
+        (should (grid-table-header-row-p back)))
+      ;; A title merged down from the first row makes the sheet one
+      ;; without a header row, so the merge is kept.
+      (grid-table-set-header-row source nil)
+      (grid-set-raw-value-at source 1 0 "")
+      (grid-merge-cells source 0 0 1 0)
+      (grid-table-xlsx-write-data-source source file "Formats")
+      (let ((back (grid-table-xlsx-create-data-source file "Formats")))
+        (should (equal (grid-get-merges back) '((0 0 1 0))))
+        (should-not (grid-table-header-row-p back))))))
 
 (ert-deftest grid-table-xlsx-test-round-trip ()
   (skip-unless grid-table-xlsx-test--available)
