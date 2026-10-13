@@ -85,24 +85,38 @@ Sources that do not store styles give nil."
   "Return the format the cell at ROW and COL of SOURCE is shown with.
 That is the format of its style.  A cell without one whose formula
 starts by computing a date, such as =TODAY()+7, is shown as a date."
-  (or (plist-get (grid-get-style-at source row col) :format)
-      (let ((raw (and (gethash :get-raw-value-at source)
-                      (grid-get-raw-value-at source row col)))
-            (case-fold-search t))
-        (and (stringp raw)
-             (string-match grid-table--date-formula-regexp raw)
-             (list 'date (if (string= (upcase (match-string 1 raw)) "NOW")
-                             "yyyy-mm-dd hh:mm"
-                           "yyyy-mm-dd"))))))
+  (let ((own (plist-get (grid-get-style-at source row col) :format)))
+    (cond
+     ;; The general format asked for by name: not even a date formula
+     ;; is shown as a date.
+     ((eq (car-safe own) 'general) nil)
+     (own)
+     (t (let ((raw (and (gethash :get-raw-value-at source)
+                        (grid-get-raw-value-at source row col)))
+              (case-fold-search t))
+          (and (stringp raw)
+               (string-match grid-table--date-formula-regexp raw)
+               (list 'date (if (string= (upcase (match-string 1 raw)) "NOW")
+                               "yyyy-mm-dd hh:mm"
+                             "yyyy-mm-dd"))))))))
+
+(defun grid-table-false-value-p (source row col value)
+  "Return non-nil when VALUE, computed at ROW and COL of SOURCE, is FALSE.
+A formula that comes out false computes nil, as an empty cell does not."
+  (and (null value)
+       (gethash :get-raw-value-at source)
+       (let ((raw (grid-get-raw-value-at source row col)))
+         (and (stringp raw) (string-prefix-p "=" raw)))))
 
 (defun grid-get-display-value-at (source row col)
   "Return what the cell at ROW and COL of SOURCE shows.
 That is its computed value written after its format.  A value that is
 not plain data, such as a chart, is returned as it is."
   (let ((value (grid-get-computed-value-at source row col)))
-    (if (or (stringp value) (numberp value) (memq value '(nil t)))
-        (grid-format-display value (grid-table-cell-format source row col))
-      value)))
+    (cond ((grid-table-false-value-p source row col value) "FALSE")
+          ((or (stringp value) (numberp value) (memq value '(nil t)))
+           (grid-format-display value (grid-table-cell-format source row col)))
+          (t value))))
 
 (defun grid-table-edit-text (source row col)
   "Return the text an edit of the cell at ROW and COL of SOURCE starts from.

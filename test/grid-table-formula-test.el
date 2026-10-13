@@ -488,6 +488,11 @@
     (should (equal (grid-get-computed-value-at source 3 1) 0))
     (grid-set-raw-value-at source 3 1 "=A4+1")
     (should (equal (grid-get-computed-value-at source 3 1) 8))
+    ;; So is a number in a cell with the text format.
+    (grid-set-style-at source 0 1 '(:format (text)))
+    (grid-set-raw-value-at source 0 1 "12")
+    (grid-set-raw-value-at source 0 0 "=COUNT(B1:B1)")
+    (should (equal (grid-get-computed-value-at source 0 0) 0))
     ;; The formats are saved with the grid and come back.
     (let ((file (make-temp-file "grid-format-" nil ".grid")))
       (unwind-protect
@@ -498,6 +503,7 @@
               (should (equal (grid-get-display-value-at back 1 0) "2026-10-13"))
               (should (equal (grid-get-display-value-at back 2 0) "50.0%"))
               (should (equal (grid-get-display-value-at back 3 0) "007"))
+              (should (equal (grid-get-computed-value-at back 0 0) 0))
               (should (equal (grid-get-computed-value-at back 3 1) 8))))
         (delete-file file)))
     ;; A source that keeps no styles stores what was typed.

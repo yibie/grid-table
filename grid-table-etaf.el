@@ -635,10 +635,10 @@ position, the node key and the paint state of the cell."
          (value (cond ((stringp editing) editing)
                       (editing (grid-table-edit-text source row col))
                       (t (grid-get-computed-value-at source row col))))
-         (text (if editing
-                   value
-                 (grid-table-etaf--display-text
-                  value (grid-table-cell-format source row col))))
+         (text (cond (editing value)
+                     ((grid-table-false-value-p source row col value) "FALSE")
+                     (t (grid-table-etaf--display-text
+                         value (grid-table-cell-format source row col)))))
          (image (and (not editing) (grid-table--extract-image-path text)))
          (face (cond ((plist-get spec :cursor) 'grid-table-etaf-cursor-face)
                      ((plist-get spec :selected)
@@ -1784,9 +1784,10 @@ change is one undoable step.  Covered cells of a merge are skipped."
                             (nth 0 extent) (nth 1 extent))))
 
 (defun grid-table-etaf-format-general ()
-  "Show the selection in the general format."
+  "Show the selection in the general format.
+A date formula then shows the number behind its date."
   (interactive)
-  (grid-table-etaf--set-format :format nil))
+  (grid-table-etaf--set-format :format (list 'general)))
 
 (defun grid-table-etaf-format-number (decimals)
   "Show the selection as numbers with DECIMALS decimal places.
@@ -1983,9 +1984,11 @@ cells' formats."
                 (grid-table-etaf--range-rows
                  state source range
                  (lambda (source row col)
-                   (grid-table-etaf--display-text
-                    (grid-get-computed-value-at source row col)
-                    (grid-table-cell-format source row col)))))))
+                   (let ((value (grid-get-computed-value-at source row col)))
+                     (if (grid-table-false-value-p source row col value)
+                         "FALSE"
+                       (grid-table-etaf--display-text
+                        value (grid-table-cell-format source row col)))))))))
     (kill-new text)
     (setq grid-table-etaf--clipboard
           (list text

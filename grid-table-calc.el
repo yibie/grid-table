@@ -73,10 +73,10 @@ A sheet that does not exist makes the reference #REF!."
   "Return the value of the cell at INDEX of MODEL that holds typed RAW.
 Text typed after an apostrophe, and anything in a cell with the text
 format, is text even when it reads as a number."
-  (cond ((string-prefix-p "'" raw)
+  (cond ((string-empty-p raw) raw)
+        ((eq (aref raw 0) ?')
          (propertize (substring raw 1) 'grid-text t))
-        ((and (> (length raw) 0)
-              (let ((styles (grid-data-model-styles model)))
+        ((and (let ((styles (grid-data-model-styles model)))
                 (and styles (> (hash-table-count styles) 0)
                      (let ((cols (grid-data-model-cols model)))
                        (eq (car-safe
@@ -103,7 +103,7 @@ instead of stopping the recalculation."
              cycle)
          (set-grid-cell-computed-value
           cell
-          (if (string-prefix-p "=" raw)
+          (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
               (condition-case err
                   (let ((grid-calc--depth (1+ grid-calc--depth)))
                     (grid-calc-eval-ast
@@ -322,10 +322,11 @@ Returns 0 for non-numeric values instead of throwing an error."
   (cond
    ((numberp value) value)
    ((stringp value)
-    (if (string-empty-p value)
-        0
-      ;; Arithmetic reads a number out of text; only aggregates skip it.
-      (or (grid-calc--numeric (substring-no-properties value)) 0)))
+    (cond ((string-empty-p value) 0)
+          ;; Arithmetic reads a number out of text; only aggregates skip it.
+          ((grid-format-text-p value)
+           (or (grid-format-number (substring-no-properties value)) 0))
+          (t (or (grid-format-number value) 0))))
    ((null value) 0)
    (t 0))) ; Return 0 for any other type instead of throwing error
 

@@ -744,7 +744,17 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (grid-table-etaf-format-number 2)
       (should (string-match-p "0\\.26" (grid-table-etaf-test--body)))
       (grid-table-etaf-format-general)
-      (should-not (plist-get (grid-get-style-at source 3 1) :format))
+      (should (equal (grid-get-display-value-at source 3 1) "0.256"))
+      ;; Asked for by name, the general format shows a date's number.
+      (grid-table-etaf-set-cell 3 2 "=DATE(2026,10,12)")
+      (should (equal (grid-get-display-value-at source 3 2) "2026-10-12"))
+      (grid-table-etaf-goto 3 2)
+      (grid-table-etaf-format-general)
+      (should (equal (grid-get-display-value-at source 3 2) "46307"))
+      ;; A comparison that fails reads FALSE, an empty cell stays empty.
+      (grid-table-etaf-set-cell 3 2 "=1=2")
+      (should (equal (grid-get-display-value-at source 3 2) "FALSE"))
+      (should (string-match-p "FALSE" (grid-table-etaf-test--body)))
       ;; The text format makes what is there text, and undo takes it back.
       (grid-table-etaf-set-cell 4 1 "007")
       (grid-table-etaf-set-cell 4 2 "=COUNT(B5:B5)")

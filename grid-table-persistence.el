@@ -170,6 +170,10 @@ WIDTHS is a list of (COLUMN . WIDTH) for the columns sized by hand."
           (display-warning 'grid-table "Discarding malformed merge metadata"))))
     (grid-table-persistence--restore-formats
      (gethash :model source) styles conditionals)
+    ;; Whether a cell holds text depends on its format, which came after
+    ;; the first calculation.
+    (when styles
+      (grid-table-calc-evaluate (gethash :model source)))
     (when (listp widths)
       (dolist (entry widths)
         (when (and (consp entry) (integerp (car entry)) (integerp (cdr entry))
