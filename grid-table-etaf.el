@@ -56,7 +56,10 @@
                (:constructor grid-table-etaf--state-create))
   buffer top left cursor anchor tick editing widths session
   ;; Undo history: lists of (cells (ROW COL OLD NEW)...) and (model OLD NEW).
-  undo redo model)
+  undo redo model
+  ;; Column widths set by dragging, as a hash from column to width, and the
+  ;; width a resize drag started from.
+  manual resize-start)
 
 (defvar-local grid-table-etaf--state nil
   "Renderer state of the current ETAF grid buffer.")
@@ -144,6 +147,18 @@ Covered cells and horizontally merged anchors do not widen a column."
     (dotimes (col cols)
       (aset widths col (grid-table-etaf--clamp-width (aref widths col))))
     widths))
+
+(defun grid-table-etaf--fit-widths (state)
+  "Recompute STATE's column widths, keeping the ones set by dragging."
+  (let ((widths (grid-table-etaf--compute-widths
+                 (grid-table-etaf--source state)))
+        (manual (grid-table-etaf--state-manual state)))
+    (when manual
+      (maphash (lambda (col width)
+                 (when (< col (length widths))
+                   (aset widths col width)))
+               manual))
+    (setf (grid-table-etaf--state-widths state) widths)))
 
 (defun grid-table-etaf--row-header-width (source)
   "Return the content width of SOURCE's row number column."
@@ -233,12 +248,134 @@ Covered cells and horizontally merged anchors do not widen a column."
             "\\`[ \t]*[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)%?[ \t]*\\'"
             value))))
 
-(defun grid-table-etaf--press (buffer row col)
-  "Return a press callback moving BUFFER's cursor to ROW and COL."
-  (lambda ()
+(defvar grid-table-etaf--slot-refs (make-hash-table :test 'equal)
+  "Host references of cell slots, keyed by (ROW-SLOT . COL-SLOT).")
+
+(defun grid-table-etaf--slot-ref (row-slot col-slot)
+  "Return the Host reference of the cell at ROW-SLOT and COL-SLOT.
+A slot is a position in the window, not in the sheet, so the set of
+references stays as small as the window."
+  (let ((key (cons row-slot col-slot)))
+    (or (gethash key grid-table-etaf--slot-refs)
+        (let ((ref (intern (format "grid-table-etaf-cell-%d-%d"
+                                   row-slot col-slot))))
+          (put ref 'grid-table-etaf-slot key)
+          (puthash key ref grid-table-etaf--slot-refs)))))
+
+(defun grid-table-etaf--cell-at-gesture (state gesture)
+  "Return the model (ROW . COL) under the pointer of GESTURE in STATE."
+  (let* ((event (plist-get gesture :event))
+         (position (and (consp event) (posn-point (event-start event))))
+         (runtime (grid-table-etaf--runtime
+                   (grid-table-etaf--state-buffer state)))
+         (ref (and (integerp position) runtime
+                   (etaf-host-ref-at
+                    runtime position
+                    (lambda (ref)
+                      (and (symbolp ref)
+                           (get ref 'grid-table-etaf-slot))))))
+         (slot (and ref (get ref 'grid-table-etaf-slot))))
+    (when slot
+      (let* ((cols (grid-table-etaf--visible-cols
+                    state (etaf-value (grid-table-etaf--state-left state))))
+             (rows (grid-table-etaf--visible-rows
+                    state (etaf-value (grid-table-etaf--state-top state))
+                    cols))
+             (row (nth (car slot) rows))
+             (col (nth (cdr slot) cols)))
+        (and row col (cons row col))))))
+
+(defun grid-table-etaf--drag-cell (buffer row col)
+  "Return the pointer handler of the cell at ROW and COL in BUFFER.
+A press moves the cursor there, or extends the selection with shift
+held; dragging extends the selection to the cell under the pointer."
+  (lambda (gesture)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (grid-table-etaf-goto row col)))))
+        (let ((state grid-table-etaf--state))
+          (pcase (plist-get gesture :phase)
+            ('start
+             (grid-table-etaf-goto
+              row col
+              (memq 'shift (event-modifiers (plist-get gesture :event)))))
+            ((or 'move 'end)
+             (let ((cell (grid-table-etaf--cell-at-gesture state gesture)))
+               (when (and cell
+                          (not (equal cell (grid-table-etaf--cursor))))
+                 (grid-table-etaf-goto (car cell) (cdr cell) t))))))))))
+
+(defun grid-table-etaf--select (cursor anchor)
+  "Select from ANCHOR to CURSOR, both (ROW . COL), without scrolling."
+  (let ((state (grid-table-etaf--state-or-error)))
+    (grid-table-etaf--finish-edit state)
+    (etaf-batch
+      (etaf-set-value (grid-table-etaf--state-cursor state) cursor)
+      (etaf-set-value (grid-table-etaf--state-anchor state) anchor))
+    (setq grid-table--nav-row (car cursor)
+          grid-table--nav-col (1+ (cdr cursor)))
+    (grid-table-etaf--sync-point state)))
+
+(defun grid-table-etaf-select-column (col)
+  "Select every cell of model column COL."
+  (grid-table-etaf--select
+   (cons 0 col)
+   (cons (1- (grid-get-row-count grid-table--data-source)) col)))
+
+(defun grid-table-etaf-select-row (row)
+  "Select every cell of model ROW."
+  (grid-table-etaf--select
+   (cons row 0)
+   (cons row (1- (grid-get-column-count grid-table--data-source)))))
+
+(defun grid-table-etaf-select-all ()
+  "Select every cell of the sheet."
+  (interactive)
+  (grid-table-etaf--select
+   (cons 0 0)
+   (cons (1- (grid-get-row-count grid-table--data-source))
+         (1- (grid-get-column-count grid-table--data-source)))))
+
+(defun grid-table-etaf--drag-header (buffer function)
+  "Return a pointer handler calling FUNCTION in BUFFER when pressed."
+  (lambda (gesture)
+    (when (and (buffer-live-p buffer)
+               (eq (plist-get gesture :phase) 'start))
+      (with-current-buffer buffer
+        (funcall function)))))
+
+(defun grid-table-etaf-set-column-width (col width)
+  "Give model column COL a content width of WIDTH characters.
+The width stays until the sheet's structure changes."
+  (let* ((state (grid-table-etaf--state-or-error))
+         (width (max 1 (min 200 width))))
+    (unless (grid-table-etaf--state-manual state)
+      (setf (grid-table-etaf--state-manual state) (make-hash-table)))
+    (puthash col width (grid-table-etaf--state-manual state))
+    (aset (grid-table-etaf--state-widths state) col width)
+    (grid-table-etaf--bump state)))
+
+(defun grid-table-etaf--drag-resize (buffer col)
+  "Return the pointer handler resizing column COL of BUFFER.
+The column follows the pointer; a cancelled drag restores its width."
+  (lambda (gesture)
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (let* ((state grid-table-etaf--state)
+               (widths (grid-table-etaf--state-widths state)))
+          (pcase (plist-get gesture :phase)
+            ('start
+             (setf (grid-table-etaf--state-resize-start state)
+                   (aref widths col)))
+            ((or 'move 'end)
+             (let ((start (grid-table-etaf--state-resize-start state)))
+               (when start
+                 (grid-table-etaf-set-column-width
+                  col (+ start (round (car (plist-get gesture :delta))
+                                      (grid-table-etaf--char-width)))))))
+            ('cancel
+             (let ((start (grid-table-etaf--state-resize-start state)))
+               (when start
+                 (grid-table-etaf-set-column-width col start))))))))))
 
 (defun grid-table-etaf--direction (buffer)
   "Return the arrow key handler of BUFFER's sheet."
@@ -284,6 +421,7 @@ Covered cells and horizontally merged anchors do not widen a column."
     ("C-?" grid-table-etaf-redo "Redo")
     ("C-M-_" grid-table-etaf-redo "Redo")
     ("s-Z" grid-table-etaf-redo "Redo")
+    ("C-x h" grid-table-etaf-select-all "Select all")
     ("DEL" grid-table-etaf-clear-cells "Clear cells")
     ("<deletechar>" grid-table-etaf-clear-cells "Clear cells")
     ("C-c t" grid-table-edit-title "Edit title")
@@ -369,8 +507,9 @@ position, the node key and the paint state of the cell."
            (and face (grid-table-etaf--face-color face :background))
            :border-right line
            :border-bottom line
-           :on-press (grid-table-etaf--press
-                      (grid-table-etaf--state-buffer state) row col))
+           :ref (plist-get spec :ref)
+           :on-drag (grid-table-etaf--drag-cell
+                     (grid-table-etaf--state-buffer state) row col))
      (list
       (if image
           (etaf-node 'image
@@ -388,26 +527,46 @@ position, the node key and the paint state of the cell."
                    (list text)))))))
 
 (defun grid-table-etaf--header-node (key grid-row grid-col label align
-                                         marked line)
+                                         marked line &optional on-drag
+                                         on-resize)
   "Return a header cell View node.
 KEY names the node, GRID-ROW and GRID-COL place it, LABEL is its text
 aligned by ALIGN.  MARKED paints it as part of the selection and LINE is
-the grid line border."
-  (let ((face (if marked
-                  'grid-table-etaf-selection-face
-                'grid-table-etaf-header-face)))
-    (etaf-node 'box
-               (list :key key
-                     :grid-row grid-row
-                     :grid-column grid-col
-                     :padding '((lh 0) (ch 1))
-                     :text-align align
-                     :color (grid-table-etaf--face-color face :foreground)
-                     :background-color
-                     (grid-table-etaf--face-color face :background)
-                     :border-right line
-                     :border-bottom line)
-               (list (etaf-node 'text nil (list label))))))
+the grid line border.  ON-DRAG handles the pointer on the label.
+ON-RESIZE, when non-nil, adds a handle on the right edge that takes the
+pointer instead."
+  (let* ((face (if marked
+                   'grid-table-etaf-selection-face
+                 'grid-table-etaf-header-face))
+         (color (grid-table-etaf--face-color face :foreground))
+         (background (grid-table-etaf--face-color face :background)))
+    (etaf-node
+     'flex
+     (list :key key
+           :grid-row grid-row
+           :grid-column grid-col
+           :color color
+           :background-color background
+           :border-right line
+           :border-bottom line)
+     (delq nil
+           (list
+            (etaf-node 'box
+                       (list :key 'label
+                             :flex-grow 1
+                             :padding (if on-resize
+                                          '((lh 0) (ch 0) (lh 0) (ch 1))
+                                        '((lh 0) (ch 1)))
+                             :text-align align
+                             :on-drag on-drag)
+                       (list (etaf-node 'text nil (list label))))
+            (and on-resize
+                 (etaf-node 'box
+                            (list :key 'handle
+                                  :width '(ch 1)
+                                  :help-echo "Drag to resize the column"
+                                  :on-drag on-resize)
+                            (list (etaf-node 'text nil (list " "))))))))))
 
 (defun grid-table-etaf--title-node (state)
   "Return the title View node of STATE, or nil without a title."
@@ -453,7 +612,7 @@ line border."
   (let ((raw (or (grid-get-raw-value-at source row col) ""))
         (face 'grid-table-etaf-header-face))
     (etaf-node
-     'row
+     'flex
      (list :key 'formula-bar :border-bottom line)
      (list
       (etaf-node
@@ -558,21 +717,28 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
                                               :foreground))
          (line (if border (list '(px 1) 'solid border) '(px 1)))
          children)
-    (push (grid-table-etaf--header-node 'corner 1 1 "" 'left nil line)
+    (push (grid-table-etaf--header-node
+           'corner 1 1 "" 'left nil line
+           (grid-table-etaf--drag-header buffer #'grid-table-etaf-select-all))
           children)
     (cl-loop
      for col in cols for slot from 0 do
      (push (grid-table-etaf--header-node
             (format "c%d" slot) 1 (+ 2 slot)
             (grid-table--col-number-to-letter col) 'center
-            (and (<= sel-left col) (<= col sel-right)) line)
+            (and (<= sel-left col) (<= col sel-right)) line
+            (grid-table-etaf--drag-header
+             buffer (lambda () (grid-table-etaf-select-column col)))
+            (grid-table-etaf--drag-resize buffer col))
            children))
     (cl-loop
      for row in rows for row-slot from 0 do
      (push (grid-table-etaf--header-node
             (format "r%d" row-slot) (+ 2 row-slot) 1
             (number-to-string (1+ row)) 'right
-            (and (<= sel-top row) (<= row sel-bottom)) line)
+            (and (<= sel-top row) (<= row sel-bottom)) line
+            (grid-table-etaf--drag-header
+             buffer (lambda () (grid-table-etaf-select-row row))))
            children)
      (cl-loop
       for col in cols for col-slot from 0 do
@@ -591,6 +757,7 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
                    (cons (1+ (- (min (nth 2 merge) last-row) vis-top))
                          (1+ (- (min (nth 3 merge) last-col) vis-left))))
               (list :key (+ (* 10000 row-slot) col-slot)
+                    :ref (grid-table-etaf--slot-ref row-slot col-slot)
                     :grid-row (+ 2 row-slot)
                     :grid-col (+ 2 col-slot)
                     :line line
@@ -867,6 +1034,7 @@ An edit can change any formula cell, so every shown cell is measured.
 Columns only shrink on `grid-table-refresh'."
   (let* ((source (grid-table-etaf--source state))
          (widths (grid-table-etaf--state-widths state))
+         (manual (grid-table-etaf--state-manual state))
          (merges (grid-get-merges source))
          (cols (grid-table-etaf--visible-cols
                 state (etaf-value (grid-table-etaf--state-left state))))
@@ -875,9 +1043,10 @@ Columns only shrink on `grid-table-refresh'."
     (dolist (row rows)
       (dolist (col cols)
         (let ((merge (and merges (grid-table--merge-at merges row col))))
-          (unless (and merge
-                       (or (/= (nth 1 merge) (nth 3 merge))
-                           (/= row (nth 0 merge))))
+          (unless (or (and manual (gethash col manual))
+                      (and merge
+                           (or (/= (nth 1 merge) (nth 3 merge))
+                               (/= row (nth 0 merge)))))
             (aset widths col
                   (max (aref widths col)
                        (grid-table-etaf--clamp-width
@@ -1040,6 +1209,7 @@ previous model is all that undoing them needs."
          (model (gethash :model source))
          (known (grid-table-etaf--state-model state)))
     (when (and model known (not (eq model known)))
+      (setf (grid-table-etaf--state-manual state) nil)
       (grid-table-etaf--record state (list 'model known model)))
     (setf (grid-table-etaf--state-model state) model)))
 
@@ -1061,9 +1231,10 @@ previous model is all that undoing them needs."
        (let ((model (if forward new old))
              (cursor (etaf-value (grid-table-etaf--state-cursor state))))
          (puthash :model model source)
+         ;; Dragged widths belong to the columns of the model they were set on.
          (setf (grid-table-etaf--state-model state) model
-               (grid-table-etaf--state-widths state)
-               (grid-table-etaf--compute-widths source))
+               (grid-table-etaf--state-manual state) nil)
+         (grid-table-etaf--fit-widths state)
          (grid-table-etaf--bump state)
          (grid-table-etaf-goto (car cursor) (cdr cursor)))))))
 
@@ -1250,14 +1421,12 @@ Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
 RESTORE-ROW and RESTORE-COL, when given, are the display coordinates the
 cursor moves to: display column is model column plus one."
   (let* ((state (grid-table-etaf--state-or-error))
-         (source (grid-table-etaf--source state))
          (cursor (etaf-value (grid-table-etaf--state-cursor state)))
          (row (if restore-row (max 0 restore-row) (car cursor)))
          (col (if restore-col (max 0 (1- restore-col)) (cdr cursor))))
     (grid-table-etaf--end-session state)
     (grid-table-etaf--track-model state)
-    (setf (grid-table-etaf--state-widths state)
-          (grid-table-etaf--compute-widths source))
+    (grid-table-etaf--fit-widths state)
     (grid-table-etaf--bump state)
     (grid-table-etaf-goto row col)))
 

@@ -314,6 +314,46 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should (= (grid-get-row-count grid-table--data-source) 7))
     (should (equal (grid-get-raw-value-at source 3 0) "inserted"))))
 
+(ert-deftest grid-table-etaf-headers-select-rows-and-columns ()
+  (grid-table-etaf-test--with-grid (200 5 100 12)
+    (grid-table-etaf-goto 3 2)
+    (grid-table-etaf-select-column 1)
+    (should (equal (grid-table-etaf-selection) '(0 1 199 1)))
+    ;; Selecting a whole column does not scroll the window to its end.
+    (should (string-match-p "^ *1 " (grid-table-etaf-test--text)))
+    (should (string-match-p "B1:B200" (grid-table-etaf-test--text)))
+    (grid-table-etaf-select-row 4)
+    (should (equal (grid-table-etaf-selection) '(4 0 4 4)))
+    (grid-table-etaf-select-all)
+    (should (equal (grid-table-etaf-selection) '(0 0 199 4)))
+    (should (string-match-p "Count: 1000" (grid-table-etaf-test--text)))))
+
+(ert-deftest grid-table-etaf-dragging-a-header-edge-resizes-the-column ()
+  (grid-table-etaf-test--with-grid (6 5)
+    (let ((resize (grid-table-etaf--drag-resize buffer 1))
+          (widths (lambda () (grid-table-etaf--state-widths
+                              grid-table-etaf--state))))
+      (should (= (aref (funcall widths) 1) 5))
+      (funcall resize '(:phase start :delta (0 . 0)))
+      ;; One pixel is one column in batch mode.
+      (funcall resize '(:phase move :delta (4 . 0)))
+      (should (= (aref (funcall widths) 1) 9))
+      (funcall resize '(:phase end :delta (7 . 0)))
+      (should (= (aref (funcall widths) 1) 12))
+      ;; A dragged width survives edits and refreshes.
+      (grid-table-etaf-set-cell 2 1 "a much longer value than before")
+      (grid-table-refresh)
+      (should (= (aref (funcall widths) 1) 12))
+      ;; A cancelled drag puts the width back.
+      (funcall resize '(:phase start :delta (0 . 0)))
+      (funcall resize '(:phase move :delta (-6 . 0)))
+      (should (= (aref (funcall widths) 1) 6))
+      (funcall resize '(:phase cancel :delta (-6 . 0)))
+      (should (= (aref (funcall widths) 1) 12))
+      ;; Structural changes drop dragged widths with the columns they named.
+      (grid-table-add-column 1)
+      (should (= (aref (funcall widths) 1) 5)))))
+
 (ert-deftest grid-table-etaf-keys-reach-the-sheet ()
   (grid-table-etaf-test--with-grid (6 5)
     (switch-to-buffer buffer)

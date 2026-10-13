@@ -88,7 +88,7 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
   (add-to-list 'load-path "/path/to/etaf")
   ```
 
-  Keys follow spreadsheet habits: typing replaces the cell and starts editing, `F2` or `RET` edits the existing text, `RET` stores it and moves down, `TAB` stores it and moves right, `C-c C-c` stores it in place and `C-c C-k` cancels. `C-n`/`C-p`/`C-f`/`C-b` and the arrow keys move, `DEL` clears the selection, `M-w`/`C-w`/`C-y` copy, cut and paste a range, `C-/` undoes and `C-?` redoes, `C-c C-r` refreshes and `C-c C-q` quits. The single-letter commands in the tables below (`e`, `n`, `p`, `g`, `q`) belong to the classic renderer.
+  Keys follow spreadsheet habits: typing replaces the cell and starts editing, `F2` or `RET` edits the existing text, `RET` stores it and moves down, `TAB` stores it and moves right, `C-c C-c` stores it in place and `C-c C-k` cancels. `C-n`/`C-p`/`C-f`/`C-b` and the arrow keys move, `DEL` clears the selection, `M-w`/`C-w`/`C-y` copy, cut and paste a range, `C-/` undoes and `C-?` redoes, `C-x h` selects everything, `C-c C-r` refreshes and `C-c C-q` quits. With the mouse, click a cell to move there, shift-click or drag to select a range, click a row number, a column letter or the corner to select a row, a column or the whole sheet, and drag the right edge of a column letter to resize the column. The single-letter commands in the tables below (`e`, `n`, `p`, `g`, `q`) belong to the classic renderer.
 
 - `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete.
 
