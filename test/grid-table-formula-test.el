@@ -397,6 +397,28 @@
     (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2)") "#N/A"))
     (should (equal (funcall value "=XLOOKUP(1,A1:A2,B1:B2,1/0)") "2"))))
 
+(ert-deftest grid-table-formula-rewrites-follow-whole-columns-and-rows ()
+  ;; Copying moves the relative ones.
+  (should (equal (grid-calc-shift-formula "=SUM(A:A)+SUM($B:C)+SUM(2:3)" 1 1)
+                 "=SUM(B:B)+SUM($B:D)+SUM(3:4)"))
+  (should (equal (grid-calc-shift-formula "=SUM(A:A)" 0 -1) "=SUM(#REF!:#REF!)"))
+  ;; A column inserted or deleted moves them, a row leaves them alone.
+  (should (equal (grid-calc-restructure-formula "=SUM(B:C)+SUM(2:5)" 'col 0 1)
+                 "=SUM(C:D)+SUM(2:5)"))
+  (should (equal (grid-calc-restructure-formula "=SUM(B:C)+SUM(2:5)" 'row 0 1)
+                 "=SUM(B:C)+SUM(3:6)"))
+  (should (equal (grid-calc-restructure-formula "=SUM(B:D)" 'col 2 -1)
+                 "=SUM(B:C)"))
+  (should (equal (grid-calc-restructure-formula "=SUM(B:B)+1" 'col 1 -1)
+                 "=SUM(#REF!)+1"))
+  ;; A renamed sheet keeps them.
+  (should (equal (grid-calc-rename-sheet-in-formula
+                  "=SUM(Data!A:A)+SUM('Old one'!2:2)" "Data" "New data")
+                 "=SUM('New data'!A:A)+SUM('Old one'!2:2)"))
+  ;; Names and text are not ranges.
+  (should (equal (grid-calc-shift-formula "=LOG10(A1)&\"A:A\"" 0 1)
+                 "=LOG10(B1)&\"A:A\"")))
+
 (ert-deftest grid-table-sort-keeps-a-formula-reading-its-own-row ()
   (let* ((model (grid-model-create
                  4 4 '(("Key" "Amount" "Double" "Share")

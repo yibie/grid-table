@@ -434,14 +434,49 @@ are not references."
             (match-string 3 formula)
             (string-to-number (match-string 4 formula))))))
 
+(defun grid-calc--whole-range-at (formula pos)
+  "Return the whole columns or whole rows that start at POS in FORMULA.
+The value is (END START-REFERENCE END-REFERENCE) for text such as A:C or
+$2:5, each reference a (COL-ANCHOR COL ROW-ANCHOR ROW) list whose ROW is
+nil for a column and whose COL is nil for a row.  Return nil when no
+such range starts there."
+  (let ((len (length formula))
+        (case-fold-search t))
+    (when (and (not (and (> pos 0)
+                         (string-match-p "[A-Za-z0-9_.$:]"
+                                         (substring formula (1- pos) pos))))
+               (or (eq (string-match
+                        "\\(\\$?\\)\\([A-Za-z]+\\):\\(\\$?\\)\\([A-Za-z]+\\)"
+                        formula pos)
+                       pos)
+                   (eq (string-match
+                        "\\(\\$?\\)\\([0-9]+\\):\\(\\$?\\)\\([0-9]+\\)"
+                        formula pos)
+                       pos))
+               (not (and (< (match-end 0) len)
+                         (string-match-p "[A-Za-z0-9_.(!:$]"
+                                         (substring formula (match-end 0)
+                                                    (1+ (match-end 0)))))))
+      (let ((end (match-end 0))
+            (make (lambda (anchor text)
+                    (if (string-match-p "\\`[0-9]" text)
+                        (list "" nil anchor (string-to-number text))
+                      (list anchor (grid-calc-col-letter-to-number text)
+                            "" nil)))))
+        (list end
+              (funcall make (match-string 1 formula) (match-string 2 formula))
+              (funcall make (match-string 3 formula)
+                       (match-string 4 formula)))))))
+
 (defun grid-calc--reference-text (reference)
   "Return the text of REFERENCE, a (COL-ANCHOR COL ROW-ANCHOR ROW) list.
-A reference off the sheet's top or left edge is #REF!."
+ROW is nil for a whole column and COL is nil for a whole row.  A
+reference off the sheet's top or left edge is #REF!."
   (pcase-let ((`(,col-anchor ,col ,row-anchor ,row) reference))
-    (if (or (< col 0) (< row 1))
+    (if (or (and col (< col 0)) (and row (< row 1)))
         "#REF!"
-      (concat col-anchor (grid-calc-col-number-to-letter col)
-              row-anchor (number-to-string row)))))
+      (concat (and col col-anchor) (and col (grid-calc-col-number-to-letter col))
+              (and row row-anchor) (and row (number-to-string row))))))
 
 (defun grid-calc-sheet-prefix (name)
   "Return NAME as the sheet prefix of a reference, exclamation mark included.
@@ -472,7 +507,10 @@ anything that is not a formula are returned unchanged."
         (let* ((prefix (and (not (eq (aref formula pos) ?\"))
                             (grid-parser-sheet-prefix-at formula pos)))
                (start (if prefix (car prefix) pos))
-               (reference (and (< start len)
+               (whole (and (< start len)
+                           (not (eq (aref formula pos) ?\"))
+                           (grid-calc--whole-range-at formula start)))
+               (reference (and (< start len) (not whole)
                                (grid-calc--reference-at formula start prefix))))
           (cond
            ;; Quoted text
@@ -480,9 +518,9 @@ anything that is not a formula are returned unchanged."
             (let ((end (or (string-search "\"" formula (1+ pos)) (1- len))))
               (push (substring formula pos (1+ end)) parts)
               (setq pos (1+ end))))
-           (reference
-            (let* ((end (car reference))
-                   (other (and (< end len) (eq (aref formula end) ?:)
+           ((or whole reference)
+            (let* ((end (car (or whole reference)))
+                   (other (and reference (< end len) (eq (aref formula end) ?:)
                                (grid-calc--reference-at formula (1+ end) t)))
                    (sheet (cdr prefix))
                    (renamed (and sheet rename (funcall rename sheet))))
@@ -491,8 +529,11 @@ anything that is not a formula are returned unchanged."
                           (grid-calc-sheet-prefix renamed)
                         (substring formula pos start))
                       parts))
-              (push (funcall function (cdr reference) (cdr other) sheet) parts)
-              (setq pos (if other (car other) end))))
+              (push (if whole
+                        (funcall function (nth 1 whole) (nth 2 whole) sheet)
+                      (funcall function (cdr reference) (cdr other) sheet))
+                    parts)
+              (setq pos (cond (whole end) (other (car other)) (t end)))))
            ;; A sheet name in front of something that is no reference
            (prefix
             (push (substring formula pos start) parts)
@@ -524,9 +565,13 @@ references that name a sheet stay as they are."
                  (pcase-let ((`(,col-anchor ,col ,row-anchor ,row) reference))
                    (grid-calc--reference-text
                     (list col-anchor
-                          (if (string-empty-p col-anchor) (+ col cols) col)
+                          (if (and col (string-empty-p col-anchor))
+                              (+ col cols)
+                            col)
                           row-anchor
-                          (if (string-empty-p row-anchor) (+ row rows) row)))))))
+                          (if (and row (string-empty-p row-anchor))
+                              (+ row rows)
+                            row)))))))
     (grid-calc--map-references
      formula
      (lambda (start end sheet)
@@ -559,8 +604,11 @@ rewritten: those written without a sheet when the formula lives there,
 and those that name it."
   (let* ((target (or target home))
          (local (or (null target) (grid-calc--same-sheet-p home target)))
+         ;; nil for whole columns when rows change, and the other way round
          (index (lambda (reference)
-                  (if (eq axis 'row) (1- (nth 3 reference)) (nth 1 reference))))
+                  (if (eq axis 'row)
+                      (and (nth 3 reference) (1- (nth 3 reference)))
+                    (nth 1 reference))))
          (moved (lambda (reference to)
                   (grid-calc--reference-text
                    (if (eq axis 'row)
@@ -574,7 +622,8 @@ and those that name it."
        (let ((from (funcall index start))
              (to (and end (funcall index end))))
          (cond
-          ((not (if sheet (grid-calc--same-sheet-p sheet target) local))
+          ((or (null from)
+               (not (if sheet (grid-calc--same-sheet-p sheet target) local)))
            (grid-calc--range-text start end #'grid-calc--reference-text))
           ((> delta 0)
            (let ((new-from (if (>= from at) (1+ from) from)))
