@@ -86,17 +86,19 @@ conditional format rules; the model owns them from then on."
                                       nil styles conditionals))
          (cells (grid-data-model-cells model)))
     ;; 1. Initialize all cells and populate with initial data
-    (dotimes (r rows)
-      (dotimes (c cols)
-        (let ((cell (make-grid-cell r c))
-              (raw-val (if (and initial-data (< r (length initial-data)) (< c (length (nth r initial-data))))
-                         (nth c (nth r initial-data))
-                       "")))
-          (set-grid-cell-raw-input cell raw-val)
-          ;; For non-formula cells, set computed value to raw value
-          (unless (string-prefix-p "=" raw-val)
-            (set-grid-cell-computed-value cell raw-val))
-          (aset cells (+ (* r cols) c) cell))))
+    ;; Walk INITIAL-DATA alongside the indexes: looking a row up by number
+    ;; for every cell is quadratic in the row count.
+    (let ((rest-rows initial-data))
+      (dotimes (r rows)
+        (let ((rest-values (pop rest-rows)))
+          (dotimes (c cols)
+            (let ((cell (make-grid-cell r c))
+                  (raw-val (if rest-values (pop rest-values) "")))
+              (set-grid-cell-raw-input cell raw-val)
+              ;; For non-formula cells, set computed value to raw value
+              (unless (string-prefix-p "=" raw-val)
+                (set-grid-cell-computed-value cell raw-val))
+              (aset cells (+ (* r cols) c) cell))))))
     ;; 2. Perform initial calculation
     (grid-model-recalculate-all model)
     (when merges
