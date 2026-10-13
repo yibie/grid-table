@@ -96,6 +96,8 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 
   `C-c s` sorts by what a column shows: numbers by value before text, text ignoring case, empty cells last in either direction. `C-c / f` filters the rows by a condition on the cursor's column, `C-c / v` keeps the rows holding the cursor cell's value, `C-c / c` clears that column's filter and `C-c / a` clears all. Filters on several columns combine, a filtered column shows `▼` after its letter, and moving, copying, clearing, formatting and the status bar figures leave hidden rows out. Rows are filtered when a filter is set and on refresh (`C-c C-r`), not after each edit.
 
+  A grid can hold several sheets. `C-c w n` adds one, `C-c w r` renames the current sheet, `C-c w d` deletes it, `C-c w <` and `C-c w >` move it, `C-<next>` and `C-<prior>` show the next and the previous sheet, `C-c w s` asks for one by name, and with ETAF the sheets have tabs on the bottom line that can be clicked. A formula reads another sheet as `Sheet2!A1`, `SUM(Sheet2!A1:B5)` or `'My Sheet'!A1`; it follows a renamed sheet and rows and columns added or deleted there, and shows `#REF!` once the sheet is gone. Each sheet keeps its own cursor, filters and undo history. A grid with one sheet is saved as before; with several the file has version 5, which earlier releases do not read.
+
 - `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete.
 
 Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/checkouts`.
@@ -110,7 +112,7 @@ Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/che
 | Open      | `M-x grid-table-find-file`     | `C-c C-f`   | Open .grid file       |
 | Save      | -                              | `C-c C-w`   | Smart path suggestion |
 | CSV       | `M-x grid-table-find-file-csv` | -           | Directly read CSV     |
-| Excel     | `M-x grid-table-xlsx-find-file` | -          | Open a sheet of an xlsx workbook |
+| Excel     | `M-x grid-table-xlsx-find-file` | -          | Open an xlsx workbook |
 
 ### Editing Operations Quick Reference
 
@@ -351,8 +353,8 @@ here display table preview (static preview)
 
 | Command | What it does |
 | ------- | ------------ |
-| `M-x grid-table-xlsx-find-file` | Open one sheet of a workbook as a grid; asks which sheet when there are several |
-| `M-x grid-table-xlsx-export` | Write the grid as a sheet of a workbook; an existing workbook keeps its other sheets |
+| `M-x grid-table-xlsx-find-file` | Open a workbook as a grid, with a sheet for each of its sheets |
+| `M-x grid-table-xlsx-export` | Write the grid and all its sheets to a workbook |
 
 Values, formulas, merges, bold, italic, text and fill color, alignment and conditional formats travel both ways. The first row of the sheet becomes the header row. A grid opened from a workbook is not tied to it: `C-c C-w` saves a `.grid` file, and exporting writes the workbook.
 
@@ -360,7 +362,8 @@ What does not travel:
 
 - Dates come in as text written year first (`2026-10-12`, `18:00:00`), because grid-table has no date type, and go back out as text. Text that reads as a number, such as `007`, goes out as a number. Number formats such as `0.00` or `0%` are dropped, and the cell keeps its number.
 - Borders, fonts, column widths, and conditional formats other than comparisons, "contains text", "is blank" and "is an error" are left out on import. On export the cells, merges and conditional formats of the sheet are replaced by the grid's, so those of them that were left out are gone; column widths and the rest of the sheet stay as they were, and the other sheets are untouched.
-- A formula that reads another sheet, or uses a function grid-table lacks, shows an error value in the grid. It is kept as written and exported unchanged.
+- A formula that uses a function grid-table lacks shows an error value in the grid. It is kept as written and exported unchanged.
+- Written back to the workbook it was opened from, the grid's sheets replace the workbook's: a sheet deleted or renamed in the grid is gone from the file. Written into another workbook, they are added to it and its own sheets stay.
 - Chart formulas are exported as text.
 
 The file format is handled by a dynamic module written in Rust (`plugins/xlsx/`), so Emacs must be built with module support. `plugins/` holds a prebuilt module for macOS (`grid-table-xlsx-module.dylib`, Apple silicon and Intel), which is loaded as it is. On other platforms, build the module with `M-x grid-table-xlsx-build-module` or `make module`; building needs cargo. A module you build is used in place of the prebuilt one, and `grid-table-xlsx-module-file` names a module kept elsewhere.

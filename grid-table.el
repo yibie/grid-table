@@ -1302,6 +1302,142 @@ TITLE is an optional title for the grid."
                   nil)))
     (grid-table--classic-show-in-current-buffer data-source title)))
 
+;;----------------------------------------------------------------------
+;; Sheets
+;;----------------------------------------------------------------------
+
+(defun grid-table--workbook ()
+  "Return the workbook of the current grid, making one when it stands alone."
+  (unless grid-table--data-source
+    (user-error "No grid in this buffer"))
+  (grid-workbook-ensure grid-table--data-source))
+
+(defun grid-table-sheets ()
+  "Return the sheets of the current grid's workbook, or nil without one.
+A grid that stands alone has no workbook until a sheet is added."
+  (when-let* ((workbook (and grid-table--data-source
+                             (grid-workbook-of grid-table--data-source))))
+    (grid-workbook-sheets workbook)))
+
+(defun grid-table-switch-to-sheet (source)
+  "Show SOURCE, a sheet of the current grid's workbook, in this buffer."
+  (unless (eq source grid-table--data-source)
+    (let ((modified (buffer-modified-p)))
+      (setq grid-table--title (gethash :title source))
+      (grid-table--show-grid-in-current-buffer source)
+      (set-buffer-modified-p modified))))
+
+(defun grid-table--sheet-changed (source)
+  "Show SOURCE after the workbook's sheets changed, and mark the buffer changed."
+  (let ((current grid-table--data-source))
+    (setq grid-table--title (gethash :title source))
+    (if (eq source current)
+        (grid-table-refresh)
+      (grid-table--show-grid-in-current-buffer source))
+    (set-buffer-modified-p t)))
+
+(defun grid-table--read-sheet-name (prompt workbook &optional except)
+  "Read with PROMPT a name a sheet of WORKBOOK can take.
+EXCEPT is a sheet allowed to have that name already."
+  (let* ((default (if except
+                      (grid-workbook-sheet-name except)
+                    (grid-workbook-fresh-name workbook)))
+         (name (string-trim
+                (read-string (format "%s (default %s): " prompt default)
+                             nil nil default))))
+    (when-let* ((problem (grid-workbook-name-problem workbook name except)))
+      (user-error "%s" problem))
+    name))
+
+(defun grid-table-sheet-step (count)
+  "Show the sheet COUNT places after the current one, wrapping around."
+  (let* ((sheets (grid-table-sheets))
+         (index (cl-position grid-table--data-source sheets)))
+    (if (null (cdr sheets))
+        (message "This grid has one sheet; C-c w n adds another")
+      (grid-table-switch-to-sheet
+       (nth (mod (+ index count) (length sheets)) sheets)))))
+
+(defun grid-table-sheet-next ()
+  "Show the next sheet of the workbook."
+  (interactive)
+  (grid-table-sheet-step 1))
+
+(defun grid-table-sheet-previous ()
+  "Show the previous sheet of the workbook."
+  (interactive)
+  (grid-table-sheet-step -1))
+
+(defun grid-table-sheet-select (name)
+  "Show the sheet called NAME."
+  (interactive
+   (let ((names (mapcar #'grid-workbook-sheet-name (grid-table-sheets))))
+     (unless (cdr names)
+       (user-error "This grid has one sheet; C-c w n adds another"))
+     (list (completing-read "Sheet: " names nil t))))
+  (grid-table-switch-to-sheet
+   (or (grid-workbook-sheet (grid-table--workbook) name)
+       (user-error "No sheet called %s" name))))
+
+(defun grid-table-sheet-new (name)
+  "Add an empty sheet called NAME after the current one and show it."
+  (interactive
+   (list (grid-table--read-sheet-name "New sheet" (grid-table--workbook))))
+  (let* ((workbook (grid-table--workbook))
+         (index (cl-position grid-table--data-source
+                             (grid-workbook-sheets workbook))))
+    (when-let* ((problem (grid-workbook-name-problem workbook name)))
+      (user-error "%s" problem))
+    (grid-table--sheet-changed
+     (grid-workbook-new-sheet workbook name (1+ index)))))
+
+(defun grid-table-sheet-rename (name)
+  "Call the current sheet NAME.
+Formulas that read the sheet are rewritten to use the new name."
+  (interactive
+   (list (grid-table--read-sheet-name "Rename sheet to" (grid-table--workbook)
+                                      grid-table--data-source)))
+  (let ((workbook (grid-table--workbook)))
+    (when-let* ((problem (grid-workbook-name-problem
+                          workbook name grid-table--data-source)))
+      (user-error "%s" problem))
+    (grid-workbook-rename-sheet workbook grid-table--data-source name)
+    (grid-table--sheet-changed grid-table--data-source)))
+
+(defun grid-table-sheet-delete ()
+  "Delete the current sheet.  This cannot be undone.
+Formulas that read the sheet show #REF! afterwards."
+  (interactive)
+  (let* ((workbook (grid-table--workbook))
+         (sheets (grid-workbook-sheets workbook))
+         (source grid-table--data-source)
+         (index (cl-position source sheets)))
+    (unless (cdr sheets)
+      (user-error "A grid keeps at least one sheet"))
+    (when (or (not (called-interactively-p 'interactive))
+              (yes-or-no-p (format "Delete sheet %s? This cannot be undone. "
+                                   (grid-workbook-sheet-name source))))
+      (grid-workbook-remove-sheet workbook source)
+      (grid-table--sheet-changed
+       (nth (min index (- (length sheets) 2))
+            (grid-workbook-sheets workbook))))))
+
+(defun grid-table-sheet-move (delta)
+  "Move the current sheet DELTA places among the sheets."
+  (let ((workbook (grid-table--workbook)))
+    (grid-workbook-move-sheet workbook grid-table--data-source delta)
+    (grid-table--sheet-changed grid-table--data-source)))
+
+(defun grid-table-sheet-move-left ()
+  "Move the current sheet one place towards the first."
+  (interactive)
+  (grid-table-sheet-move -1))
+
+(defun grid-table-sheet-move-right ()
+  "Move the current sheet one place towards the last."
+  (interactive)
+  (grid-table-sheet-move 1))
+
 (defun grid-table--classic-show-in-current-buffer (data-source &optional title)
   "Draw DATA-SOURCE into the current buffer with the classic renderer.
 TITLE is an optional title for the grid."
@@ -1411,6 +1547,14 @@ skipping regions with a `display' property (like images)."
     (define-key map (kbd "C-c C-w") 'grid-table-write-file)
     (define-key map (kbd "C-c C-f") 'grid-table-find-file)
     (define-key map (kbd "C-c s") 'grid-table-sort-column) ; New keybinding for sorting
+    (define-key map (kbd "C-<next>") 'grid-table-sheet-next)
+    (define-key map (kbd "C-<prior>") 'grid-table-sheet-previous)
+    (define-key map (kbd "C-c w n") 'grid-table-sheet-new)
+    (define-key map (kbd "C-c w r") 'grid-table-sheet-rename)
+    (define-key map (kbd "C-c w d") 'grid-table-sheet-delete)
+    (define-key map (kbd "C-c w s") 'grid-table-sheet-select)
+    (define-key map (kbd "C-c w <") 'grid-table-sheet-move-left)
+    (define-key map (kbd "C-c w >") 'grid-table-sheet-move-right)
     (define-key map (kbd "C-c m") 'grid-table-merge-cells)
     (define-key map (kbd "C-c u") 'grid-table-unmerge-cell)
      (define-key map (kbd "C-c v") 'grid-table-view-chart)

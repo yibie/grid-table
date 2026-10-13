@@ -15,9 +15,37 @@
 
 (defvar grid-calc--pass nil
   "State of the recalculation in progress, or nil.
-A vector with one entry per cell: nil when the cell has not been
-computed yet, `visiting' while its formula is being evaluated and
-`done' afterwards.")
+A hash table from each model the recalculation has reached to a vector
+with one entry per cell: nil when the cell has not been computed yet,
+`visiting' while its formula is being evaluated and `done' afterwards.
+One table serves all the sheets of a workbook, so that a formula reading
+another sheet has that cell computed first and a cycle through several
+sheets is found.")
+
+(defvar grid-calc-sheets nil
+  "Function that returns the model of the sheet with a given name, or nil.
+Bound by whoever keeps several sheets together; without it a reference
+into another sheet is #REF!.")
+
+(defvar grid-calc-current-sheet nil
+  "Name of the sheet whose model is being changed, when it has one.")
+
+(defvar grid-calc-defer nil
+  "Non-nil makes `grid-table-calc-evaluate' do nothing.
+Whoever binds it recalculates afterwards, all sheets together.")
+
+(defun grid-calc--pass-of (model)
+  "Return the state vector of MODEL in the recalculation in progress."
+  (or (gethash model grid-calc--pass)
+      (puthash model (make-vector (length (grid-data-model-cells model)) nil)
+               grid-calc--pass)))
+
+(defun grid-calc--sheet-model (model sheet)
+  "Return the model a reference into SHEET reads; MODEL when SHEET is nil.
+A sheet that does not exist makes the reference #REF!."
+  (cond ((null sheet) model)
+        ((and grid-calc-sheets (funcall grid-calc-sheets sheet)))
+        (t (signal 'grid-calc-error '("#REF!")))))
 
 (defvar grid-calc--depth 0
   "How many formulas are being evaluated on top of each other.")
@@ -41,12 +69,13 @@ computed yet, `visiting' while its formula is being evaluated and
   "Compute the cell at INDEX of MODEL unless this pass already did.
 A formula that fails gives its cell one of `grid-calc-error-values'
 instead of stopping the recalculation."
-  (let ((cell (aref (grid-data-model-cells model) index)))
-    (pcase (aref grid-calc--pass index)
+  (let ((cell (aref (grid-data-model-cells model) index))
+        (pass (grid-calc--pass-of model)))
+    (pcase (aref pass index)
       ('done nil)
       ('visiting (signal 'grid-calc-cycle nil))
       (_
-       (aset grid-calc--pass index 'visiting)
+       (aset pass index 'visiting)
        (let ((raw (grid-cell-raw-input cell))
              cycle)
          (set-grid-cell-computed-value
@@ -59,7 +88,7 @@ instead of stopping the recalculation."
                 (grid-calc-cycle (setq cycle t) "#CYCLE!")
                 (error (grid-calc--error-value err)))
             raw))
-         (aset grid-calc--pass index 'done)
+         (aset pass index 'done)
          ;; Every formula on a cycle is part of it, not only the one that
          ;; closed it.
          (when (and cycle (> grid-calc--depth 0))
@@ -76,15 +105,22 @@ reads a stale value.  An error value is signaled on to the reader."
         (signal 'grid-calc-error (list value))
       value)))
 
+(defun grid-table-calc-evaluate-models (models)
+  "Evaluate all formulas of MODELS, the sheets of one workbook.
+Every cell is computed once; a formula computes the cells it reads
+before itself, whatever their position and whichever sheet they are in."
+  (let ((grid-calc--pass (make-hash-table :test 'eq))
+        (grid-calc--depth 0))
+    (dolist (model models)
+      (dotimes (i (length (grid-data-model-cells model)))
+        (grid-calc--compute-cell model i)))))
+
 (defun grid-table-calc-evaluate (model)
   "Main entry point for evaluating all formulas in the model.
 Every cell is computed once; a formula computes the cells it reads
 before itself, whatever their position in the sheet."
-  (let* ((total-cells (length (grid-data-model-cells model)))
-         (grid-calc--pass (make-vector total-cells nil))
-         (grid-calc--depth 0))
-    (dotimes (i total-cells)
-      (grid-calc--compute-cell model i))))
+  (unless grid-calc-defer
+    (grid-table-calc-evaluate-models (list model))))
 
 (defvar grid-calc-functions (make-hash-table :test 'equal))
 
@@ -153,6 +189,8 @@ AST: The Abstract Syntax Tree to evaluate."
     ;; Cell reference
     (`(CELL-REF ,ref-str)
      (grid-calc-get-cell-value model ref-str))
+    (`(CELL-REF ,ref-str ,sheet)
+     (grid-calc-get-cell-value (grid-calc--sheet-model model sheet) ref-str))
     
     ;; Range reference
     (`(RANGE ,start-cell-ref-ast ,end-cell-ref-ast)
@@ -369,7 +407,7 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
   "\\(\\$?\\)\\([A-Za-z]+\\)\\(\\$?\\)\\([0-9]+\\)"
   "Matches a cell reference: column anchor, letters, row anchor, number.")
 
-(defun grid-calc--reference-at (formula pos)
+(defun grid-calc--reference-at (formula pos &optional _continued)
   "Return the reference that starts at POS in FORMULA, or nil.
 The value is (END COL-ANCHOR COL ROW-ANCHOR ROW), with COL zero-based and
 ROW the number written.  The tail of a name and the name of a function
@@ -380,7 +418,7 @@ are not references."
                          (string-match-p "[A-Za-z0-9_.$]"
                                          (substring formula (1- pos) pos))))
                (not (and (< (match-end 0) len)
-                         (string-match-p "[A-Za-z0-9_.(]"
+                         (string-match-p "[A-Za-z0-9_.(!]"
                                          (substring formula (match-end 0)
                                                     (1+ (match-end 0)))))))
       (list (match-end 0)
@@ -398,19 +436,37 @@ A reference off the sheet's top or left edge is #REF!."
       (concat col-anchor (grid-calc-col-number-to-letter col)
               row-anchor (number-to-string row)))))
 
-(defun grid-calc--map-references (formula function)
+(defun grid-calc-sheet-prefix (name)
+  "Return NAME as the sheet prefix of a reference, exclamation mark included.
+A name that is not plain letters, digits and underscores is quoted."
+  (if (string-match-p "\\`[[:alpha:]_][[:alnum:]_.]*\\'" name)
+      (concat name "!")
+    (concat "'" (string-replace "'" "''" name) "'!")))
+
+(defun grid-calc--same-sheet-p (left right)
+  "Return non-nil when LEFT and RIGHT name the same sheet."
+  (and left right (string= (downcase left) (downcase right))))
+
+(defun grid-calc--map-references (formula function &optional rename)
   "Return FORMULA with each reference replaced by what FUNCTION returns.
 FUNCTION is called with the two ends of a range, each a (COL-ANCHOR COL
 ROW-ANCHOR ROW) list, or with one such list and nil for a lone
-reference, and returns the replacement text.  Text inside double quotes
-and anything that is not a formula are returned unchanged."
+reference, and with the name of the sheet the reference is written
+with, or nil.  It returns the replacement text, without the sheet.
+RENAME, when given, is called with that sheet name and returns the name
+to write instead, or nil to keep it.  Text inside double quotes and
+anything that is not a formula are returned unchanged."
   (if (or (not (stringp formula))
           (not (string-prefix-p "=" formula))
           (string-prefix-p "=elisp:" formula))
       formula
     (let ((pos 0) (len (length formula)) (parts nil) (case-fold-search t))
       (while (< pos len)
-        (let ((reference (grid-calc--reference-at formula pos)))
+        (let* ((prefix (and (not (eq (aref formula pos) ?\"))
+                            (grid-parser-sheet-prefix-at formula pos)))
+               (start (if prefix (car prefix) pos))
+               (reference (and (< start len)
+                               (grid-calc--reference-at formula start prefix))))
           (cond
            ;; Quoted text
            ((eq (aref formula pos) ?\")
@@ -420,9 +476,20 @@ and anything that is not a formula are returned unchanged."
            (reference
             (let* ((end (car reference))
                    (other (and (< end len) (eq (aref formula end) ?:)
-                               (grid-calc--reference-at formula (1+ end)))))
-              (push (funcall function (cdr reference) (cdr other)) parts)
+                               (grid-calc--reference-at formula (1+ end) t)))
+                   (sheet (cdr prefix))
+                   (renamed (and sheet rename (funcall rename sheet))))
+              (when prefix
+                (push (if renamed
+                          (grid-calc-sheet-prefix renamed)
+                        (substring formula pos start))
+                      parts))
+              (push (funcall function (cdr reference) (cdr other) sheet) parts)
               (setq pos (if other (car other) end))))
+           ;; A sheet name in front of something that is no reference
+           (prefix
+            (push (substring formula pos start) parts)
+            (setq pos start))
            ;; A name or number: skip it whole so its tail is not read as a
            ;; reference
            ((eq (string-match "[A-Za-z0-9_.$]+" formula pos) pos)
@@ -432,6 +499,13 @@ and anything that is not a formula are returned unchanged."
             (push (substring formula pos (1+ pos)) parts)
             (setq pos (1+ pos))))))
       (apply #'concat (nreverse parts)))))
+
+(defun grid-calc--range-text (start end function)
+  "Return the text of a reference with each end passed through FUNCTION.
+START and END are as `grid-calc--map-references' passes them."
+  (if end
+      (concat (funcall function start) ":" (funcall function end))
+    (funcall function start)))
 
 (defun grid-calc-shift-formula (formula rows cols)
   "Return FORMULA with its relative references moved ROWS down and COLS right.
@@ -447,20 +521,35 @@ anything that is not a formula are returned unchanged."
                           (if (string-empty-p row-anchor) (+ row rows) row)))))))
     (grid-calc--map-references
      formula
-     (lambda (start end)
-       (if end
-           (concat (funcall shift start) ":" (funcall shift end))
-         (funcall shift start))))))
+     (lambda (start end _sheet)
+       (grid-calc--range-text start end shift)))))
 
-(defun grid-calc-restructure-formula (formula axis at delta)
+(defun grid-calc-rename-sheet-in-formula (formula old new)
+  "Return FORMULA with its references into sheet OLD naming NEW instead."
+  (grid-calc--map-references
+   formula
+   (lambda (start end _sheet)
+     (grid-calc--range-text start end #'grid-calc--reference-text))
+   (lambda (sheet)
+     (and (grid-calc--same-sheet-p sheet old) new))))
+
+(defun grid-calc-restructure-formula (formula axis at delta
+                                              &optional home target)
   "Return FORMULA rewritten for a row or column inserted or deleted.
 AXIS is `row' or `col' and AT the zero-based index of the line inserted
 \(DELTA 1) or deleted (DELTA -1).  A reference keeps pointing at the cell
 it pointed at, anchored or not: one at or past an inserted line moves
 on, one past a deleted line moves back.  A reference to a deleted cell
 becomes #REF!; a range that loses a line shrinks, and becomes #REF! only
-when nothing of it is left."
-  (let* ((index (lambda (reference)
+when nothing of it is left.
+
+HOME names the sheet FORMULA is in and TARGET the sheet that changed;
+TARGET defaults to HOME.  Only references into the changed sheet are
+rewritten: those written without a sheet when the formula lives there,
+and those that name it."
+  (let* ((target (or target home))
+         (local (or (null target) (grid-calc--same-sheet-p home target)))
+         (index (lambda (reference)
                   (if (eq axis 'row) (1- (nth 3 reference)) (nth 1 reference))))
          (moved (lambda (reference to)
                   (grid-calc--reference-text
@@ -471,10 +560,12 @@ when nothing of it is left."
                            (nth 2 reference) (nth 3 reference)))))))
     (grid-calc--map-references
      formula
-     (lambda (start end)
+     (lambda (start end sheet)
        (let ((from (funcall index start))
              (to (and end (funcall index end))))
          (cond
+          ((not (if sheet (grid-calc--same-sheet-p sheet target) local))
+           (grid-calc--range-text start end #'grid-calc--reference-text))
           ((> delta 0)
            (let ((new-from (if (>= from at) (1+ from) from)))
              (if end
@@ -507,7 +598,8 @@ when nothing of it is left."
 
 (defun grid-calc-get-range-values (model start-cell-ref-ast end-cell-ref-ast)
   "Retrieves a flat list of computed values from a range."
-  (let* ((start-ref-str (cadr start-cell-ref-ast)) ; Extract "A1" from (CELL-REF "A1")
+  (let* ((model (grid-calc--sheet-model model (nth 2 start-cell-ref-ast)))
+         (start-ref-str (cadr start-cell-ref-ast)) ; Extract "A1" from (CELL-REF "A1")
          (end-ref-str (cadr end-cell-ref-ast))
          (start-ref (grid-calc-parse-cell-ref start-ref-str))
          (end-ref (grid-calc-parse-cell-ref end-ref-str))
@@ -550,7 +642,8 @@ Returns the value at the specified row and column in the range."
            ;; Calculate absolute coordinates from relative 1-based indices
            (target-row (+ start-row row-num -1))
            (target-col (+ start-col col-num -1)))
-      (grid-calc--value model target-row target-col))))
+      (grid-calc--value (grid-calc--sheet-model model (nth 2 (cadr range-ast)))
+                        target-row target-col))))
 
 (defun grid-calc-eval-iferror-function (model args-ast-list)
   "Special evaluator for the IFERROR function.
@@ -616,7 +709,9 @@ condition that evaluates to true. If no conditions are met, raises an error."
            (start-row (plist-get start-coords :row))
            (end-row (plist-get end-coords :row))
            (start-col (plist-get start-coords :col))
-           (target-col (+ start-col col-index-num -1)))
+           (target-col (+ start-col col-index-num -1))
+           (model (grid-calc--sheet-model
+                   model (nth 2 (cadr table-array-ast)))))
 
       (cl-loop for r from start-row to end-row
                do (let ((cell-val (grid-calc--value model r start-col)))

@@ -19,6 +19,32 @@
 (defconst grid-parser-token-type-boolean 'BOOLEAN)
 (defconst grid-parser-token-type-eof 'EOF)
 
+(defconst grid-parser-sheet-prefix-regexp
+  "\\(?:'\\(\\(?:[^']\\|''\\)+\\)'\\|\\([[:alpha:]_][[:alnum:]_.]*\\)\\)!"
+  "Matches the sheet a reference names, up to its exclamation mark.
+Group 1 is a name written in apostrophes, where a doubled apostrophe
+stands for one; group 2 is a name written bare.")
+
+(defconst grid-parser--cells-regexp
+  "\\$?[A-Za-z]+\\$?[0-9]+\\(?::\\$?[A-Za-z]+\\$?[0-9]+\\)?"
+  "Matches a cell or a range of cells.")
+
+(defun grid-parser-sheet-prefix-at (text pos)
+  "Return (END . NAME) for the sheet prefix that starts at POS in TEXT.
+END is the position after the exclamation mark.  Return nil when no
+prefix starts there."
+  (let ((char (aref text pos)))
+    ;; Looking for a match that starts further on would be wasted work.
+    (when (and (or (eq char ?') (eq char ?_)
+                   (eq (get-char-code-property char 'general-category) 'Lo)
+                   (memq (get-char-code-property char 'general-category)
+                         '(Lu Ll Lt Lm)))
+               (eq (string-match grid-parser-sheet-prefix-regexp text pos) pos))
+      (cons (match-end 0)
+            (if (match-beginning 1)
+                (string-replace "''" "'" (match-string 1 text))
+              (match-string 2 text))))))
+
 ;; Helper to create a token
 (defun grid-parser-make-token (type value)
   "Create a token with TYPE and VALUE."
@@ -61,6 +87,17 @@
          ;; Skip whitespace
          ((member char '(?\s ?\t ?\n))
           (setq pos (1+ pos)))
+
+         ;; A reference into another sheet (e.g., Sheet2!A1, 'My Sheet'!A1:B5)
+         ((when-let* ((prefix (grid-parser-sheet-prefix-at formula-str pos)))
+            (when (eq (string-match grid-parser--cells-regexp
+                                    formula-str (car prefix))
+                      (car prefix))
+              (push (list grid-parser-token-type-cell-ref
+                          (upcase (match-string 0 formula-str))
+                          (cdr prefix))
+                    tokens)
+              (setq pos (match-end 0)))))
 
          ;; Numbers (integers and floats)
          ((or (and (>= char ?0) (<= char ?9)) (eq char ?.))
@@ -159,9 +196,11 @@
   "Create a string AST node."
   (list grid-ast-type-string value))
 
-(defun grid-ast-make-cell-ref (ref)
-  "Create a cell reference AST node."
-  (list grid-ast-type-cell-ref ref))
+(defun grid-ast-make-cell-ref (ref &optional sheet)
+  "Create a cell reference AST node for REF, in SHEET when it names one."
+  (if sheet
+      (list grid-ast-type-cell-ref ref sheet)
+    (list grid-ast-type-cell-ref ref)))
 
 (defun grid-ast-make-binary-op (operator left right)
   "Create a binary operation AST node."
@@ -409,15 +448,18 @@ Returns (ast . remaining-tokens)."
      ;; Cell references or ranges
      ((eq (car token) grid-parser-token-type-cell-ref)
       (pop tokens)
-      (let ((ref-str (cadr token)))
+      (let ((ref-str (cadr token))
+            (sheet (caddr token)))
         (if (string-match ":" ref-str)
-            ;; Range reference A1:B5
+            ;; Range reference A1:B5; a sheet applies to both ends
             (cons (list 'RANGE
-                        (grid-ast-make-cell-ref (car (split-string ref-str ":")))
-                        (grid-ast-make-cell-ref (cadr (split-string ref-str ":"))))
+                        (grid-ast-make-cell-ref (car (split-string ref-str ":"))
+                                                sheet)
+                        (grid-ast-make-cell-ref (cadr (split-string ref-str ":"))
+                                                sheet))
                   tokens)
           ;; Single cell reference
-          (cons (grid-ast-make-cell-ref ref-str) tokens))))
+          (cons (grid-ast-make-cell-ref ref-str sheet) tokens))))
 
      ;; Function calls
      ((eq (car token) grid-parser-token-type-function)

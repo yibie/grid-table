@@ -190,6 +190,112 @@
         (should (equal (funcall raw deleted 1 1) "=#REF!*2"))
         (should (equal (funcall raw deleted 1 2) "=SUM(#REF!)"))))))
 
+(ert-deftest grid-table-formula-reads-other-sheets ()
+  (should (equal (grid-parser-parse "Sheet2!A1+1")
+                 '(BINARY-OP + (CELL-REF "A1" "Sheet2") (NUMBER 1))))
+  (should (equal (grid-parser-parse "SUM('My Sheet'!a1:b2)")
+                 '(FUNCTION-CALL "SUM" ((RANGE (CELL-REF "A1" "My Sheet")
+                                               (CELL-REF "B2" "My Sheet"))))))
+  (should (equal (grid-parser-parse "销售!E6*2")
+                 '(BINARY-OP * (CELL-REF "E6" "销售") (NUMBER 2))))
+  (should (equal (grid-parser-parse "'It''s'!$A$1") '(CELL-REF "$A$1" "It's")))
+  (let* ((a (grid-model-create 3 2 '(("x" "y") ("1" "=B!A1+1")
+                                     ("=A2*2" "=VLOOKUP(\"k\",b!A3:B3,2,FALSE)"))))
+         (b (grid-model-create 3 2 '(("10" "=A!A3") ("=SUM(A!A2:A3)" "=Nope!A1")
+                                     ("k" "found"))))
+         (sheets `(("A" . ,a) ("B" . ,b)))
+         (grid-calc-sheets (lambda (name) (cdr (assoc-string name sheets t)))))
+    (grid-table-calc-evaluate-models (list a b))
+    (should (equal (grid-model-get-computed-value a 1 1) 11))
+    (should (equal (grid-model-get-computed-value a 2 1) "found"))
+    ;; B!B1 reads a formula of the other sheet, computed on the way.
+    (should (equal (grid-model-get-computed-value b 0 1) 2))
+    (should (equal (grid-model-get-computed-value b 1 0) 3))
+    (should (equal (grid-model-get-computed-value b 1 1) "#REF!")))
+  ;; Without sheets to look in, the reference has nowhere to go.
+  (let ((alone (grid-model-create 1 1 '(("=Other!A1")))))
+    (should (equal (grid-model-get-computed-value alone 0 0) "#REF!")))
+  ;; A cycle through two sheets is a cycle.
+  (let* ((a (grid-model-create 1 1 '(("=B!A1"))))
+         (b (grid-model-create 1 1 '(("=A!A1"))))
+         (sheets `(("A" . ,a) ("B" . ,b)))
+         (grid-calc-sheets (lambda (name) (cdr (assoc-string name sheets t)))))
+    (grid-table-calc-evaluate-models (list a b))
+    (should (equal (grid-model-get-computed-value a 0 0) "#CYCLE!"))
+    (should (equal (grid-model-get-computed-value b 0 0) "#CYCLE!"))))
+
+(ert-deftest grid-table-formula-rewrites-respect-sheets ()
+  (should (equal (grid-calc-shift-formula
+                  "=Sheet2!A1+'My Sheet'!$B$2+销售!C3:D4" 1 1)
+                 "=Sheet2!B2+'My Sheet'!$B$2+销售!D4:E5"))
+  ;; Only references into the sheet that changed move.
+  (should (equal (grid-calc-restructure-formula "=A3+Sheet2!A3+Data!A3" 'row 1 1)
+                 "=A4+Sheet2!A3+Data!A3"))
+  (should (equal (grid-calc-restructure-formula
+                  "=A3+Sheet2!A3+Data!A3" 'row 1 1 "sheet2")
+                 "=A4+Sheet2!A4+Data!A3"))
+  (should (equal (grid-calc-restructure-formula
+                  "=A3+Sheet2!A3+SUM(Data!A1:A3)" 'row 1 1 "Sheet2" "Data")
+                 "=A3+Sheet2!A3+SUM(Data!A1:A4)"))
+  (should (equal (grid-calc-restructure-formula
+                  "=Data!A2" 'row 1 -1 "Sheet2" "Data")
+                 "=Data!#REF!"))
+  (should (equal (grid-calc-rename-sheet-in-formula
+                  "=Sheet2!A1+sheet2!B2:C3+Other!A1+\"Sheet2!A1\""
+                  "Sheet2" "My Data")
+                 "='My Data'!A1+'My Data'!B2:C3+Other!A1+\"Sheet2!A1\""))
+  (should (equal (grid-calc-rename-sheet-in-formula
+                  "='My Data'!A1" "My Data" "Plain")
+                 "=Plain!A1")))
+
+(ert-deftest grid-table-workbook-keeps-sheets-together ()
+  (let* ((data (make-default-data-source
+                (list "n" "v")
+                '(("n" "v") ("1" "=Totals!A2+1") ("2" "5") ("3" "6")) "Data"))
+         (workbook (grid-workbook-ensure data))
+         (totals (grid-workbook-new-sheet workbook "Totals"))
+         (file (make-temp-file "grid-workbook-" nil ".grid")))
+    (unwind-protect
+        (progn
+          (should (equal (grid-workbook-sheet-names workbook)
+                         '("Data" "Totals")))
+          (grid-set-raw-value-at totals 1 0 "=SUM(Data!A2:A4)")
+          (should (equal (grid-get-computed-value-at totals 1 0) 6))
+          ;; Each sheet reads the other; an edit in one reaches both.
+          (should (equal (grid-get-computed-value-at data 1 1) 7))
+          (grid-set-raw-value-at data 2 0 "20")
+          (should (equal (grid-get-computed-value-at totals 1 0) 24))
+          (should (equal (grid-get-computed-value-at data 1 1) 25))
+          (funcall (gethash :delete-row data) data 2)
+          (should (equal (grid-get-raw-value-at totals 1 0)
+                         "=SUM(Data!A2:A3)"))
+          (should (equal (grid-get-computed-value-at totals 1 0) 21))
+          (should (equal (grid-workbook-name-problem workbook "data")
+                         "There is already a sheet called data"))
+          (should (grid-workbook-name-problem workbook "a:b"))
+          (should (equal (grid-workbook-fresh-name workbook) "Sheet1"))
+          (should (equal (grid-workbook-fresh-name workbook "Data") "Sheet1"))
+          ;; Several sheets are saved together and come back together.
+          (let ((inhibit-message t))
+            (grid-table-persistence--save-to-file totals file))
+          (let* ((back (grid-table-persistence-create-data-source-from-file
+                        file))
+                 (sheets (grid-workbook-sheets (grid-workbook-of back))))
+            (should (equal (grid-workbook-sheet-name back) "Totals"))
+            (should (equal (mapcar #'grid-workbook-sheet-name sheets)
+                           '("Data" "Totals")))
+            (should (equal (gethash :title (car sheets)) "Data"))
+            (should (equal (grid-get-computed-value-at back 1 0) 21))
+            (should (equal (grid-get-computed-value-at (car sheets) 1 1) 22)))
+          ;; One sheet alone is saved as it always was.
+          (grid-workbook-remove-sheet workbook data)
+          (should (equal (grid-get-computed-value-at totals 1 0) "#REF!"))
+          (should-not
+           (eq (car-safe (grid-table-persistence--file-data totals))
+               'grid-table-file))
+          (should-error (grid-workbook-remove-sheet workbook totals)))
+      (delete-file file))))
+
 (ert-deftest grid-table-formula-shift-moves-relative-references ()
   (should (equal (grid-calc-shift-formula "=B2+C2" 1 0) "=B3+C3"))
   (should (equal (grid-calc-shift-formula "=B2+C2" 0 2) "=D2+E2"))

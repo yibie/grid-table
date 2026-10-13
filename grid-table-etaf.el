@@ -523,6 +523,14 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-M-_" grid-table-etaf-redo "Redo")
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
+    ("C-<next>" grid-table-sheet-next "Next sheet")
+    ("C-<prior>" grid-table-sheet-previous "Previous sheet")
+    ("C-c w n" grid-table-sheet-new "New sheet")
+    ("C-c w r" grid-table-sheet-rename "Rename sheet")
+    ("C-c w d" grid-table-sheet-delete "Delete sheet")
+    ("C-c w s" grid-table-sheet-select "Go to sheet")
+    ("C-c w <" grid-table-sheet-move-left "Move sheet left")
+    ("C-c w >" grid-table-sheet-move-right "Move sheet right")
     ("C-c / f" grid-table-etaf-filter-column "Filter column")
     ("C-c / v" grid-table-etaf-filter-by-cell "Filter by this value")
     ("C-c / c" grid-table-etaf-clear-column-filter "Clear column filter")
@@ -809,18 +817,65 @@ Rows hidden by a filter are left out of the figures."
                 (grid-table-etaf--format-number sum)
                 (grid-table-etaf--format-number (/ (float sum) numbers)))))))
 
-(defun grid-table-etaf--status-node (state source range)
-  "Return the status bar View node of STATE for SOURCE and the selected RANGE."
-  (etaf-node
-   'box
-   (list :key 'status
-         :height '(lh 1)
-         :padding '((lh 0) (ch 1))
-         :wrap-mode 'none
-         :overflow 'hidden
-         :color (grid-table-etaf--face-color 'shadow :foreground))
-   (list (etaf-node 'text nil
-                    (list (grid-table-etaf--status-text state source range))))))
+(defun grid-table-etaf--tab-node (buffer sheet current line)
+  "Return the tab of SHEET for the sheet bar of BUFFER.
+CURRENT is non-nil for the sheet being shown; LINE is the grid line
+border.  Pressing the tab shows its sheet."
+  (let ((face (if current
+                  'grid-table-etaf-selection-face
+                'grid-table-etaf-header-face)))
+    (etaf-node
+     'box
+     (list :key (grid-workbook-sheet-name sheet)
+           :padding '((lh 0) (ch 1))
+           :wrap-mode 'none
+           :font-weight (and current 'bold)
+           :color (grid-table-etaf--face-color face :foreground)
+           :background-color (grid-table-etaf--face-color face :background)
+           :border-right line
+           :on-drag
+           (lambda (gesture)
+             (when (and (buffer-live-p buffer)
+                        (eq (plist-get gesture :phase) 'start))
+               ;; Showing a sheet mounts the buffer anew, which must not
+               ;; happen while the pointer is being handled.
+               (run-at-time 0 nil
+                            (lambda ()
+                              (when (buffer-live-p buffer)
+                                (with-current-buffer buffer
+                                  (grid-table-switch-to-sheet sheet))))))))
+     (list (etaf-node 'text nil (list (grid-workbook-sheet-name sheet)))))))
+
+(defun grid-table-etaf--status-node (state source range &optional line)
+  "Return the status bar View node of STATE for SOURCE and the selected RANGE.
+When SOURCE is one of several sheets their tabs come first, separated by
+LINE, the grid line border."
+  (let* ((sheets (grid-table-sheets))
+         (status
+          (etaf-node
+           'box
+           (list :key 'status
+                 :flex-grow 1
+                 :height '(lh 1)
+                 :padding '((lh 0) (ch 1))
+                 :wrap-mode 'none
+                 :overflow 'hidden
+                 :color (grid-table-etaf--face-color 'shadow :foreground))
+           (list (etaf-node
+                  'text nil
+                  (list (grid-table-etaf--status-text state source range)))))))
+    (if (null (cdr sheets))
+        status
+      (etaf-node
+       'flex
+       (list :key 'sheet-bar :height '(lh 1) :overflow 'hidden)
+       (append
+        (mapcar (lambda (sheet)
+                  (grid-table-etaf--tab-node
+                   (grid-table-etaf--state-buffer state) sheet
+                   (eq sheet source) line))
+                sheets)
+        (list status))))))
 
 (defun grid-table-etaf--render (state)
   "Return the View of STATE's visible window."
@@ -944,7 +999,8 @@ Rows hidden by a filter are left out of the figures."
              (nreverse children))
             (grid-table-etaf--status-node
              state source
-             (and ranged (list sel-top sel-left sel-bottom sel-right))))))))
+             (and ranged (list sel-top sel-left sel-bottom sel-right))
+             line))))))
 
 (etaf-define-component grid-table-etaf-sheet (&key state)
   :render (grid-table-etaf--render (etaf-current-prop 'state)))
@@ -1509,6 +1565,7 @@ shifts."
        (let ((model (if forward new old))
              (cursor (etaf-value (grid-table-etaf--state-cursor state))))
          (puthash :model model source)
+         (grid-workbook-model-restored source (if forward old new) model)
          ;; Dragged widths belong to the columns of the model they were set on.
          (grid-table-etaf--forget-moved-filters
           state (if forward old new) model)
@@ -1946,6 +2003,9 @@ cursor moves to: display column is model column plus one."
         (allow-elisp grid-table-allow-elisp)
         (buffer (current-buffer))
         (runtime (grid-table-etaf--runtime)))
+    ;; An edit in progress belongs to the sheet being left.
+    (when (and runtime grid-table-etaf--state)
+      (grid-table-etaf--finish-edit grid-table-etaf--state))
     ;; Changing the major mode drops the Runtime's buffer-local hooks.
     (when runtime (etaf-unmount runtime))
     (grid-table-etaf-mode)
@@ -1954,14 +2014,25 @@ cursor moves to: display column is model column plus one."
           grid-table--title (or title old-title)
           grid-table-allow-elisp allow-elisp)
     (let* ((start (cons 0 0))
-           (state (grid-table-etaf--state-create
-                   :buffer buffer
-                   :top (etaf-ref 0) :left (etaf-ref 0)
-                   :cursor (etaf-ref start) :anchor (etaf-ref start)
-                   :tick (etaf-ref 0) :editing (etaf-ref nil)
-                   :widths (grid-table-etaf--compute-widths data-source)
-                   :model (gethash :model data-source))))
+           ;; A sheet shown here before comes back as it was left: cursor,
+           ;; scroll position, filters and undo history.
+           (kept (gethash :etaf-state data-source))
+           (state (if (and kept (eq (grid-table-etaf--state-buffer kept) buffer))
+                      kept
+                    (grid-table-etaf--state-create
+                     :buffer buffer
+                     :top (etaf-ref 0) :left (etaf-ref 0)
+                     :cursor (etaf-ref start) :anchor (etaf-ref start)
+                     :tick (etaf-ref 0) :editing (etaf-ref nil)
+                     :widths (grid-table-etaf--compute-widths data-source)
+                     :model (gethash :model data-source)))))
       (setq grid-table-etaf--state state)
+      (puthash :etaf-state state data-source)
+      (when (eq state kept)
+        ;; Other sheets may have changed what this one shows.
+        (grid-table-etaf--track-model state)
+        (grid-table-etaf--apply-filters state)
+        (grid-table-etaf--fit-widths state))
       (etaf-mount buffer
                   (etaf-node 'grid-table-etaf-sheet (list :state state) nil)
                   grid-table-etaf-mount-options)

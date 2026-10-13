@@ -2,9 +2,9 @@
 
 ;;; Commentary:
 
-;; This plugin opens one sheet of an xlsx workbook as a grid and writes a
-;; grid back as a sheet of a workbook.  Values, formulas, merges, cell
-;; formats and conditional formats travel both ways.
+;; This plugin opens an xlsx workbook as a grid with a sheet for each of
+;; its sheets, and writes a grid back as a workbook.  Values, formulas,
+;; merges, cell formats and conditional formats travel both ways.
 ;;
 ;; The file format is handled by a dynamic module written in Rust, whose
 ;; source is in plugins/xlsx/.  A prebuilt grid-table-xlsx-module.dylib
@@ -23,6 +23,7 @@
 (declare-function grid-table-xlsx-module-sheets "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-read "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-write "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-prune "grid-table-xlsx-module")
 
 (defcustom grid-table-xlsx-module-file nil
   "File of the xlsx dynamic module, or nil to look in the usual places.
@@ -284,25 +285,32 @@ the header row."
         source))))
 
 ;;;###autoload
+(defun grid-table-xlsx-create-workbook (file)
+  "Return a workbook holding every sheet of the xlsx FILE."
+  (grid-workbook-create
+   (mapcar (lambda (name)
+             (cons name (grid-table-xlsx-create-data-source file name)))
+           (or (grid-table-xlsx-sheet-names file)
+               (error "No sheet in %s" file)))))
+
+;;;###autoload
 (defun grid-table-xlsx-find-file (file &optional sheet)
-  "Open sheet SHEET of the xlsx FILE as a grid.
-Interactively, ask which sheet when the workbook has several.  The grid
-is not tied to the file: `grid-table-xlsx-export' writes it back."
-  (interactive
-   (let* ((file (read-file-name "Find xlsx file: " nil nil t))
-          (names (grid-table-xlsx-sheet-names file)))
-     (list file
-           (if (cdr names)
-               (completing-read "Sheet: " names nil t nil nil (car names))
-             (car names)))))
-  (let* ((source (grid-table-xlsx-create-data-source file sheet))
-         (sheet (gethash :xlsx-sheet source))
-         (skipped (gethash :xlsx-skipped-conditionals source))
-         (buffer (generate-new-buffer
-                  (format "%s[%s]" (file-name-nondirectory file) sheet))))
+  "Open the xlsx FILE as a grid, showing its sheet SHEET.
+Every sheet of the workbook is opened; SHEET defaults to the first.  The
+grid is not tied to the file: `grid-table-xlsx-export' writes it back."
+  (interactive (list (read-file-name "Find xlsx file: " nil nil t)))
+  (let* ((workbook (grid-table-xlsx-create-workbook file))
+         (sheets (grid-workbook-sheets workbook))
+         (source (or (and sheet (grid-workbook-sheet workbook sheet))
+                     (car sheets)))
+         (skipped (apply #'+ (mapcar (lambda (sheet)
+                                       (gethash :xlsx-skipped-conditionals
+                                                sheet))
+                                     sheets)))
+         (buffer (generate-new-buffer (file-name-nondirectory file))))
     (with-current-buffer buffer
       (grid-table--enter-classic-mode)
-      (setq-local grid-table--title sheet)
+      (setq-local grid-table--title (gethash :title source))
       (grid-table--show-grid-in-current-buffer source))
     (switch-to-buffer buffer)
     (when (> skipped 0)
@@ -444,11 +452,53 @@ added.  SHEET defaults to the sheet SOURCE came from, else its title."
     (puthash :xlsx-sheet sheet source)
     sheet))
 
+(defun grid-table-xlsx-write-workbook (workbook file)
+  "Write every sheet of WORKBOOK to the xlsx FILE.
+When FILE exists, sheets of it with other names are kept, unless
+WORKBOOK was opened from FILE: then FILE ends up with WORKBOOK's sheets
+and no others."
+  (grid-table-xlsx--ensure-module)
+  (setq file (expand-file-name file))
+  (let* ((sheets (grid-workbook-sheets workbook))
+         ;; Sheets added since have no file yet; one that came from FILE
+         ;; says the workbook did.
+         (own (cl-some (lambda (sheet) (equal (gethash :xlsx-file sheet) file))
+                       sheets))
+         ;; Each sheet is written from the file the one before it produced,
+         ;; into another, and the last is renamed over FILE.
+         (written (and (file-exists-p file) file))
+         (spare (list (make-temp-name (concat file ".tmp"))
+                      (make-temp-name (concat file ".tmp")))))
+    (unwind-protect
+        (progn
+          (dolist (sheet sheets)
+            (let ((target (car spare)))
+              (grid-table-xlsx-module-write
+               target written (grid-workbook-sheet-name sheet)
+               (grid-table-xlsx--payload sheet))
+              (setq written target
+                    spare (reverse spare))))
+          (when own
+            (grid-table-xlsx-module-prune
+             written
+             (mapconcat #'grid-workbook-sheet-name sheets
+                        grid-table-xlsx--record)))
+          (rename-file written file t))
+      (dolist (temporary spare)
+        (when (file-exists-p temporary)
+          (delete-file temporary))))
+    (dolist (sheet sheets)
+      (puthash :xlsx-file file sheet)
+      (puthash :xlsx-sheet (grid-workbook-sheet-name sheet) sheet))
+    (length sheets)))
+
 ;;;###autoload
 (defun grid-table-xlsx-export (file &optional sheet)
-  "Write the current grid as sheet SHEET of the xlsx FILE.
-The file and sheet the grid was opened from are the defaults.  An
-existing workbook keeps its other sheets."
+  "Write the current grid to the xlsx FILE.
+A grid with several sheets is written whole.  A grid that stands alone
+becomes the sheet SHEET of FILE.  The file the grid was opened from is
+the default, and an existing workbook keeps the sheets the grid does not
+replace."
   (interactive
    (let* ((source (or grid-table--data-source
                       (user-error "No grid in this buffer")))
@@ -458,31 +508,47 @@ existing workbook keeps its other sheets."
                                  (and origin (file-name-directory origin))
                                  origin nil
                                  (and origin
-                                      (file-name-nondirectory origin)))))
-          (default (grid-table-xlsx--sheet-name
-                    (or (gethash :xlsx-sheet source) grid-table--title)))
-          (sheet (read-string (format "Sheet (default %s): " default)
-                              nil nil default)))
-     (list file sheet)))
+                                      (file-name-nondirectory origin))))))
+     (list file
+           (unless (cdr (grid-table-sheets))
+             (let ((default (grid-table-xlsx--sheet-name
+                             (or (grid-workbook-sheet-name source)
+                                 (gethash :xlsx-sheet source)
+                                 grid-table--title))))
+               (read-string (format "Sheet (default %s): " default)
+                            nil nil default))))))
   (unless grid-table--data-source
     (user-error "No grid in this buffer"))
   (unless (string-suffix-p ".xlsx" file t)
     (setq file (concat file ".xlsx")))
-  (let ((sheet (grid-table-xlsx--sheet-name
-                (or sheet (gethash :xlsx-sheet grid-table--data-source)
-                    grid-table--title))))
+  (setq file (expand-file-name file))
+  (let* ((source grid-table--data-source)
+         (sheets (grid-table-sheets))
+         (names (if (cdr sheets)
+                    (mapcar #'grid-workbook-sheet-name sheets)
+                  (list (grid-table-xlsx--sheet-name
+                         (or sheet (grid-workbook-sheet-name source)
+                             (gethash :xlsx-sheet source)
+                             grid-table--title)))))
+         (origin (equal file (gethash :xlsx-file source))))
     (when (and (called-interactively-p 'interactive)
                (file-exists-p file)
-               (not (and (equal (expand-file-name file)
-                                (gethash :xlsx-file grid-table--data-source))
-                         (equal sheet (gethash :xlsx-sheet
-                                               grid-table--data-source))))
-               (member sheet (grid-table-xlsx-sheet-names file))
-               (not (y-or-n-p (format "Replace sheet %s of %s? " sheet
+               (not origin)
+               (cl-intersection names (grid-table-xlsx-sheet-names file)
+                                :test #'string=)
+               (not (y-or-n-p (format "Replace sheet%s %s of %s? "
+                                      (if (cdr names) "s" "")
+                                      (string-join names ", ")
                                       (file-name-nondirectory file)))))
       (user-error "Export canceled"))
-    (grid-table-xlsx-write-data-source grid-table--data-source file sheet)
-    (message "Sheet %s written to %s" sheet (abbreviate-file-name file))))
+    (if (cdr sheets)
+        (grid-table-xlsx-write-workbook (grid-workbook-of source) file)
+      (grid-table-xlsx-write-data-source source file (car names)))
+    (message "%s written to %s"
+             (if (cdr names)
+                 (format "%d sheets" (length names))
+               (format "Sheet %s" (car names)))
+             (abbreviate-file-name file))))
 
 ;;;----------------------------------------------------------------------
 ;;; Plugin Registration

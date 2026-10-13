@@ -335,6 +335,28 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     Ok(())
 }
 
+/// Remove from the xlsx file PATH every sheet not named in NAMES, a list
+/// of names separated by U+001E.  At least one sheet is always kept.
+#[defun]
+fn prune(path: String, names: String) -> Result<()> {
+    let keep: Vec<&str> = names.split(RECORD).collect();
+    let mut book = reader::xlsx::read(Path::new(&path)).map_err(fail)?;
+    let present: Vec<String> = book
+        .sheet_collection()
+        .iter()
+        .map(|sheet| sheet.name().to_string())
+        .collect();
+    let mut left = present.len();
+    for name in present {
+        if left > 1 && !keep.contains(&name.as_str()) {
+            book.remove_sheet_by_name(&name).map_err(fail)?;
+            left -= 1;
+        }
+    }
+    writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
+    Ok(())
+}
+
 /// Write PAYLOAD as sheet SHEET of the xlsx file PATH.
 /// With BASE, an existing xlsx file, the result is that workbook with
 /// SHEET replaced or added and its other sheets kept.  PAYLOAD is records

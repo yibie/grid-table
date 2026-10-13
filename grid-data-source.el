@@ -144,7 +144,262 @@ TITLE is an optional string for the grid title."
     (puthash :model model source)
     (puthash :headers headers source)
     (puthash :title title source)
+    (dolist (key grid-workbook--changing-keys)
+      (grid-workbook--wrap source key))
     source))
+
+;;;----------------------------------------------------------------------
+;;; Workbooks
+;;;----------------------------------------------------------------------
+
+;; A workbook keeps several default data sources together as sheets, so
+;; that a formula in one can read another by name.  Each sheet knows its
+;; workbook (:workbook) and its name (:sheet-name).  A data source with
+;; no workbook stands alone, as before.
+
+(cl-defstruct (grid-workbook (:constructor grid-workbook--create))
+  "Sheets kept together: SHEETS is the list of their data sources, in order."
+  sheets)
+
+(defconst grid-workbook--changing-keys
+  '(:set-raw-value-at :merge-cells :unmerge-cell :sort-by-column
+    :add-row :delete-row :add-column :delete-column)
+  "Data source functions after which a workbook recalculates.")
+
+(defvar grid-workbook--rewrites (make-hash-table :test 'eq :weakness 'key)
+  "Formulas rewritten in other sheets by a structural change.
+Maps the model the change produced to (SOURCE ROW COL OLD NEW) entries,
+so that undoing the change can put the formulas back.")
+
+(defun grid-workbook-of (source)
+  "Return the workbook the data source SOURCE is a sheet of, or nil."
+  (gethash :workbook source))
+
+(defun grid-workbook-sheet-name (source)
+  "Return the name SOURCE has as a sheet, or nil."
+  (gethash :sheet-name source))
+
+(defun grid-workbook-sheet-names (workbook)
+  "Return the names of the sheets of WORKBOOK, in order."
+  (mapcar #'grid-workbook-sheet-name (grid-workbook-sheets workbook)))
+
+(defun grid-workbook-sheet (workbook name)
+  "Return the sheet of WORKBOOK called NAME, ignoring case, or nil."
+  (cl-find-if (lambda (source)
+                (grid-calc--same-sheet-p (grid-workbook-sheet-name source) name))
+              (grid-workbook-sheets workbook)))
+
+(defun grid-workbook-name-problem (workbook name &optional except)
+  "Return why NAME cannot name a sheet of WORKBOOK, or nil when it can.
+EXCEPT is a sheet allowed to have that name already."
+  (cond
+   ((or (not (stringp name)) (string-empty-p (string-trim name)))
+    "A sheet name cannot be empty")
+   ((string-match-p "[][:*?/\\!]" name)
+    "A sheet name cannot contain any of [ ] : * ? / \\ !")
+   ((or (string-prefix-p "'" name) (string-suffix-p "'" name))
+    "A sheet name cannot begin or end with an apostrophe")
+   ((> (length name) 31) "A sheet name cannot be longer than 31 characters")
+   ((let ((holder (and workbook (grid-workbook-sheet workbook name))))
+      (and holder (not (eq holder except))))
+    (format "There is already a sheet called %s" name))))
+
+(defun grid-workbook-fresh-name (workbook &optional wanted)
+  "Return a name no sheet of WORKBOOK has: WANTED, or the next SheetN."
+  (let ((wanted (and wanted
+                     (string-trim
+                      (replace-regexp-in-string "[][:*?/\\!']" " " wanted)))))
+    (when (and wanted (> (length wanted) 31))
+      (setq wanted (substring wanted 0 31)))
+    (if (and wanted (not (grid-workbook-name-problem workbook wanted)))
+        wanted
+      (let ((number 1))
+        (while (and workbook
+                    (grid-workbook-sheet workbook (format "Sheet%d" number)))
+          (setq number (1+ number)))
+        (format "Sheet%d" number)))))
+
+(defun grid-workbook--models (workbook)
+  "Return the models of the sheets of WORKBOOK."
+  (delq nil (mapcar (lambda (source) (gethash :model source))
+                    (grid-workbook-sheets workbook))))
+
+(defun grid-workbook--resolver (workbook)
+  "Return the function that finds the model of a sheet of WORKBOOK by name."
+  (lambda (name)
+    (when-let* ((source (grid-workbook-sheet workbook name)))
+      (gethash :model source))))
+
+(defun grid-workbook-recalculate (workbook)
+  "Recalculate every sheet of WORKBOOK, each reading the others' new values."
+  (let ((grid-calc-sheets (grid-workbook--resolver workbook))
+        (grid-calc-defer nil))
+    (grid-table-calc-evaluate-models (grid-workbook--models workbook))))
+
+(defun grid-workbook-create (sheets)
+  "Return a workbook of SHEETS, a list of (NAME . SOURCE) in order."
+  (let ((workbook (grid-workbook--create)))
+    (pcase-dolist (`(,name . ,source) sheets)
+      (grid-workbook-add-sheet workbook source name))
+    (grid-workbook-recalculate workbook)
+    workbook))
+
+(defun grid-workbook-ensure (source)
+  "Return the workbook of SOURCE, making it the only sheet of a new one.
+Its name is then its title when that can name a sheet, else Sheet1."
+  (or (grid-workbook-of source)
+      (grid-workbook-create
+       (list (cons (grid-workbook-fresh-name nil (gethash :title source))
+                   source)))))
+
+(defun grid-workbook-add-sheet (workbook source name &optional position)
+  "Add SOURCE to WORKBOOK as the sheet NAME and return SOURCE.
+POSITION is the index it takes; it goes last by default."
+  (when-let* ((problem (grid-workbook-name-problem workbook name)))
+    (error "%s" problem))
+  (puthash :workbook workbook source)
+  (puthash :sheet-name name source)
+  (let ((sheets (grid-workbook-sheets workbook)))
+    (setf (grid-workbook-sheets workbook)
+          (if (and position (< -1 position (length sheets)))
+              (append (cl-subseq sheets 0 position) (list source)
+                      (nthcdr position sheets))
+            (append sheets (list source)))))
+  source)
+
+(defun grid-workbook-new-sheet (workbook &optional name position)
+  "Add an empty sheet called NAME to WORKBOOK and return its data source."
+  (let ((name (or name (grid-workbook-fresh-name workbook)))
+        (headers (list "" "" "" "" "")))
+    (prog1 (grid-workbook-add-sheet
+            workbook
+            (make-default-data-source
+             headers
+             (cl-loop repeat 10 collect (make-list (length headers) "")))
+            name position)
+      ;; References to a sheet of that name were waiting for it.
+      (grid-workbook-recalculate workbook))))
+
+(defun grid-workbook-remove-sheet (workbook source)
+  "Take SOURCE out of WORKBOOK.  References into it become #REF!."
+  (when (null (cdr (grid-workbook-sheets workbook)))
+    (error "A workbook keeps at least one sheet"))
+  (setf (grid-workbook-sheets workbook)
+        (delq source (grid-workbook-sheets workbook)))
+  (remhash :workbook source)
+  (grid-workbook-recalculate workbook))
+
+(defun grid-workbook-move-sheet (workbook source delta)
+  "Move SOURCE by DELTA places among the sheets of WORKBOOK."
+  (let* ((sheets (delq source (copy-sequence (grid-workbook-sheets workbook))))
+         (index (cl-position source (grid-workbook-sheets workbook)))
+         (target (max 0 (min (length sheets) (+ index delta)))))
+    (setf (grid-workbook-sheets workbook)
+          (append (cl-subseq sheets 0 target) (list source)
+                  (nthcdr target sheets)))))
+
+(defun grid-workbook--rewrite-formulas (workbook function &optional except)
+  "Pass every formula of WORKBOOK's sheets through FUNCTION.
+FUNCTION is called with the formula and the name of its sheet, and
+returns the formula to store.  The sheet EXCEPT is left alone.  Return
+the (SOURCE ROW COL OLD NEW) entries of the formulas that changed."
+  (let (changes)
+    (dolist (source (grid-workbook-sheets workbook))
+      (unless (eq source except)
+        (let* ((model (gethash :model source))
+               (cols (grid-data-model-cols model))
+               (cells (grid-data-model-cells model))
+               (name (grid-workbook-sheet-name source)))
+          (dotimes (index (length cells))
+            (let* ((cell (aref cells index))
+                   (old (grid-cell-raw-input cell)))
+              ;; Only a formula that names a sheet can be affected.
+              (when (and (stringp old) (string-prefix-p "=" old)
+                         (string-search "!" old))
+                (let ((new (funcall function old name)))
+                  (unless (equal old new)
+                    (set-grid-cell-raw-input cell new)
+                    (push (list source (/ index cols) (% index cols) old new)
+                          changes)))))))))
+    (nreverse changes)))
+
+(defun grid-workbook-rename-sheet (workbook source name)
+  "Call the sheet SOURCE of WORKBOOK NAME, in the formulas that read it too."
+  (when-let* ((problem (grid-workbook-name-problem workbook name source)))
+    (error "%s" problem))
+  (let ((old (grid-workbook-sheet-name source)))
+    (puthash :sheet-name name source)
+    (grid-workbook--rewrite-formulas
+     workbook
+     (lambda (formula _sheet)
+       (grid-calc-rename-sheet-in-formula formula old name)))
+    (grid-workbook-recalculate workbook)))
+
+(defun grid-workbook--line-change (key args old-model)
+  "Return (AXIS AT DELTA) for the line that KEY, called with ARGS, moved.
+OLD-MODEL is the model before the change.  Return nil when no cell
+moved, as when a line is added at the end."
+  (let ((index (car args))
+        (rows (grid-data-model-rows old-model))
+        (cols (grid-data-model-cols old-model)))
+    (pcase key
+      ;; A row is counted from the first row under the header row.
+      (:add-row (and index (< -1 index (1- rows)) (list 'row (1+ index) 1)))
+      (:delete-row (and index (list 'row (1+ index) -1)))
+      (:add-column (and index (< -1 index cols) (list 'col index 1)))
+      (:delete-column (and index (list 'col index -1))))))
+
+(defun grid-workbook--changed (workbook source key args old-model)
+  "Bring WORKBOOK up to date after KEY, called with ARGS, changed SOURCE.
+The other sheets' references into SOURCE follow a line that moved, and
+every sheet is recalculated."
+  (let ((model (gethash :model source))
+        (change (and old-model (grid-workbook--line-change key args old-model)))
+        (name (grid-workbook-sheet-name source)))
+    (when (and change (not (eq model old-model)))
+      (when-let* ((changes
+                   (grid-workbook--rewrite-formulas
+                    workbook
+                    (lambda (formula home)
+                      (grid-calc-restructure-formula
+                       formula (nth 0 change) (nth 1 change) (nth 2 change)
+                       home name))
+                    source)))
+        (puthash model changes grid-workbook--rewrites)))
+    (grid-workbook-recalculate workbook)))
+
+(defun grid-workbook-model-restored (source from to)
+  "Bring SOURCE's workbook up to date after its model went from FROM to TO.
+That is what undoing or redoing a structural change does.  Formulas the
+change rewrote in other sheets go back with it."
+  (when-let* ((workbook (grid-workbook-of source)))
+    (pcase-dolist (`(,sheet ,row ,col ,old ,_new)
+                   (gethash from grid-workbook--rewrites))
+      (when (memq sheet (grid-workbook-sheets workbook))
+        (set-grid-cell-raw-input
+         (grid-model-get-cell (gethash :model sheet) row col) old)))
+    (pcase-dolist (`(,sheet ,row ,col ,_old ,new)
+                   (gethash to grid-workbook--rewrites))
+      (when (memq sheet (grid-workbook-sheets workbook))
+        (set-grid-cell-raw-input
+         (grid-model-get-cell (gethash :model sheet) row col) new)))
+    (grid-workbook-recalculate workbook)))
+
+(defun grid-workbook--wrap (source key)
+  "Make the function KEY of SOURCE keep its workbook up to date."
+  (when-let* ((function (gethash key source)))
+    (puthash
+     key
+     (lambda (s &rest args)
+       (let ((workbook (grid-workbook-of s)))
+         (if (null workbook)
+             (apply function s args)
+           (let ((old-model (gethash :model s)))
+             (prog1 (let ((grid-calc-defer t)
+                          (grid-calc-current-sheet (grid-workbook-sheet-name s)))
+                      (apply function s args))
+               (grid-workbook--changed workbook s key args old-model))))))
+     source)))
 
 (provide 'grid-data-source)
 

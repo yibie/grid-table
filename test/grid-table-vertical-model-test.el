@@ -274,7 +274,8 @@
   ;; Exercises the real loader's version gate
   ;; (grid-table-persistence.el: `memq '(2 3 4)') against actual files,
   ;; unlike the inline dispatch snapshots elsewhere in this suite.
-  (dolist (case '((5 . grid-table-persistence-rejects-unsupported-version-in-real-file)
+  ;; Version 5 holds several sheets; 6 is the first the loader does not know.
+  (dolist (case '((6 . grid-table-persistence-rejects-unsupported-version-in-real-file)
                   (missing . grid-table-persistence-rejects-unsupported-version-in-real-file)))
     (let ((file (make-temp-file "grid-version-" nil ".grid"))
           (version (car case)))

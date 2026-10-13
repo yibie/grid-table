@@ -522,7 +522,8 @@ Returns a cons cell: (HEADERS . LIST-OF-LISTS-OF-RAW-VALUES)."
 AXIS, AT and DELTA are as for `grid-calc-restructure-formula'."
   (mapcar (lambda (row)
             (mapcar (lambda (value)
-                      (grid-calc-restructure-formula value axis at delta))
+                      (grid-calc-restructure-formula
+                       value axis at delta grid-calc-current-sheet))
                     row))
           raw-rows))
 

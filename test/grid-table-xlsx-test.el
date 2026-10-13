@@ -205,6 +205,45 @@
     (should (equal (grid-table-xlsx-sheet-names file)
                    '("销售" "Sheet2" "Extra  1 2")))))
 
+(ert-deftest grid-table-xlsx-test-whole-workbook ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (copy-file grid-table-xlsx-test--fixture file)
+    (let* ((workbook (grid-table-xlsx-create-workbook file))
+           (sales (grid-workbook-sheet workbook "销售"))
+           (second (grid-workbook-sheet workbook "Sheet2")))
+      (should (equal (grid-workbook-sheet-names workbook) '("销售" "Sheet2")))
+      ;; The formula that reads the other sheet has a value now.
+      (should (equal (grid-get-raw-value-at second 0 0) "=销售!E6*2"))
+      (should (equal (grid-get-computed-value-at second 0 0) 112.5))
+      (grid-set-raw-value-at sales 2 2 "30")
+      (should (equal (grid-get-computed-value-at second 0 0) 247.5))
+      ;; A renamed sheet replaces the one it was, and a new one is added.
+      (grid-workbook-rename-sheet workbook second "Summary")
+      (grid-set-raw-value-at (grid-workbook-new-sheet workbook "My Notes")
+                             0 0 "=Summary!A1+'My Notes'!B1")
+      (should (= (grid-table-xlsx-write-workbook workbook file) 3)))
+    (should (equal (grid-table-xlsx-sheet-names file)
+                   '("销售" "Summary" "My Notes")))
+    (let* ((workbook (grid-table-xlsx-create-workbook file))
+           (summary (grid-workbook-sheet workbook "Summary"))
+           (notes (grid-workbook-sheet workbook "My Notes")))
+      (should (equal (grid-get-computed-value-at summary 0 0) 247.5))
+      (should (equal (grid-get-raw-value-at notes 0 0)
+                     "=Summary!A1+'My Notes'!B1"))
+      (should (equal (grid-get-computed-value-at notes 0 0) 247.5))
+      (should (equal (grid-model-get-merges
+                      (gethash :model (grid-workbook-sheet workbook "销售")))
+                     '((6 1 7 3)))))
+    ;; Written into a workbook it did not come from, a grid leaves that
+    ;; workbook's other sheets alone.
+    (grid-table-xlsx-test--with-file other
+      (copy-file grid-table-xlsx-test--fixture other)
+      (grid-table-xlsx-write-workbook (grid-table-xlsx-create-workbook file)
+                                      other)
+      (should (equal (grid-table-xlsx-sheet-names other)
+                     '("销售" "Sheet2" "Summary" "My Notes"))))))
+
 (ert-deftest grid-table-xlsx-test-export-command ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file
