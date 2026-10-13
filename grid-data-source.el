@@ -42,6 +42,22 @@ TITLE is an optional string for the grid title."
              (lambda (s)
                (grid-model-get-merges (gethash :model s)))
              source)
+    (puthash :get-style-at
+             (lambda (s row col)
+               (grid-model-get-style (gethash :model s) row col))
+             source)
+    (puthash :set-style-at
+             (lambda (s row col style)
+               (grid-model-set-style (gethash :model s) row col style))
+             source)
+    (puthash :get-conditional-formats
+             (lambda (s)
+               (grid-model-get-conditionals (gethash :model s)))
+             source)
+    (puthash :set-conditional-formats
+             (lambda (s rules)
+               (grid-model-set-conditionals (gethash :model s) rules))
+             source)
     (puthash :merge-cells
              (lambda (s row start-col end-col &optional right-col)
                (puthash :model

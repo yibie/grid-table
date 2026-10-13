@@ -60,6 +60,72 @@ When RIGHT is nil, use the legacy horizontal TOP LEFT BOTTOM call."
   (funcall (gethash :merge-cells source)
            source top left bottom right))
 
+(defun grid-get-style-at (source row col)
+  "Return the style plist of the cell at ROW and COL in SOURCE.
+Sources that do not store styles give nil."
+  (when-let* ((function (gethash :get-style-at source)))
+    (funcall function source row col)))
+
+(defun grid-set-style-at (source row col style)
+  "Give the cell at ROW and COL in SOURCE the plist STYLE; nil clears it."
+  (when-let* ((function (gethash :set-style-at source)))
+    (funcall function source row col style)))
+
+(defun grid-get-conditional-formats (source)
+  "Return SOURCE's conditional format rules.
+Each rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE)."
+  (when-let* ((function (gethash :get-conditional-formats source)))
+    (funcall function source)))
+
+(defun grid-set-conditional-formats (source rules)
+  "Replace SOURCE's conditional format rules with RULES."
+  (when-let* ((function (gethash :set-conditional-formats source)))
+    (funcall function source rules)))
+
+(defconst grid-table-conditional-operators
+  '((">" . "greater than") ("<" . "less than")
+    (">=" . "at least") ("<=" . "at most")
+    ("=" . "equal to") ("<>" . "not equal to")
+    ("contains" . "text contains")
+    ("empty" . "is empty") ("error" . "is an error"))
+  "Operators of conditional format rules, with their descriptions.")
+
+(defun grid-table-conditional-match-p (op operand value)
+  "Return non-nil when computed VALUE satisfies OP against OPERAND."
+  (let ((number (grid-calc--numeric value))
+        (target (grid-calc--numeric operand)))
+    (pcase op
+      (">" (and number target (> number target)))
+      ("<" (and number target (< number target)))
+      (">=" (and number target (>= number target)))
+      ("<=" (and number target (<= number target)))
+      ("=" (and (not (member value '(nil "")))
+                (grid-calc--equal value operand)))
+      ("<>" (not (grid-calc--equal value operand)))
+      ("contains" (and (stringp operand) (not (string-empty-p operand))
+                       (string-match-p (regexp-quote (downcase operand))
+                                       (downcase (format "%s" (or value ""))))))
+      ("empty" (member value '(nil "")))
+      ("error" (and (stringp value) (member value grid-calc-error-values))))))
+
+(defun grid-table-effective-style (source row col &optional rules)
+  "Return the style the cell at ROW and COL of SOURCE is shown with.
+The cell's own style comes first; every conditional format rule its
+value satisfies then overrides the properties it names, later rules
+winning.  RULES, when given, saves fetching the rules for every cell."
+  (let ((style (grid-get-style-at source row col))
+        (rules (or rules (grid-get-conditional-formats source))))
+    (when rules
+      (let ((value (grid-get-computed-value-at source row col)))
+        (dolist (rule rules)
+          (when (and (<= (nth 0 rule) row) (<= row (nth 2 rule))
+                     (<= (nth 1 rule) col) (<= col (nth 3 rule))
+                     (grid-table-conditional-match-p
+                      (nth 4 rule) (nth 5 rule) value))
+            (cl-loop for (key property) on (nth 6 rule) by #'cddr do
+                     (setq style (plist-put style key property)))))))
+    style))
+
 (defun grid-unmerge-cell (source row col)
   "Unmerge the range covering ROW and COL in SOURCE."
   (funcall (gethash :unmerge-cell source) source row col))

@@ -43,36 +43,83 @@ This saves the headers and all raw cell values (including formulas)."
            (merges (when-let* ((get-merges-fn (gethash :get-merges data-source)))
                      (funcall get-merges-fn data-source)))
            (rows (cl-subseq all-rows 1))
-           (data-to-save (if merges
-                             (let* ((validation-model
-                                     (or (gethash :model data-source)
-                                         (grid-model-create
-                                          num-rows num-cols all-rows)))
-                                    (validated
-                                     (grid-model-validate-merges
-                                      validation-model merges))
-                                    (has-vertical
-                                     (cl-some (lambda (merge)
-                                                (< (nth 0 merge) (nth 2 merge)))
-                                              validated)))
-                               (list 'grid-table-file
-                                     :version (if has-vertical 3 2)
-                                     :title title
-                                     :headers user-defined-headers
-                                     :rows rows
-                                     :merges (if has-vertical
-                                                 validated
-                                               (mapcar
-                                                (lambda (merge)
-                                                  (list (nth 0 merge)
-                                                        (nth 1 merge)
-                                                        (nth 3 merge)))
-                                                validated))))
-                           (list :title title :headers user-defined-headers :rows rows)))) ; Save user-defined headers as :headers, and remaining rows as :rows
+           (model (gethash :model data-source))
+           (styles (let (entries)
+                     (when-let* ((table (and model
+                                             (grid-data-model-styles model))))
+                       (maphash (lambda (key style)
+                                  (when style
+                                    (push (cons (car key) (cons (cdr key) style))
+                                          entries)))
+                                table))
+                     (sort entries
+                           (lambda (a b)
+                             (or (< (car a) (car b))
+                                 (and (= (car a) (car b))
+                                      (< (cadr a) (cadr b))))))))
+           (conditionals (and model (grid-data-model-conditionals model)))
+           (validated
+            (when merges
+              (grid-model-validate-merges
+               (or model (grid-model-create num-rows num-cols all-rows))
+               merges)))
+           (has-vertical
+            (cl-some (lambda (merge) (< (nth 0 merge) (nth 2 merge)))
+                     validated))
+           ;; Each feature raises the version only when a file uses it, so
+           ;; older releases keep reading the files they can represent.
+           (data-to-save
+            (cond
+             ((or styles conditionals)
+              (list 'grid-table-file
+                    :version 4
+                    :title title
+                    :headers user-defined-headers
+                    :rows rows
+                    :merges validated
+                    :styles styles
+                    :conditional-formats conditionals))
+             (merges
+              (list 'grid-table-file
+                    :version (if has-vertical 3 2)
+                    :title title
+                    :headers user-defined-headers
+                    :rows rows
+                    :merges (if has-vertical
+                                validated
+                              (mapcar
+                               (lambda (merge)
+                                 (list (nth 0 merge)
+                                       (nth 1 merge)
+                                       (nth 3 merge)))
+                               validated))))
+             (t (list :title title :headers user-defined-headers :rows rows)))))
       (with-temp-buffer
         (prin1 data-to-save (current-buffer))
         (write-file file-path nil)
         (message "Grid saved to %s" file-path)))))
+
+(defun grid-table-persistence--restore-formats (model styles conditionals)
+  "Give MODEL the saved STYLES and CONDITIONALS, skipping malformed ones."
+  (let ((rows (grid-data-model-rows model))
+        (cols (grid-data-model-cols model)))
+    (when (listp styles)
+      (dolist (entry styles)
+        (when (and (consp entry) (consp (cdr entry))
+                   (integerp (car entry)) (integerp (cadr entry))
+                   (< -1 (car entry) rows) (< -1 (cadr entry) cols)
+                   (grid-table-persistence--plist-p (cddr entry)))
+          (grid-model-set-style model (car entry) (cadr entry) (cddr entry)))))
+    (when (listp conditionals)
+      (grid-model-set-conditionals
+       model
+       (cl-remove-if-not
+        (lambda (rule)
+          (and (listp rule) (= (length rule) 7)
+               (cl-every #'integerp (cl-subseq rule 0 4))
+               (stringp (nth 4 rule))
+               (grid-table-persistence--plist-p (nth 6 rule))))
+        conditionals)))))
 
 (defun grid-table-persistence-create-data-source-from-file (file-path)
   "Load data from FILE-PATH and create a new data source.
@@ -82,17 +129,19 @@ Returns a new data source instance, or nil on error."
     (with-temp-buffer
       (insert-file-contents file-path)
       (let ((data (read (current-buffer))))
-        (let (headers rows title merges)
+        (let (headers rows title merges styles conditionals)
           (cond
            ;; Case 1: Tagged v2 format with merge metadata
            ((eq (car-safe data) 'grid-table-file)
             (let ((plist (cdr data)))
               (unless (and (grid-table-persistence--plist-p plist)
-                           (memq (plist-get plist :version) '(2 3)))
+                           (memq (plist-get plist :version) '(2 3 4)))
                 (error "Unsupported grid file version in %s" file-path))
               (setq headers (plist-get plist :headers)
                     rows (plist-get plist :rows)
                     title (plist-get plist :title)
+                    styles (plist-get plist :styles)
+                    conditionals (plist-get plist :conditional-formats)
                     merges (let ((raw-merges (plist-get plist :merges)))
                              (if (and (eq (plist-get plist :version) 2)
                                       (listp raw-merges))
@@ -143,6 +192,8 @@ Returns a new data source instance, or nil on error."
                       (display-warning
                        'grid-table
                        "Discarding malformed merge metadata"))))
+                (grid-table-persistence--restore-formats
+                 (gethash :model source) styles conditionals)
                 source)
             (error "Invalid grid file format in %s" file-path)))))))
 

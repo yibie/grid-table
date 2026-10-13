@@ -48,9 +48,14 @@
 ;;;----------------------------------------------------------------------
 
 ;; Manual grid data model implementation
-(defun make-grid-data-model (rows cols cells &optional merges)
-  "Create a new grid data model."
-  (vector rows cols cells merges))
+(defun make-grid-data-model (rows cols cells &optional merges styles
+                                 conditionals)
+  "Create a new grid data model.
+STYLES is a hash table from (ROW . COL) to a style plist and
+CONDITIONALS a list of conditional format rules."
+  (vector rows cols cells merges
+          (or styles (make-hash-table :test 'equal))
+          conditionals))
 
 (defun grid-data-model-rows (model) (aref model 0))
 (defun grid-data-model-cols (model) (aref model 1))
@@ -60,15 +65,25 @@
     (aref model 3)))
 (defun set-grid-data-model-merges (model value)
   (aset model 3 value))
+(defun grid-data-model-styles (model)
+  (when (> (length model) 4)
+    (aref model 4)))
+(defun grid-data-model-conditionals (model)
+  (when (> (length model) 5)
+    (aref model 5)))
 
 ;;;----------------------------------------------------------------------
 ;;; Model Creation and Access
 ;;;----------------------------------------------------------------------
 
-(defun grid-model-create (rows cols &optional initial-data merges)
+(defun grid-model-create (rows cols &optional initial-data merges styles
+                              conditionals)
   "Create a new data model of ROWS and COLS.
-Optionally populate with INITIAL-DATA (a list of lists of strings)."
-  (let* ((model (make-grid-data-model rows cols (make-vector (* rows cols) nil)))
+Optionally populate with INITIAL-DATA (a list of lists of strings).
+STYLES and CONDITIONALS, when given, become the model's cell styles and
+conditional format rules; the model owns them from then on."
+  (let* ((model (make-grid-data-model rows cols (make-vector (* rows cols) nil)
+                                      nil styles conditionals))
          (cells (grid-data-model-cells model)))
     ;; 1. Initialize all cells and populate with initial data
     (dotimes (r rows)
@@ -100,6 +115,94 @@ Optionally populate with INITIAL-DATA (a list of lists of strings)."
 If the cell is a formula, it will be evaluated on demand."
   (when-let* ((cell (grid-model-get-cell model row col)))
     (grid-cell-computed-value cell)))
+
+;;;----------------------------------------------------------------------
+;;; Cell Styles and Conditional Formats
+;;;----------------------------------------------------------------------
+
+;; A style is a plist with any of :bold, :italic (non-nil), :color,
+;; :background (color strings) and :align (left, center or right).
+;; A conditional format rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE): cells
+;; of the range whose value satisfies OP against VALUE take STYLE.
+
+(defun grid-model-get-style (model row col)
+  "Return a copy of the style plist of the cell at ROW and COL in MODEL."
+  (let ((styles (grid-data-model-styles model)))
+    (and styles (copy-sequence (gethash (cons row col) styles)))))
+
+(defun grid-model-set-style (model row col style)
+  "Give the cell at ROW and COL in MODEL the plist STYLE; nil clears it."
+  (let ((styles (grid-data-model-styles model)))
+    (when styles
+      (if style
+          (puthash (cons row col) (copy-sequence style) styles)
+        (remhash (cons row col) styles)))
+    style))
+
+(defun grid-model-get-conditionals (model)
+  "Return a copy of MODEL's conditional format rules."
+  (copy-tree (grid-data-model-conditionals model)))
+
+(defun grid-model-set-conditionals (model rules)
+  "Replace MODEL's conditional format rules with RULES."
+  (when (> (length model) 5)
+    (aset model 5 (copy-tree rules)))
+  rules)
+
+(defun grid-model--map-styles (model function)
+  "Return MODEL's styles re-keyed for a structural change.
+FUNCTION receives a cell's ROW and COL and returns its new (ROW . COL),
+or nil when the cell is gone."
+  (let ((new (make-hash-table :test 'equal))
+        (styles (grid-data-model-styles model)))
+    (when styles
+      (maphash (lambda (key style)
+                 (let ((moved (funcall function (car key) (cdr key))))
+                   (when moved
+                     (puthash moved style new))))
+               styles))
+    new))
+
+(defun grid-model--shift-index (index at delta)
+  "Return INDEX after a line is inserted at AT (DELTA 1) or deleted (-1).
+A deleted line itself gives nil."
+  (cond ((> delta 0) (if (>= index at) (1+ index) index))
+        ((= index at) nil)
+        ((> index at) (1- index))
+        (t index)))
+
+(defun grid-model--shift-rules (rules axis at delta)
+  "Return conditional RULES after a line change along AXIS.
+AXIS is `row' or `col', AT the index of the line and DELTA 1 for an
+insertion or -1 for a deletion.  A rule whose range is deleted
+entirely is dropped."
+  (let ((first (if (eq axis 'row) 0 1))
+        (last (if (eq axis 'row) 2 3)))
+    (delq nil
+          (mapcar
+           (lambda (rule)
+             (let ((rule (copy-sequence rule))
+                   (start (nth first rule))
+                   (end (nth last rule)))
+               (cond
+                ((> delta 0)
+                 (cond ((<= at start)
+                        (setf (nth first rule) (1+ start)
+                              (nth last rule) (1+ end)))
+                       ((<= at end) (setf (nth last rule) (1+ end))))
+                 rule)
+                ((< at start)
+                 (setf (nth first rule) (1- start)
+                       (nth last rule) (1- end))
+                 rule)
+                ((> at end) rule)
+                ((= start end) nil)
+                (t (setf (nth last rule) (1- end)) rule))))
+           rules))))
+
+(defun grid-model--same-styles (model)
+  "Return a copy of MODEL's styles for a change that moves no cell."
+  (grid-model--map-styles model #'cons))
 
 ;;;----------------------------------------------------------------------
 ;;; Cell Merges
@@ -248,7 +351,9 @@ With five arguments, merge TOP LEFT BOTTOM RIGHT."
     (grid-model-create (grid-data-model-rows model)
                        (grid-data-model-cols model)
                        (grid-model-get-all-raw-values model)
-                       new-merges)))
+                       new-merges
+                       (grid-model--same-styles model)
+                       (grid-data-model-conditionals model))))
 
 (defun grid-model-unmerge-cell (model row col)
   "Return a new MODEL with the merge covering ROW and COL removed."
@@ -257,7 +362,9 @@ With five arguments, merge TOP LEFT BOTTOM RIGHT."
                        (grid-data-model-cols model)
                        (grid-model-get-all-raw-values model)
                        (cl-remove merge (grid-data-model-merges model)
-                                  :test #'equal))))
+                                  :test #'equal)
+                       (grid-model--same-styles model)
+                       (grid-data-model-conditionals model))))
 
 ;;;----------------------------------------------------------------------
 ;;; Dependency Graph & Recalculation
@@ -361,7 +468,13 @@ which is considered user-defined headers. The first row will remain in place."
                         (setq new-idx (1+ new-idx)))
                       (grid-data-model-merges model)))))
       ;; Create a new model with the sorted data
-      (grid-model-create num-rows num-cols new-raw-values new-merges))))
+      (grid-model-create
+       num-rows num-cols new-raw-values new-merges
+       ;; A style travels with its row; conditional ranges stay in place.
+       (grid-model--map-styles
+        model (lambda (row col)
+                (cons (if (= row 0) 0 (1+ (aref old-to-new (1- row)))) col)))
+       (grid-data-model-conditionals model)))))
 
 (defun grid-model-get-all-raw-values (model)
   "Extracts all raw values (headers and cell contents) from the model.
@@ -407,7 +520,13 @@ Returns a new model instance."
                                      (list top left (1+ bottom) right))
                                     (t merge))))
                                (grid-data-model-merges model))))
-      (grid-model-create (1+ current-rows) current-cols new-raw-values new-merges))))
+      (grid-model-create
+       (1+ current-rows) current-cols new-raw-values new-merges
+       (grid-model--map-styles
+        model (lambda (row col)
+                (cons (grid-model--shift-index row insert-row 1) col)))
+       (grid-model--shift-rules (grid-data-model-conditionals model)
+                                'row insert-row 1)))))
 
 (defun grid-model-delete-row (model row-idx)
   "Deletes the row at ROW-IDX (0-based) from the model.
@@ -452,7 +571,14 @@ Returns a new model instance. Errors if ROW-IDX is invalid or only one row remai
                                           (= (nth 1 candidate) (nth 3 candidate)))
                                candidate))))))
                    (grid-data-model-merges model)))))
-      (grid-model-create (1- current-rows) current-cols new-raw-values new-merges))))
+      (grid-model-create
+       (1- current-rows) current-cols new-raw-values new-merges
+       (grid-model--map-styles
+        model (lambda (row col)
+                (let ((moved (grid-model--shift-index row delete-row -1)))
+                  (and moved (cons moved col)))))
+       (grid-model--shift-rules (grid-data-model-conditionals model)
+                                'row delete-row -1)))))
 
 (defun grid-model-add-column (model &optional col-idx)
   "Adds a new empty column to the model at COL-IDX (0-based).
@@ -494,7 +620,13 @@ Returns a new model instance."
                                      (list top left bottom (1+ right)))
                                     (t merge))))
                                (grid-data-model-merges model))))
-      (grid-model-create current-rows (1+ current-cols) new-raw-values new-merges))))
+      (grid-model-create
+       current-rows (1+ current-cols) new-raw-values new-merges
+       (grid-model--map-styles
+        model (lambda (row col)
+                (cons row (grid-model--shift-index col insert-col 1))))
+       (grid-model--shift-rules (grid-data-model-conditionals model)
+                                'col insert-col 1)))))
 
 (defun grid-model-delete-column (model col-idx)
   "Deletes the column at COL-IDX (0-based) from the model.
@@ -539,7 +671,14 @@ Returns a new model instance. Errors if COL-IDX is invalid or only one column re
     ;; Delete column from user-defined headers as well
     ;; Reconstruct the complete raw values with user-defined headers at the top
     (let ((new-raw-values (cons new-user-defined-headers new-data-rows)))
-      (grid-model-create current-rows (1- current-cols) new-raw-values new-merges)))))
+      (grid-model-create
+       current-rows (1- current-cols) new-raw-values new-merges
+       (grid-model--map-styles
+        model (lambda (row col)
+                (let ((moved (grid-model--shift-index col col-idx -1)))
+                  (and moved (cons row moved)))))
+       (grid-model--shift-rules (grid-data-model-conditionals model)
+                                'col col-idx -1))))))
 
 (provide 'grid-data-model)
 

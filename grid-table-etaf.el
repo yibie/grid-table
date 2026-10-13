@@ -19,6 +19,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'color)
 (require 'etaf)
 (require 'grid-table)
 
@@ -422,6 +423,19 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-M-_" grid-table-etaf-redo "Redo")
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
+    ("C-c f b" grid-table-etaf-toggle-bold "Bold")
+    ("C-c f i" grid-table-etaf-toggle-italic "Italic")
+    ("s-b" grid-table-etaf-toggle-bold "Bold")
+    ("s-i" grid-table-etaf-toggle-italic "Italic")
+    ("C-c f c" grid-table-etaf-set-text-color "Text color")
+    ("C-c f g" grid-table-etaf-set-fill-color "Fill color")
+    ("C-c f l" grid-table-etaf-align-left "Align left")
+    ("C-c f e" grid-table-etaf-align-center "Align center")
+    ("C-c f r" grid-table-etaf-align-right "Align right")
+    ("C-c f x" grid-table-etaf-clear-format "Clear formatting")
+    ("C-c f n" grid-table-etaf-add-conditional-format "Conditional format")
+    ("C-c f N" grid-table-etaf-clear-conditional-formats
+     "Clear conditional formats")
     ("DEL" grid-table-etaf-clear-cells "Clear cells")
     ("<deletechar>" grid-table-etaf-clear-cells "Clear cells")
     ("C-c t" grid-table-edit-title "Edit title")
@@ -491,20 +505,27 @@ position, the node key and the paint state of the cell."
                       'grid-table-etaf-selection-face)))
          (line (plist-get spec :line))
          (grid-row (plist-get spec :grid-row))
-         (grid-col (plist-get spec :grid-col)))
+         (grid-col (plist-get spec :grid-col))
+         (style (grid-table-effective-style source row col
+                                            (plist-get spec :rules))))
     (etaf-node
      'box
      (list :key (plist-get spec :key)
            :grid-row (if span (list grid-row :span (car span)) grid-row)
            :grid-column (if span (list grid-col :span (cdr span)) grid-col)
            :padding '((lh 0) (ch 1))
-           :text-align (if (and (not editing)
-                                (grid-table-etaf--numeric-p value))
-                           'right
-                         'left)
-           :color (and face (grid-table-etaf--face-color face :foreground))
+           :text-align (cond ((plist-get style :align))
+                             ((and (not editing)
+                                   (grid-table-etaf--numeric-p value))
+                              'right)
+                             (t 'left))
+           ;; The cursor and the selection paint over a cell's own colors.
+           :color (or (and face (grid-table-etaf--face-color face :foreground))
+                      (plist-get style :color))
            :background-color
-           (and face (grid-table-etaf--face-color face :background))
+           (if face
+               (grid-table-etaf--face-color face :background)
+             (plist-get style :background))
            :border-right line
            :border-bottom line
            :ref (plist-get spec :ref)
@@ -521,7 +542,10 @@ position, the node key and the paint state of the cell."
         ;; A separate key while editing gives the input session a fresh
         ;; text Host, so a cancelled edit leaves nothing behind.
         (etaf-node 'text
-                   (append (list :key (if editing 'editing 'value))
+                   (append (list :key (if editing 'editing 'value)
+                                 :font-weight (and (plist-get style :bold) 'bold)
+                                 :font-style
+                                 (and (plist-get style :italic) 'italic))
                            (and (plist-get spec :cursor)
                                 (list :ref 'grid-table-etaf-cursor)))
                    (list text)))))))
@@ -705,6 +729,7 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
          (last-col (car (last cols)))
          (last-row (car (last rows)))
          (merges (grid-get-merges source))
+         (rules (grid-get-conditional-formats source))
          (cursor-merge (grid-table--merge-at merges (car cursor) (cdr cursor)))
          (cursor-row (if cursor-merge (nth 0 cursor-merge) (car cursor)))
          (cursor-col (if cursor-merge (nth 1 cursor-merge) (cdr cursor)))
@@ -757,6 +782,7 @@ RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell."
                    (cons (1+ (- (min (nth 2 merge) last-row) vis-top))
                          (1+ (- (min (nth 3 merge) last-col) vis-left))))
               (list :key (+ (* 10000 row-slot) col-slot)
+                    :rules rules
                     :ref (grid-table-etaf--slot-ref row-slot col-slot)
                     :grid-row (+ 2 row-slot)
                     :grid-col (+ 2 col-slot)
@@ -1227,6 +1253,16 @@ previous model is all that undoing them needs."
        (grid-table-etaf--widen-visible state)
        (grid-table-etaf--bump state)
        (grid-table-etaf-goto (nth 0 (car cells)) (nth 1 (car cells))))
+      (`(styles . ,cells)
+       (dolist (cell cells)
+         (grid-set-style-at source (nth 0 cell) (nth 1 cell)
+                            (nth (if forward 3 2) cell)))
+       (grid-table-etaf--bump state)
+       (grid-table-etaf--settle state))
+      (`(conditionals ,old ,new)
+       (grid-set-conditional-formats source (if forward new old))
+       (grid-table-etaf--bump state)
+       (grid-table-etaf--settle state))
       (`(model ,old ,new)
        (let ((model (if forward new old))
              (cursor (etaf-value (grid-table-etaf--state-cursor state))))
@@ -1259,6 +1295,166 @@ previous model is all that undoing them needs."
     (pop (grid-table-etaf--state-redo state))
     (push record (grid-table-etaf--state-undo state))
     (grid-table-etaf--replay state record t)))
+
+;;;----------------------------------------------------------------------
+;;; Formatting
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--plist-without (plist key)
+  "Return PLIST without KEY."
+  (cl-loop for (name value) on plist by #'cddr
+           unless (eq name key) append (list name value)))
+
+(defun grid-table-etaf--restyle (function)
+  "Give every cell of the selection the style FUNCTION makes of its own.
+FUNCTION receives a cell's style plist and returns the new one.  The
+change is one undoable step.  Covered cells of a merge are skipped."
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (merges (grid-get-merges source))
+         changed)
+    (unless (gethash :set-style-at source)
+      (user-error "This grid's data source does not store cell styles"))
+    (cl-loop
+     for row from (nth 0 range) to (nth 2 range) do
+     (cl-loop
+      for col from (nth 1 range) to (nth 3 range) do
+      (let ((merge (and merges (grid-table--merge-at merges row col))))
+        (when (or (null merge)
+                  (and (= row (nth 0 merge)) (= col (nth 1 merge))))
+          (let* ((old (grid-get-style-at source row col))
+                 (new (funcall function (copy-sequence old))))
+            (unless (equal old new)
+              (grid-set-style-at source row col new)
+              (push (list row col old new) changed)))))))
+    (when changed
+      (grid-table-etaf--record state (cons 'styles (nreverse changed))))
+    (grid-table-etaf--bump state)
+    (grid-table-etaf--settle state)
+    (length changed)))
+
+(defun grid-table-etaf--set-format (key value)
+  "Set style property KEY to VALUE on the selection; nil removes it."
+  (grid-table-etaf--restyle
+   (lambda (style)
+     (if value
+         (plist-put style key value)
+       (grid-table-etaf--plist-without style key)))))
+
+(defun grid-table-etaf--toggle-format (key)
+  "Toggle style property KEY on the selection, following the cursor cell."
+  (let* ((state (grid-table-etaf--state-or-error))
+         (cursor (grid-table-etaf--cursor))
+         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor)))
+         (on (plist-get (grid-get-style-at (grid-table-etaf--source state)
+                                           (nth 0 extent) (nth 1 extent))
+                        key)))
+    (grid-table-etaf--set-format key (not on))))
+
+(defun grid-table-etaf-toggle-bold ()
+  "Make the selection bold, or plain when the cursor cell is bold."
+  (interactive)
+  (grid-table-etaf--toggle-format :bold))
+
+(defun grid-table-etaf-toggle-italic ()
+  "Make the selection italic, or upright when the cursor cell is italic."
+  (interactive)
+  (grid-table-etaf--toggle-format :italic))
+
+(defun grid-table-etaf--color (name)
+  "Return color NAME as #RRGGBB when the display can resolve it."
+  (cond ((or (null name) (string-empty-p name)) nil)
+        ((string-prefix-p "#" name) name)
+        (t (let ((rgb (ignore-errors (color-name-to-rgb name))))
+             (if rgb (apply #'color-rgb-to-hex (append rgb '(2))) name)))))
+
+(defun grid-table-etaf-set-text-color (color)
+  "Paint the text of the selection in COLOR; empty input removes the color."
+  (interactive (list (read-color "Text color (empty to clear): ")))
+  (grid-table-etaf--set-format :color (grid-table-etaf--color color)))
+
+(defun grid-table-etaf-set-fill-color (color)
+  "Fill the cells of the selection with COLOR; empty input removes the fill."
+  (interactive (list (read-color "Fill color (empty to clear): ")))
+  (grid-table-etaf--set-format :background (grid-table-etaf--color color)))
+
+(defun grid-table-etaf-align-left ()
+  "Align the selection to the left."
+  (interactive)
+  (grid-table-etaf--set-format :align 'left))
+
+(defun grid-table-etaf-align-center ()
+  "Center the selection."
+  (interactive)
+  (grid-table-etaf--set-format :align 'center))
+
+(defun grid-table-etaf-align-right ()
+  "Align the selection to the right."
+  (interactive)
+  (grid-table-etaf--set-format :align 'right))
+
+(defun grid-table-etaf-clear-format ()
+  "Remove every style from the selection."
+  (interactive)
+  (grid-table-etaf--restyle #'ignore))
+
+(defun grid-table-etaf--set-conditionals (rules)
+  "Replace the grid's conditional format rules with RULES, undoably."
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (old (grid-get-conditional-formats source)))
+    (unless (gethash :set-conditional-formats source)
+      (user-error "This grid's data source does not store conditional formats"))
+    (unless (equal old rules)
+      (grid-set-conditional-formats source rules)
+      (grid-table-etaf--record state (list 'conditionals old rules)))
+    (grid-table-etaf--bump state)
+    (grid-table-etaf--settle state)))
+
+(defun grid-table-etaf-add-conditional-format (op value style)
+  "Show the cells of the selection that satisfy OP against VALUE in STYLE.
+OP is one of `grid-table-conditional-operators' and STYLE a style
+plist.  The rule keeps applying as values change."
+  (interactive
+   (let* ((choices (mapcar (lambda (entry) (cons (cdr entry) (car entry)))
+                           grid-table-conditional-operators))
+          (op (cdr (assoc (completing-read "Format cells whose value: "
+                                           choices nil t)
+                          choices)))
+          (value (if (member op '("empty" "error"))
+                     ""
+                   (read-string "Value: ")))
+          (fill (grid-table-etaf--color
+                 (read-color "Fill color (empty for none): ")))
+          (color (grid-table-etaf--color
+                  (read-color "Text color (empty for none): ")))
+          (bold (y-or-n-p "Bold? ")))
+     (list op value
+           (append (and fill (list :background fill))
+                   (and color (list :color color))
+                   (and bold (list :bold t))))))
+  (unless (assoc op grid-table-conditional-operators)
+    (user-error "Unknown condition: %s" op))
+  (unless style
+    (user-error "A conditional format needs a fill, a text color or bold"))
+  (let ((range (grid-table-etaf-selection)))
+    (grid-table-etaf--set-conditionals
+     (append (grid-get-conditional-formats
+              (grid-table-etaf--source (grid-table-etaf--state-or-error)))
+             (list (append range (list op value style)))))))
+
+(defun grid-table-etaf-clear-conditional-formats ()
+  "Remove the conditional format rules that touch the selection."
+  (interactive)
+  (let ((range (grid-table-etaf-selection)))
+    (grid-table-etaf--set-conditionals
+     (cl-remove-if
+      (lambda (rule)
+        (and (<= (nth 0 rule) (nth 2 range)) (<= (nth 0 range) (nth 2 rule))
+             (<= (nth 1 rule) (nth 3 range)) (<= (nth 1 range) (nth 3 rule))))
+      (grid-get-conditional-formats
+       (grid-table-etaf--source (grid-table-etaf--state-or-error)))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Clipboard

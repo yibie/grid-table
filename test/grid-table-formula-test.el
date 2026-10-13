@@ -135,6 +135,110 @@
   (should (equal (grid-calc-shift-formula "=elisp:(cell \"A1\")" 1 1)
                  "=elisp:(cell \"A1\")")))
 
+;;;----------------------------------------------------------------------
+;;; Cell styles and conditional formats
+;;;----------------------------------------------------------------------
+
+(defun grid-table-formula-test--source ()
+  "Return a 4x3 source: a header row and rows keyed c, a, b in column A."
+  (make-default-data-source
+   '("" "" "")
+   '(("name" "n" "x") ("c" "3" "") ("a" "1" "") ("b" "2" ""))))
+
+(ert-deftest grid-table-styles-follow-their-cells-through-structure-changes ()
+  (let ((source (grid-table-formula-test--source)))
+    (grid-set-style-at source 2 1 '(:bold t :color "#ff0000"))
+    (should (equal (grid-get-style-at source 2 1) '(:bold t :color "#ff0000")))
+    (should-not (grid-get-style-at source 1 1))
+    ;; Inserting above moves the style down with its cell.
+    (funcall (gethash :add-row source) source 0)
+    (should (equal (grid-get-raw-value-at source 3 0) "a"))
+    (should (plist-get (grid-get-style-at source 3 1) :bold))
+    (should-not (grid-get-style-at source 2 1))
+    (funcall (gethash :delete-row source) source 0)
+    (should (plist-get (grid-get-style-at source 2 1) :bold))
+    (funcall (gethash :add-column source) source 0)
+    (should (plist-get (grid-get-style-at source 2 2) :bold))
+    (funcall (gethash :delete-column source) source 0)
+    (should (plist-get (grid-get-style-at source 2 1) :bold))
+    ;; Sorting by name puts row "a" first among the data rows.
+    (funcall (gethash :sort-by-column source) source 0 'ascending)
+    (should (equal (grid-get-raw-value-at source 1 0) "a"))
+    (should (plist-get (grid-get-style-at source 1 1) :bold))
+    (should-not (grid-get-style-at source 2 1))
+    ;; Deleting the styled row drops the style with it.
+    (funcall (gethash :delete-row source) source 0)
+    (should-not (grid-get-style-at source 1 1))
+    ;; Clearing removes the entry.
+    (grid-set-style-at source 0 0 '(:italic t))
+    (grid-set-style-at source 0 0 nil)
+    (should-not (grid-get-style-at source 0 0))))
+
+(ert-deftest grid-table-conditional-formats-apply-by-value ()
+  (let ((source (grid-table-formula-test--source)))
+    (grid-set-conditional-formats
+     source '((1 1 3 1 ">" "1" (:background "#ffff00"))
+              (1 1 3 1 ">=" "3" (:bold t :background "#ff0000"))))
+    (grid-set-style-at source 1 1 '(:italic t))
+    ;; 3 satisfies both rules: the later one wins where they overlap and
+    ;; the cell's own style stays.
+    (should (equal (grid-table-effective-style source 1 1)
+                   '(:italic t :background "#ff0000" :bold t)))
+    (should-not (grid-table-effective-style source 2 1))
+    (should (equal (grid-table-effective-style source 3 1)
+                   '(:background "#ffff00")))
+    ;; The rule follows the value, not the cell.
+    (grid-set-raw-value-at source 2 1 "9")
+    (should (plist-get (grid-table-effective-style source 2 1) :bold))
+    ;; Rows inserted above shift the range; deleting it all drops the rule.
+    (funcall (gethash :add-row source) source 0)
+    (should (equal (seq-take (car (grid-get-conditional-formats source)) 4)
+                   '(2 1 4 1)))
+    (should (equal (grid-table-effective-style source 1 1) nil))
+    (dotimes (_ 3) (funcall (gethash :delete-row source) source 1))
+    (should-not (grid-get-conditional-formats source))))
+
+(ert-deftest grid-table-conditional-operators-match ()
+  (should (grid-table-conditional-match-p "=" "apple" "Apple"))
+  (should-not (grid-table-conditional-match-p "=" "" ""))
+  (should (grid-table-conditional-match-p "<>" "1" "2"))
+  (should (grid-table-conditional-match-p "<=" "5" 5))
+  (should-not (grid-table-conditional-match-p ">" "5" "text"))
+  (should (grid-table-conditional-match-p "contains" "rr" "Error"))
+  (should (grid-table-conditional-match-p "empty" "" nil))
+  (should (grid-table-conditional-match-p "error" "" "#DIV/0!"))
+  (should-not (grid-table-conditional-match-p "error" "" "fine")))
+
+(ert-deftest grid-table-formats-round-trip-through-a-version-4-file ()
+  (let ((source (grid-table-formula-test--source))
+        (file (make-temp-file "grid-formats-" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Without formats the file stays in the oldest format.
+          (grid-table-persistence--save-to-file source file)
+          (should (keywordp (car (with-temp-buffer
+                                   (insert-file-contents file)
+                                   (read (current-buffer))))))
+          (grid-set-style-at source 2 1 '(:bold t :align center))
+          (grid-set-conditional-formats
+           source '((1 1 3 1 ">" "1" (:background "#ffff00"))))
+          (grid-merge-cells source 1 1 1 2)
+          (grid-table-persistence--save-to-file source file)
+          (let ((saved (with-temp-buffer
+                         (insert-file-contents file)
+                         (read (current-buffer)))))
+            (should (eq (car saved) 'grid-table-file))
+            (should (= (plist-get (cdr saved) :version) 4)))
+          (let ((loaded (grid-table-persistence-create-data-source-from-file
+                         file)))
+            (should (equal (grid-get-style-at loaded 2 1)
+                           '(:bold t :align center)))
+            (should (equal (grid-get-conditional-formats loaded)
+                           '((1 1 3 1 ">" "1" (:background "#ffff00")))))
+            (should (equal (grid-get-merges loaded) '((1 1 1 2))))
+            (should (equal (grid-get-raw-value-at loaded 3 0) "b"))))
+      (delete-file file))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
