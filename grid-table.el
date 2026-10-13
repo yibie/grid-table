@@ -191,6 +191,20 @@ Return non-nil when SOURCE keeps column widths."
     (funcall function source col width)
     t))
 
+(defun grid-table-frozen (source)
+  "Return (ROWS . COLS): the leading rows and columns of SOURCE kept in place.
+They stay at the top and the left of the window while the rest scrolls."
+  (if-let* ((function (gethash :get-frozen source)))
+      (funcall function source)
+    (cons 0 0)))
+
+(defun grid-table-set-frozen (source rows cols)
+  "Keep the first ROWS rows and COLS columns of SOURCE in place.
+Return non-nil when SOURCE can keep rows and columns in place."
+  (when-let* ((function (gethash :set-frozen source)))
+    (funcall function source rows cols)
+    t))
+
 (defun grid-get-conditional-formats (source)
   "Return SOURCE's conditional format rules.
 Each rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE)."
@@ -1530,6 +1544,16 @@ not a single table."
                  "The first row is the header row again"
                "The first row is now a row like any other"))))
 
+(defun grid-table-unfreeze-panes ()
+  "Let every row and column of the current sheet scroll again."
+  (interactive)
+  (let ((source (or grid-table--data-source
+                    (user-error "No grid in this buffer"))))
+    (unless (grid-table-set-frozen source 0 0)
+      (user-error "This grid cannot keep rows and columns in place"))
+    (grid-table-refresh)
+    (message "No row or column is frozen")))
+
 (defun grid-table-sheet-rename (name)
   "Call the current sheet NAME.
 Formulas that read the sheet are rewritten to use the new name."
@@ -1695,6 +1719,7 @@ skipping regions with a `display' property (like images)."
     (define-key map (kbd "C-c w <") 'grid-table-sheet-move-left)
     (define-key map (kbd "C-c w >") 'grid-table-sheet-move-right)
     (define-key map (kbd "C-c w h") 'grid-table-toggle-header-row)
+    (define-key map (kbd "C-c w u") 'grid-table-unfreeze-panes)
     (define-key map (kbd "C-c r i") 'grid-table-insert-row-above)
     (define-key map (kbd "C-c m") 'grid-table-merge-cells)
     (define-key map (kbd "C-c u") 'grid-table-unmerge-cell)

@@ -926,6 +926,84 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-undo)
     (should (equal (grid-get-row-count source) 5))))
 
+;; Model rows and columns the window of the current buffer shows.
+(defun grid-table-etaf-test--window ()
+  (let* ((state grid-table-etaf--state)
+         (cols (grid-table-etaf--visible-cols
+                state (etaf-value (grid-table-etaf--state-left state)))))
+    (cons (grid-table-etaf--visible-rows
+           state (etaf-value (grid-table-etaf--state-top state)) cols)
+          cols)))
+
+(ert-deftest grid-table-etaf-frozen-rows-and-columns-stay-in-place ()
+  (grid-table-etaf-test--with-grid (60 30 60 12)
+    ;; Rows above the cursor and columns left of it are frozen.
+    (grid-table-etaf-goto 2 1)
+    (grid-table-etaf-freeze-panes)
+    (should (equal (grid-table-frozen source) '(2 . 1)))
+    (grid-table-etaf-goto 40 20)
+    (let ((window (grid-table-etaf-test--window)))
+      (should (equal (cl-subseq (car window) 0 2) '(0 1)))
+      (should (> (nth 2 (car window)) 2))
+      (should (memq 40 (car window)))
+      (should (= (car (cdr window)) 0))
+      (should (> (nth 1 (cdr window)) 1))
+      (should (memq 20 (cdr window))))
+    ;; The frozen cells are painted, the ones scrolled past are not.
+    (should (string-match-p "H0" (grid-table-etaf-test--text)))
+    ;; Moving into the frozen rows leaves the rest where it is.
+    (let ((before (grid-table-etaf-test--window)))
+      (grid-table-etaf-goto 0 0)
+      (should (equal (grid-table-etaf-test--window) before)))
+    ;; Scrolling never moves the window over the frozen rows.
+    (dotimes (_ 30) (grid-table-etaf-scroll-up))
+    (should (equal (cl-subseq (car (grid-table-etaf-test--window)) 0 3)
+                   '(0 1 2)))
+    ;; A row put among the frozen ones is frozen with them; undoing the
+    ;; row undoes that.
+    (grid-table-etaf-goto 1 0)
+    (grid-table-insert-row-above)
+    (should (equal (grid-table-frozen source) '(3 . 1)))
+    (grid-table-etaf-undo)
+    (should (equal (grid-table-frozen source) '(2 . 1)))
+    (funcall (gethash :add-column source) source 5)
+    (should (equal (grid-table-frozen source) '(2 . 1)))
+    (funcall (gethash :delete-column source) source 0)
+    (grid-table-refresh)
+    (should (equal (grid-table-frozen source) '(2 . 0)))
+    ;; It is saved with the grid, and released on request.
+    (let ((file (make-temp-file "grid-frozen-" nil ".grid")))
+      (unwind-protect
+          (progn
+            (grid-table-persistence--save-to-file source file)
+            (should (equal (grid-table-frozen
+                            (grid-table-persistence-create-data-source-from-file
+                             file))
+                           '(2 . 0))))
+        (delete-file file)))
+    (grid-table-unfreeze-panes)
+    (should (equal (grid-table-frozen source) '(0 . 0)))
+    (grid-table-etaf-goto 40 3)
+    (should-not (memq 0 (car (grid-table-etaf-test--window))))
+    ;; More than the window holds cannot be frozen.
+    (grid-table-etaf-goto 45 0)
+    (should-error (grid-table-etaf-freeze-panes) :type 'user-error)
+    (should (equal (grid-table-frozen source) '(0 . 0)))))
+
+(ert-deftest grid-table-etaf-merge-across-the-frozen-columns ()
+  (grid-table-etaf-test--with-grid (8 30 60 12)
+    (dotimes (col 9)
+      (grid-set-raw-value-at source 3 (1+ col) ""))
+    (grid-merge-cells source 3 0 3 9)
+    (grid-table-etaf-goto 0 1)
+    (grid-table-etaf-freeze-panes)
+    (grid-table-etaf-goto 5 12)
+    ;; The window paints with the merge over the columns it shows.
+    (let ((cols (cdr (grid-table-etaf-test--window))))
+      (should (= (car cols) 0))
+      (should (> (nth 1 cols) 1)))
+    (should (string-match-p "3" (grid-table-etaf-test--text)))))
+
 (ert-deftest grid-table-etaf-in-place-edit-cancels-cleanly ()
   (grid-table-etaf-test--with-grid (6 5)
     (switch-to-buffer buffer)

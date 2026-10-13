@@ -76,7 +76,10 @@ Its keys are :title, :headers, :rows, :merges, :styles and
             (list :column-widths
                   (sort entries (lambda (a b) (< (car a) (car b)))))))
      (and (gethash :no-header-row data-source)
-          (list :no-header-row t)))))
+          (list :no-header-row t))
+     (let ((frozen (grid-table-frozen data-source)))
+       (and (or (> (car frozen) 0) (> (cdr frozen) 0))
+            (list :frozen (list (car frozen) (cdr frozen))))))))
 
 (defun grid-table-persistence--file-data (data-source)
   "Return the form a file holds for DATA-SOURCE and the sheets beside it.
@@ -129,7 +132,9 @@ Older releases pass over them, so they do not raise the file version."
   (append (and (plist-get data :column-widths)
                (list :column-widths (plist-get data :column-widths)))
           (and (plist-get data :no-header-row)
-               (list :no-header-row t))))
+               (list :no-header-row t))
+          (and (plist-get data :frozen)
+               (list :frozen (plist-get data :frozen)))))
 
 (defun grid-table-persistence--save-to-file (data-source file-path)
   "Save the DATA-SOURCE to FILE-PATH using Lisp's S-expression format.
@@ -168,10 +173,12 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
 
 (defun grid-table-persistence--make-source (file-path headers rows title
                                                    merges styles conditionals
-                                                   &optional widths no-header)
+                                                   &optional widths no-header
+                                                   frozen)
   "Return a data source for the fields a file at FILE-PATH holds for a sheet.
 WIDTHS is a list of (COLUMN . WIDTH) for the columns sized by hand.
-NO-HEADER says the first row of the sheet is a row like any other."
+NO-HEADER says the first row of the sheet is a row like any other.
+FROZEN is (ROWS COLS), the leading rows and columns kept in place."
   (unless (grid-table-persistence--table-data-p headers rows)
     (error "Invalid grid file format in %s" file-path))
   (let ((source (make-default-data-source
@@ -197,6 +204,9 @@ NO-HEADER says the first row of the sheet is a row like any other."
                    (< -1 (car entry) (grid-get-column-count source))
                    (< 0 (cdr entry) 1000))
           (grid-set-column-width source (car entry) (cdr entry)))))
+    (when (and (listp frozen) (= (length frozen) 2)
+               (cl-every #'natnump frozen))
+      (grid-table-set-frozen source (nth 0 frozen) (nth 1 frozen)))
     source))
 
 (defun grid-table-persistence--make-workbook (file-path plist)
@@ -215,7 +225,8 @@ NO-HEADER says the first row of the sheet is a row like any other."
         (plist-get sheet :headers) (plist-get sheet :rows)
         (plist-get sheet :title) (plist-get sheet :merges)
         (plist-get sheet :styles) (plist-get sheet :conditional-formats)
-        (plist-get sheet :column-widths) (plist-get sheet :no-header-row))
+        (plist-get sheet :column-widths) (plist-get sheet :no-header-row)
+        (plist-get sheet :frozen))
        ;; A name another sheet has, or none, would lose the sheet.
        (grid-workbook-fresh-name workbook (plist-get sheet :name))))
     ;; Each sheet was calculated before the ones after it existed.
@@ -237,7 +248,7 @@ saved; the others are in its workbook."
                  (grid-table-persistence--plist-p (cdr data))
                  (eql (plist-get (cdr data) :version) 5))
             (grid-table-persistence--make-workbook file-path (cdr data))
-        (let (headers rows title merges styles conditionals widths no-header)
+        (let (headers rows title merges styles conditionals widths no-header frozen)
           (cond
            ;; Case 1: Tagged v2 format with merge metadata
            ((eq (car-safe data) 'grid-table-file)
@@ -252,6 +263,7 @@ saved; the others are in its workbook."
                     conditionals (plist-get plist :conditional-formats)
                     widths (plist-get plist :column-widths)
                     no-header (plist-get plist :no-header-row)
+                    frozen (plist-get plist :frozen)
                     merges (let ((raw-merges (plist-get plist :merges)))
                              (if (and (eq (plist-get plist :version) 2)
                                       (listp raw-merges))
@@ -275,7 +287,8 @@ saved; the others are in its workbook."
                   rows (plist-get data :rows)
                   title (plist-get data :title)
                   widths (plist-get data :column-widths)
-                  no-header (plist-get data :no-header-row)))
+                  no-header (plist-get data :no-header-row)
+                  frozen (plist-get data :frozen)))
 
            ;; Case 2: Alist format (legacy/example files)
            ((listp (car data))
@@ -295,7 +308,7 @@ saved; the others are in its workbook."
 
           (grid-table-persistence--make-source
            file-path headers rows title merges styles conditionals
-           widths no-header)))))))
+           widths no-header frozen)))))))
 
 (provide 'grid-table-persistence)
 

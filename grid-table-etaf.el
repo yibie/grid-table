@@ -33,6 +33,11 @@
   "Face whose foreground paints the grid lines."
   :group 'grid-table)
 
+(defface grid-table-etaf-freeze-face
+  '((t :inherit link))
+  "Face whose foreground paints the line along frozen rows and columns."
+  :group 'grid-table)
+
 (defface grid-table-etaf-cursor-face
   '((t :inherit highlight))
   "Face whose colors paint the current cell."
@@ -208,15 +213,23 @@ Covered cells and horizontally merged anchors do not widen a column."
          (budget (- (car (grid-table-etaf--viewport state))
                     (* char (+ 2 (grid-table-etaf--row-header-width source)))
                     1))
-         (col left)
+         ;; Frozen columns come first whatever the scroll position, and
+         ;; one column after them is always shown.
+         (frozen (min (cdr (grid-table-frozen source)) (max 0 (1- cols))))
+         (col (max left frozen))
+         (scrolled nil)
          result)
+    (dotimes (kept frozen)
+      (setq budget (- budget (1+ (* char (+ 2 (aref widths kept))))))
+      (push kept result))
     (while (and (< col cols)
                 (let ((need (1+ (* char (+ 2 (aref widths col))))))
-                  (when (or (null result) (<= need budget))
+                  (when (or (not scrolled) (<= need budget))
                     (setq budget (- budget need))
                     t)))
       (push col result)
-      (setq col (1+ col)))
+      (setq scrolled t
+            col (1+ col)))
     (nreverse result)))
 
 (defun grid-table-etaf--cell-lines (value width &optional format)
@@ -323,17 +336,31 @@ A header row holds the column titles and is always shown."
          ;; The letter row, the formula bar and the status bar take a line each.
          (budget (- (cdr (grid-table-etaf--viewport state))
                     3 (grid-table-etaf--title-lines state)))
-         (position (grid-table-etaf--row-position state top))
+         (frozen (car (grid-table-frozen source)))
+         (position 0)
+         (scrolled nil)
          result)
+    ;; Frozen rows come first whatever the scroll position, and one row
+    ;; after them is always shown.
     (while (and (< position count)
+                (< (grid-table-etaf--row-at state position) frozen))
+      (let ((row (grid-table-etaf--row-at state position)))
+        (setq budget (- budget (grid-table-etaf--row-lines
+                                state row cols merges)))
+        (push row result))
+      (setq position (1+ position)))
+    (setq position (max position (grid-table-etaf--row-position state top)))
+    (while (and (< position count)
+                (>= (grid-table-etaf--row-at state position) frozen)
                 (let ((need (grid-table-etaf--row-lines
                              state (grid-table-etaf--row-at state position)
                              cols merges)))
-                  (when (or (null result) (<= need budget))
+                  (when (or (not scrolled) (<= need budget))
                     (setq budget (- budget need))
                     t)))
       (push (grid-table-etaf--row-at state position) result)
-      (setq position (1+ position)))
+      (setq scrolled t
+            position (1+ position)))
     (nreverse result)))
 
 ;;;----------------------------------------------------------------------
@@ -551,6 +578,8 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c w <" grid-table-sheet-move-left "Move sheet left")
     ("C-c w >" grid-table-sheet-move-right "Move sheet right")
     ("C-c w h" grid-table-toggle-header-row "Header row on or off")
+    ("C-c w f" grid-table-etaf-freeze-panes "Freeze rows above, columns left")
+    ("C-c w u" grid-table-unfreeze-panes "Unfreeze rows and columns")
     ("C-c r i" grid-table-insert-row-above "Insert row above")
     ("C-c / f" grid-table-etaf-filter-column "Filter column")
     ("C-c / v" grid-table-etaf-filter-by-cell "Filter by this value")
@@ -672,8 +701,8 @@ position, the node key and the paint state of the cell."
            (if face
                (grid-table-etaf--face-color face :background)
              (plist-get style :background))
-           :border-right line
-           :border-bottom line
+           :border-right (or (plist-get spec :line-right) line)
+           :border-bottom (or (plist-get spec :line-bottom) line)
            :ref (plist-get spec :ref)
            :on-drag (grid-table-etaf--drag-cell
                      (grid-table-etaf--state-buffer state) row col))
@@ -698,13 +727,14 @@ position, the node key and the paint state of the cell."
 
 (defun grid-table-etaf--header-node (key grid-row grid-col label align
                                          marked line &optional on-drag
-                                         on-resize)
+                                         on-resize right bottom)
   "Return a header cell View node.
 KEY names the node, GRID-ROW and GRID-COL place it, LABEL is its text
 aligned by ALIGN.  MARKED paints it as part of the selection and LINE is
 the grid line border.  ON-DRAG handles the pointer on the label.
 ON-RESIZE, when non-nil, adds a handle on the right edge that takes the
-pointer instead."
+pointer instead.  RIGHT and BOTTOM, when non-nil, replace LINE on that
+edge."
   (let* ((face (if marked
                    'grid-table-etaf-selection-face
                  'grid-table-etaf-header-face))
@@ -717,8 +747,8 @@ pointer instead."
            :grid-column grid-col
            :color color
            :background-color background
-           :border-right line
-           :border-bottom line)
+           :border-right (or right line)
+           :border-bottom (or bottom line))
      (delq nil
            (list
             (etaf-node 'box
@@ -925,8 +955,7 @@ LINE, the grid line border."
          (cols (grid-table-etaf--visible-cols
                 state (etaf-value (grid-table-etaf--state-left state))))
          (rows (grid-table-etaf--visible-rows state top cols))
-         (first-col (car cols))
-         (last-col (car (last cols)))
+         (frozen (grid-table-frozen source))
          (merges (grid-get-merges source))
          (rules (grid-get-conditional-formats source))
          (cursor-merge (grid-table--merge-at merges (car cursor) (cdr cursor)))
@@ -940,6 +969,20 @@ LINE, the grid line border."
          (border (grid-table-etaf--face-color 'grid-table-etaf-border-face
                                               :foreground))
          (line (if border (list '(px 1) 'solid border) '(px 1)))
+         ;; The line under the last frozen row and right of the last
+         ;; frozen column is drawn in the text color.
+         (edge (if-let* ((color (grid-table-etaf--face-color
+                                 'grid-table-etaf-freeze-face :foreground)))
+                   (list '(px 1) 'solid color)
+                 line))
+         (edge-row (and (> (car frozen) 0)
+                        (car (last (cl-remove-if-not
+                                    (lambda (row) (< row (car frozen)))
+                                    rows)))))
+         (edge-col (and (> (cdr frozen) 0)
+                        (car (last (cl-remove-if-not
+                                    (lambda (col) (< col (cdr frozen)))
+                                    cols)))))
          children)
     (push (grid-table-etaf--header-node
            'corner 1 1 "" 'left nil line
@@ -956,7 +999,8 @@ LINE, the grid line border."
             (and (<= sel-left col) (<= col sel-right)) line
             (grid-table-etaf--drag-header
              buffer (lambda () (grid-table-etaf-select-column col)))
-            (grid-table-etaf--drag-resize buffer col))
+            (grid-table-etaf--drag-resize buffer col)
+            (and (eql col edge-col) edge))
            children))
     (cl-loop
      for row in rows for row-slot from 0 do
@@ -965,7 +1009,8 @@ LINE, the grid line border."
             (number-to-string (1+ row)) 'right
             (and (<= sel-top row) (<= row sel-bottom)) line
             (grid-table-etaf--drag-header
-             buffer (lambda () (grid-table-etaf-select-row row))))
+             buffer (lambda () (grid-table-etaf-select-row row)))
+            nil nil (and (eql row edge-row) edge))
            children)
      (cl-loop
       for col in cols for col-slot from 0 do
@@ -977,8 +1022,15 @@ LINE, the grid line border."
                                (lambda (shown)
                                  (<= (nth 0 merge) shown (nth 2 merge)))
                                rows)))
+             ;; Frozen columns are not next to the ones after them, so
+             ;; a merge spans the columns of it that are shown as well.
+             (merge-cols (and merge
+                              (cl-remove-if-not
+                               (lambda (shown)
+                                 (<= (nth 1 merge) shown (nth 3 merge)))
+                               cols)))
              (vis-top (car merge-rows))
-             (vis-left (and merge (max (nth 1 merge) first-col)))
+             (vis-left (car merge-cols))
              (cell-row (if merge (nth 0 merge) row))
              (cell-col (if merge (nth 1 merge) col)))
         (unless (and merge (not (and (= row vis-top) (= col vis-left))))
@@ -988,14 +1040,21 @@ LINE, the grid line border."
              (grid-table-etaf--cell-node
               state source cell-row cell-col
               (and merge
-                   (cons (length merge-rows)
-                         (1+ (- (min (nth 3 merge) last-col) vis-left))))
+                   (cons (length merge-rows) (length merge-cols)))
               (list :key (+ (* 10000 row-slot) col-slot)
                     :rules rules
                     :ref (grid-table-etaf--slot-ref row-slot col-slot)
                     :grid-row (+ 2 row-slot)
                     :grid-col (+ 2 col-slot)
                     :line line
+                    :line-right
+                    (and edge-col
+                         (eql (if merge (car (last merge-cols)) col) edge-col)
+                         edge)
+                    :line-bottom
+                    (and edge-row
+                         (eql (if merge (car (last merge-rows)) row) edge-row)
+                         edge)
                     :cursor cursor-p
                     :editing (and cursor-p editing)
                     :selected
@@ -1071,13 +1130,19 @@ LINE, the grid line border."
          (row (car cursor))
          (col (cdr cursor))
          (left-ref (grid-table-etaf--state-left state))
-         (top-ref (grid-table-etaf--state-top state)))
-    (when (< col (etaf-value left-ref))
+         (top-ref (grid-table-etaf--state-top state))
+         (frozen (grid-table-frozen (grid-table-etaf--source state))))
+    ;; A frozen row or column is shown wherever the window is.
+    (when (< (etaf-value top-ref) (car frozen))
+      (etaf-set-value top-ref (car frozen)))
+    (when (< (etaf-value left-ref) (cdr frozen))
+      (etaf-set-value left-ref (cdr frozen)))
+    (when (and (>= col (cdr frozen)) (< col (etaf-value left-ref)))
       (etaf-set-value left-ref col))
     (while (not (memq col (grid-table-etaf--visible-cols
                            state (etaf-value left-ref))))
       (etaf-set-value left-ref (1+ (etaf-value left-ref))))
-    (when (< row (etaf-value top-ref))
+    (when (and (>= row (car frozen)) (< row (etaf-value top-ref)))
       (etaf-set-value top-ref row))
     (let ((cols (grid-table-etaf--visible-cols state (etaf-value left-ref))))
       (while (not (memq row (grid-table-etaf--visible-rows
@@ -1188,9 +1253,12 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
 (defun grid-table-etaf--scroll (rows)
   "Scroll the window ROWS down without moving the cursor."
   (let* ((state (grid-table-etaf--state-or-error))
-         (top (grid-table-etaf--state-top state)))
-    (etaf-set-value top (grid-table-etaf--step-row
-                         state (etaf-value top) rows))))
+         (top (grid-table-etaf--state-top state))
+         (frozen (car (grid-table-frozen (grid-table-etaf--source state)))))
+    ;; The frozen rows do not scroll: the window starts under them.
+    (etaf-set-value top (max frozen
+                             (grid-table-etaf--step-row
+                              state (max frozen (etaf-value top)) rows)))))
 
 (defun grid-table-etaf-scroll-down ()
   "Scroll the sheet three rows down."
@@ -1201,6 +1269,49 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
   "Scroll the sheet three rows up."
   (interactive)
   (grid-table-etaf--scroll -3))
+
+(defun grid-table-etaf-freeze-panes ()
+  "Keep the rows above the cursor and the columns left of it in place.
+They stay at the top and the left of the window while the rest of the
+sheet scrolls, and are saved with the grid.  With the cursor in the
+first cell nothing is above or left of it, and every row and column
+scrolls again, as after `grid-table-unfreeze-panes'."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (cursor (grid-table-etaf--cursor))
+         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor)))
+         (rows (nth 0 extent))
+         (cols (nth 1 extent))
+         (old (grid-table-frozen source)))
+    (unless (grid-table-set-frozen source rows cols)
+      (user-error "This grid cannot keep rows and columns in place"))
+    ;; What is frozen has to leave room for the cell under the cursor.
+    (let* ((shown-cols (grid-table-etaf--visible-cols state cols))
+           (shown-rows (grid-table-etaf--visible-rows state rows shown-cols))
+           (viewport (grid-table-etaf--viewport state))
+           (char (grid-table-etaf--char-width))
+           (widths (grid-table-etaf--state-widths state))
+           (merges (grid-get-merges source)))
+      (when (or (> (+ (grid-table-etaf--row-header-width source) 2
+                      (cl-loop for col in shown-cols
+                               when (<= col cols)
+                               sum (+ 3 (aref widths col))))
+                   (/ (car viewport) char))
+                (> (+ 3 (grid-table-etaf--title-lines state)
+                      (cl-loop for row in shown-rows
+                               when (<= row rows)
+                               sum (grid-table-etaf--row-lines
+                                    state row shown-cols merges)))
+                   (cdr viewport)))
+        (grid-table-set-frozen source (car old) (cdr old))
+        (user-error "The window is too small to freeze that much")))
+    (grid-table-etaf--bump state)
+    (grid-table-etaf--settle state)
+    (message (if (and (zerop rows) (zerop cols))
+                 "No row or column is frozen"
+               "Frozen: %d row%s, %d column%s")
+             rows (if (= rows 1) "" "s") cols (if (= cols 1) "" "s"))))
 
 (defun grid-table-etaf-first-cell ()
   "Move the cursor to the first cell of the sheet."

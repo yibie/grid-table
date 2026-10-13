@@ -58,6 +58,14 @@ TITLE is an optional string for the grid title."
              (lambda (s col width)
                (grid-model-set-column-width (gethash :model s) col width))
              source)
+    (puthash :get-frozen
+             (lambda (s)
+               (grid-data-model-frozen (gethash :model s)))
+             source)
+    (puthash :set-frozen
+             (lambda (s rows cols)
+               (grid-model-set-frozen (gethash :model s) rows cols))
+             source)
     (puthash :grow
              (lambda (s rows cols)
                (puthash :model (grid-model-grow (gethash :model s) rows cols) s)
@@ -427,13 +435,19 @@ change rewrote in other sheets go back with it."
                                 (grid-workbook-sheet-name s)))
                            (apply function s args))
                     (grid-workbook--changed workbook s key args old-model)))
-           ;; Column widths set by hand stay with their columns.
+           ;; Column widths set by hand stay with their columns, and the
+           ;; frozen rows and columns stay frozen.
            (let ((model (gethash :model s)))
              (unless (or (eq model old-model) (null old-model))
                (pcase (grid-workbook--line-change key args old-model)
                  (`(col ,at ,delta)
-                  (grid-model-carry-widths old-model model at delta))
-                 (_ (grid-model-carry-widths old-model model))))))))
+                  (grid-model-carry-widths old-model model at delta)
+                  (grid-model-carry-frozen old-model model 'col at delta))
+                 (`(row ,at ,delta)
+                  (grid-model-carry-widths old-model model)
+                  (grid-model-carry-frozen old-model model 'row at delta))
+                 (_ (grid-model-carry-widths old-model model)
+                    (grid-model-carry-frozen old-model model))))))))
      source)))
 
 (provide 'grid-data-source)

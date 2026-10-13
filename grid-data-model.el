@@ -62,7 +62,9 @@ CONDITIONALS a list of conditional format rules."
           (or styles (make-hash-table :test 'equal))
           conditionals
           ;; Column widths set by hand: column index to characters
-          (make-hash-table)))
+          (make-hash-table)
+          ;; Leading rows and columns that stay in place: (ROWS . COLS)
+          (cons 0 0)))
 
 (defun grid-data-model-rows (model) (aref model 0))
 (defun grid-data-model-cols (model) (aref model 1))
@@ -82,6 +84,10 @@ CONDITIONALS a list of conditional format rules."
   "Return MODEL's table of column widths set by hand, column to characters."
   (when (> (length model) 6)
     (aref model 6)))
+(defun grid-data-model-frozen (model)
+  "Return (ROWS . COLS): the leading rows and columns of MODEL kept in place."
+  (or (and (> (length model) 7) (aref model 7))
+      (cons 0 0)))
 
 ;;;----------------------------------------------------------------------
 ;;; Model Creation and Access
@@ -220,6 +226,31 @@ entirely is dropped."
         (puthash col width widths)
       (remhash col widths))
     width))
+
+(defun grid-model-set-frozen (model rows cols)
+  "Keep the first ROWS rows and COLS columns of MODEL in place.
+A row and a column are always left to scroll."
+  (when (> (length model) 7)
+    (aset model 7
+          (cons (max 0 (min rows (1- (grid-data-model-rows model))))
+                (max 0 (min cols (1- (grid-data-model-cols model))))))))
+
+(defun grid-model--frozen-after (count at delta)
+  "Return frozen COUNT after a line was inserted or deleted at AT by DELTA."
+  (if (and at (< at count)) (+ count delta) count))
+
+(defun grid-model-carry-frozen (old new &optional axis at delta)
+  "Give model NEW the frozen rows and columns of model OLD and return NEW.
+AXIS is `row' or `col' when a line was inserted at AT (DELTA 1) or
+deleted there (DELTA -1) on the way; a line inside the frozen ones
+changes how many there are."
+  (unless (eq old new)
+    (let ((frozen (grid-data-model-frozen old)))
+      (grid-model-set-frozen
+       new
+       (grid-model--frozen-after (car frozen) (and (eq axis 'row) at) delta)
+       (grid-model--frozen-after (cdr frozen) (and (eq axis 'col) at) delta))))
+  new)
 
 (defun grid-model-carry-widths (old new &optional at delta)
   "Give model NEW the column widths of model OLD and return NEW.
