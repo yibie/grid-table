@@ -365,26 +365,17 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
             col (1- (/ col 26))))
     result))
 
-(defun grid-calc-shift-formula (formula rows cols)
-  "Return FORMULA with its relative references moved ROWS down and COLS right.
-Parts of a reference anchored with $ stay.  A reference pushed off the
-sheet's top or left edge becomes #REF!.  Text inside double quotes and
-anything that is not a formula are returned unchanged."
-  (if (or (not (string-prefix-p "=" formula))
-          (string-prefix-p "=elisp:" formula))
-      formula
-    (let ((pos 0) (len (length formula)) (parts nil) (case-fold-search t))
-      (while (< pos len)
-        (cond
-         ;; Quoted text
-         ((eq (aref formula pos) ?\")
-          (let ((end (or (string-search "\"" formula (1+ pos)) (1- len))))
-            (push (substring formula pos (1+ end)) parts)
-            (setq pos (1+ end))))
-         ;; A reference: not the tail of a name, not a function call
-         ((and (eq (string-match
-                    "\\(\\$?\\)\\([A-Za-z]+\\)\\(\\$?\\)\\([0-9]+\\)" formula pos)
-                   pos)
+(defconst grid-calc--reference-regexp
+  "\\(\\$?\\)\\([A-Za-z]+\\)\\(\\$?\\)\\([0-9]+\\)"
+  "Matches a cell reference: column anchor, letters, row anchor, number.")
+
+(defun grid-calc--reference-at (formula pos)
+  "Return the reference that starts at POS in FORMULA, or nil.
+The value is (END COL-ANCHOR COL ROW-ANCHOR ROW), with COL zero-based and
+ROW the number written.  The tail of a name and the name of a function
+are not references."
+  (let ((len (length formula)))
+    (when (and (eq (string-match grid-calc--reference-regexp formula pos) pos)
                (not (and (> pos 0)
                          (string-match-p "[A-Za-z0-9_.$]"
                                          (substring formula (1- pos) pos))))
@@ -392,28 +383,117 @@ anything that is not a formula are returned unchanged."
                          (string-match-p "[A-Za-z0-9_.(]"
                                          (substring formula (match-end 0)
                                                     (1+ (match-end 0)))))))
-          (let* ((end (match-end 0))
-                 (col-fixed (match-string 1 formula))
-                 (row-fixed (match-string 3 formula))
-                 (col (grid-calc-col-letter-to-number (match-string 2 formula)))
-                 (row (string-to-number (match-string 4 formula)))
-                 (new-col (if (string-empty-p col-fixed) (+ col cols) col))
-                 (new-row (if (string-empty-p row-fixed) (+ row rows) row)))
-            (push (if (or (< new-col 0) (< new-row 1))
-                      "#REF!"
-                    (concat col-fixed (grid-calc-col-number-to-letter new-col)
-                            row-fixed (number-to-string new-row)))
-                  parts)
-            (setq pos end)))
-         ;; A name or number: skip it whole so its tail is not read as a
-         ;; reference
-         ((eq (string-match "[A-Za-z0-9_.$]+" formula pos) pos)
-          (push (match-string 0 formula) parts)
-          (setq pos (match-end 0)))
-         (t
-          (push (substring formula pos (1+ pos)) parts)
-          (setq pos (1+ pos)))))
+      (list (match-end 0)
+            (match-string 1 formula)
+            (grid-calc-col-letter-to-number (match-string 2 formula))
+            (match-string 3 formula)
+            (string-to-number (match-string 4 formula))))))
+
+(defun grid-calc--reference-text (reference)
+  "Return the text of REFERENCE, a (COL-ANCHOR COL ROW-ANCHOR ROW) list.
+A reference off the sheet's top or left edge is #REF!."
+  (pcase-let ((`(,col-anchor ,col ,row-anchor ,row) reference))
+    (if (or (< col 0) (< row 1))
+        "#REF!"
+      (concat col-anchor (grid-calc-col-number-to-letter col)
+              row-anchor (number-to-string row)))))
+
+(defun grid-calc--map-references (formula function)
+  "Return FORMULA with each reference replaced by what FUNCTION returns.
+FUNCTION is called with the two ends of a range, each a (COL-ANCHOR COL
+ROW-ANCHOR ROW) list, or with one such list and nil for a lone
+reference, and returns the replacement text.  Text inside double quotes
+and anything that is not a formula are returned unchanged."
+  (if (or (not (stringp formula))
+          (not (string-prefix-p "=" formula))
+          (string-prefix-p "=elisp:" formula))
+      formula
+    (let ((pos 0) (len (length formula)) (parts nil) (case-fold-search t))
+      (while (< pos len)
+        (let ((reference (grid-calc--reference-at formula pos)))
+          (cond
+           ;; Quoted text
+           ((eq (aref formula pos) ?\")
+            (let ((end (or (string-search "\"" formula (1+ pos)) (1- len))))
+              (push (substring formula pos (1+ end)) parts)
+              (setq pos (1+ end))))
+           (reference
+            (let* ((end (car reference))
+                   (other (and (< end len) (eq (aref formula end) ?:)
+                               (grid-calc--reference-at formula (1+ end)))))
+              (push (funcall function (cdr reference) (cdr other)) parts)
+              (setq pos (if other (car other) end))))
+           ;; A name or number: skip it whole so its tail is not read as a
+           ;; reference
+           ((eq (string-match "[A-Za-z0-9_.$]+" formula pos) pos)
+            (push (match-string 0 formula) parts)
+            (setq pos (match-end 0)))
+           (t
+            (push (substring formula pos (1+ pos)) parts)
+            (setq pos (1+ pos))))))
       (apply #'concat (nreverse parts)))))
+
+(defun grid-calc-shift-formula (formula rows cols)
+  "Return FORMULA with its relative references moved ROWS down and COLS right.
+Parts of a reference anchored with $ stay.  A reference pushed off the
+sheet's top or left edge becomes #REF!.  Text inside double quotes and
+anything that is not a formula are returned unchanged."
+  (let ((shift (lambda (reference)
+                 (pcase-let ((`(,col-anchor ,col ,row-anchor ,row) reference))
+                   (grid-calc--reference-text
+                    (list col-anchor
+                          (if (string-empty-p col-anchor) (+ col cols) col)
+                          row-anchor
+                          (if (string-empty-p row-anchor) (+ row rows) row)))))))
+    (grid-calc--map-references
+     formula
+     (lambda (start end)
+       (if end
+           (concat (funcall shift start) ":" (funcall shift end))
+         (funcall shift start))))))
+
+(defun grid-calc-restructure-formula (formula axis at delta)
+  "Return FORMULA rewritten for a row or column inserted or deleted.
+AXIS is `row' or `col' and AT the zero-based index of the line inserted
+\(DELTA 1) or deleted (DELTA -1).  A reference keeps pointing at the cell
+it pointed at, anchored or not: one at or past an inserted line moves
+on, one past a deleted line moves back.  A reference to a deleted cell
+becomes #REF!; a range that loses a line shrinks, and becomes #REF! only
+when nothing of it is left."
+  (let* ((index (lambda (reference)
+                  (if (eq axis 'row) (1- (nth 3 reference)) (nth 1 reference))))
+         (moved (lambda (reference to)
+                  (grid-calc--reference-text
+                   (if (eq axis 'row)
+                       (list (nth 0 reference) (nth 1 reference)
+                             (nth 2 reference) (1+ to))
+                     (list (nth 0 reference) to
+                           (nth 2 reference) (nth 3 reference)))))))
+    (grid-calc--map-references
+     formula
+     (lambda (start end)
+       (let ((from (funcall index start))
+             (to (and end (funcall index end))))
+         (cond
+          ((> delta 0)
+           (let ((new-from (if (>= from at) (1+ from) from)))
+             (if end
+                 (concat (funcall moved start new-from) ":"
+                         (funcall moved end (if (>= to at) (1+ to) to)))
+               (funcall moved start new-from))))
+          ((not end)
+           (cond ((= from at) "#REF!")
+                 (t (funcall moved start (if (> from at) (1- from) from)))))
+          (t
+           ;; Keep the ends in the order they were written.
+           (let* ((low (min from to)) (high (max from to))
+                  (new-low (if (> low at) (1- low) low))
+                  (new-high (if (>= high at) (1- high) high)))
+             (if (< new-high new-low)
+                 "#REF!"
+               (concat (funcall moved start (if (<= from to) new-low new-high))
+                       ":"
+                       (funcall moved end (if (<= from to) new-high new-low))))))))))))
 
 (defun grid-calc-get-cell-value (model ref-str)
   "Retrieves the computed value of a cell from the model."

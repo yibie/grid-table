@@ -517,6 +517,15 @@ Returns a cons cell: (HEADERS . LIST-OF-LISTS-OF-RAW-VALUES)."
                                                          (grid-model-get-cell model r c))))))
     (cons (nth 0 all-raw-rows) (cl-subseq all-raw-rows 1)))) ; Return first row as headers, rest as data
 
+(defun grid-model--restructure-formulas (raw-rows axis at delta)
+  "Return RAW-ROWS with every formula rewritten for a structural change.
+AXIS, AT and DELTA are as for `grid-calc-restructure-formula'."
+  (mapcar (lambda (row)
+            (mapcar (lambda (value)
+                      (grid-calc-restructure-formula value axis at delta))
+                    row))
+          raw-rows))
+
 (defun grid-model-add-row (model &optional row-idx)
   "Adds a new empty row to the model at ROW-IDX (0-based).
 If ROW-IDX is nil or out of bounds, adds to the end.
@@ -551,7 +560,9 @@ Returns a new model instance."
                                     (t merge))))
                                (grid-data-model-merges model))))
       (grid-model-create
-       (1+ current-rows) current-cols new-raw-values new-merges
+       (1+ current-rows) current-cols
+       (grid-model--restructure-formulas new-raw-values 'row insert-row 1)
+       new-merges
        (grid-model--map-styles
         model (lambda (row col)
                 (cons (grid-model--shift-index row insert-row 1) col)))
@@ -602,7 +613,9 @@ Returns a new model instance. Errors if ROW-IDX is invalid or only one row remai
                                candidate))))))
                    (grid-data-model-merges model)))))
       (grid-model-create
-       (1- current-rows) current-cols new-raw-values new-merges
+       (1- current-rows) current-cols
+       (grid-model--restructure-formulas new-raw-values 'row delete-row -1)
+       new-merges
        (grid-model--map-styles
         model (lambda (row col)
                 (let ((moved (grid-model--shift-index row delete-row -1)))
@@ -651,7 +664,9 @@ Returns a new model instance."
                                     (t merge))))
                                (grid-data-model-merges model))))
       (grid-model-create
-       current-rows (1+ current-cols) new-raw-values new-merges
+       current-rows (1+ current-cols)
+       (grid-model--restructure-formulas new-raw-values 'col insert-col 1)
+       new-merges
        (grid-model--map-styles
         model (lambda (row col)
                 (cons row (grid-model--shift-index col insert-col 1))))
@@ -702,7 +717,9 @@ Returns a new model instance. Errors if COL-IDX is invalid or only one column re
     ;; Reconstruct the complete raw values with user-defined headers at the top
     (let ((new-raw-values (cons new-user-defined-headers new-data-rows)))
       (grid-model-create
-       current-rows (1- current-cols) new-raw-values new-merges
+       current-rows (1- current-cols)
+       (grid-model--restructure-formulas new-raw-values 'col col-idx -1)
+       new-merges
        (grid-model--map-styles
         model (lambda (row col)
                 (let ((moved (grid-model--shift-index col col-idx -1)))
