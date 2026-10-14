@@ -469,6 +469,9 @@ This is inefficient but guaranteed to terminate. Includes a circuit breaker."
 ;;; Public API
 ;;;----------------------------------------------------------------------
 
+(define-error 'grid-model-covered-cell
+  "Cannot set non-empty value in covered merged cell")
+
 (defun grid-model-set-raw-value (model row col raw-value)
   "Set the raw value for a cell at ROW, COL and trigger recalculation.
 This is the main entry point for changing data in the model.
@@ -479,7 +482,7 @@ Returns the modified cell, or nil if the cell does not exist."
                  (and merge
                       (not (and (= row (nth 0 merge))
                                 (= col (nth 1 merge)))))))
-      (error "Cannot set non-empty value in covered merged cell"))
+      (signal 'grid-model-covered-cell (list row col)))
     (set-grid-cell-raw-input cell raw-value)
     ;; Use grid-table-calc to set formula and trigger recalculation
     (grid-table-calc-set-cell-formula model (cons row col) raw-value)
@@ -531,6 +534,7 @@ Returns a new model instance with sorted data.
 Note: This function sorts the actual data rows, excluding the first row
 which is considered user-defined headers. The first row will remain in place.
 With WHOLE, the sheet has no header row and its first row is sorted too.
+Rows frozen in place stay where they are as well.
 
 A formula in a row that moves has its relative references moved by as
 many rows, as if the row had been cut and pasted; anchored parts and
@@ -548,8 +552,10 @@ being sorted moves like one that names none."
                            (grid-data-model-merges model))
               (error "Cannot sort a model containing vertical merges; unmerge them first")))
          (all-raw-values (grid-model-get-all-raw-values model))
-         ;; How many rows stay at the top: the header row, or none
-         (kept (if whole 0 1))
+         ;; How many rows stay at the top: the header row and the rows
+         ;; frozen in place, which hold titles more than data.
+         (kept (max (if whole 0 1)
+                    (car (grid-data-model-frozen model))))
          (user-defined-headers (cl-subseq all-raw-values 0 kept))
          (data-rows (nthcdr kept all-raw-values))
          ;; Rows sort by what the column shows, so a formula sorts by its

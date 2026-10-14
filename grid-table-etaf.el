@@ -521,19 +521,41 @@ The column follows the pointer; a cancelled drag restores its width."
         (let* ((state grid-table-etaf--state)
                (widths (grid-table-etaf--state-widths state)))
           (pcase (plist-get gesture :phase)
+            ;; START is the width at the press and the width set by
+            ;; hand then, for the one undo step the drag makes.
             ('start
              (setf (grid-table-etaf--state-resize-start state)
-                   (aref widths col)))
+                   (cons (aref widths col)
+                         (when-let* ((manual (grid-table-etaf--manual state)))
+                           (gethash col manual)))))
             ((or 'move 'end)
              (let ((start (grid-table-etaf--state-resize-start state)))
                (when start
                  (grid-table-etaf-set-column-width
-                  col (+ start (round (car (plist-get gesture :delta))
-                                      (grid-table-etaf--char-width)))))))
+                  col (+ (car start)
+                         (round (car (plist-get gesture :delta))
+                                (grid-table-etaf--char-width))))
+                 (when (eq (plist-get gesture :phase) 'end)
+                   (setf (grid-table-etaf--state-resize-start state) nil)
+                   (let ((new (aref (grid-table-etaf--state-widths state) col)))
+                     (unless (eql new (car start))
+                       (grid-table-etaf--record
+                        state (list 'width col (cdr start) new))))))))
             ('cancel
              (let ((start (grid-table-etaf--state-resize-start state)))
                (when start
-                 (grid-table-etaf-set-column-width col start))))))))))
+                 (setf (grid-table-etaf--state-resize-start state) nil)
+                 (grid-table-etaf--restore-column-width
+                  state col (cdr start)))))))))))
+
+(defun grid-table-etaf--restore-column-width (state col width)
+  "Give column COL of STATE the width WIDTH set by hand; nil fits it again."
+  (let ((source (grid-table-etaf--source state)))
+    (unless (grid-set-column-width source col width)
+      (when-let* ((manual (grid-table-etaf--state-manual state)))
+        (if width (puthash col width manual) (remhash col manual))))
+    (grid-table-etaf--fit-widths state)
+    (grid-table-etaf--bump state)))
 
 (defun grid-table-etaf--direction (buffer)
   "Return the arrow key handler of BUFFER's sheet."
@@ -1324,6 +1346,7 @@ scrolls again, as after `grid-table-unfreeze-panes'."
                        (memq last-row shown-rows)))
         (grid-table-set-frozen source (car old) (cdr old))
         (user-error "The window is too small to freeze that much")))
+    (grid-table-etaf-note-frozen old)
     (grid-table-etaf--bump state)
     (grid-table-etaf--settle state)
     (message (if (and (zerop rows) (zerop cols))
@@ -1611,6 +1634,14 @@ TAB or the mouse, stores the text too."
 (defconst grid-table-etaf--undo-limit 200
   "How many changes the undo history of a grid keeps.")
 
+(defun grid-table-etaf-note-frozen (old)
+  "Record for undo that the frozen rows and columns were OLD, a (ROWS . COLS).
+Nothing is recorded when they did not change."
+  (when-let* ((state grid-table-etaf--state))
+    (let ((new (grid-table-frozen (grid-table-etaf--source state))))
+      (unless (equal old new)
+        (grid-table-etaf--record state (list 'frozen old new))))))
+
 (defun grid-table-etaf--record (state record)
   "Push RECORD on STATE's undo history and drop its redo history."
   (let ((undo (cons record (grid-table-etaf--state-undo state))))
@@ -1646,7 +1677,7 @@ that reject the value, such as the covered part of a merge, are skipped."
               (progn
                 (grid-set-raw-value-at source row col value)
                 (push (list row col old value) applied))
-            (error nil)))))
+            (grid-model-covered-cell nil)))))
     (nreverse applied)))
 
 (defun grid-table-etaf--set-cells (state changes)
@@ -1752,6 +1783,13 @@ shifts."
                             (nth (if forward 3 2) cell)))
        (when (grid-table-etaf--text-format-changed-p cells)
          (grid-table-recalculate source))
+       (grid-table-etaf--bump state)
+       (grid-table-etaf--settle state))
+      (`(width ,col ,old ,new)
+       (grid-table-etaf--restore-column-width state col (if forward new old)))
+      (`(frozen ,old ,new)
+       (let ((frozen (if forward new old)))
+         (grid-table-set-frozen source (car frozen) (cdr frozen)))
        (grid-table-etaf--bump state)
        (grid-table-etaf--settle state))
       (`(conditionals ,old ,new)
@@ -2170,7 +2208,8 @@ reach past its last row or column; a data source that cannot grow drops
 them.  Copied formulas have their relative references moved
 by the distance they travel, as in a spreadsheet; cut formulas do not.
 Cells copied in a grid bring their formats; text from elsewhere leaves
-the formats of the cells it lands in."
+the formats of the cells it lands in.  Rows hidden by a filter are
+passed over: the pasted lines go to the rows that are shown."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
          (source (grid-table-etaf--source state))
@@ -2188,16 +2227,25 @@ the formats of the cells it lands in."
          (top (nth 0 range))
          (left (nth 1 range))
          (single (and (null (cdr rows)) (null (cdr (car rows)))))
+         (row-count (grid-get-row-count source))
+         ;; The rows the pasted lines land in: rows hidden by a filter
+         ;; are passed over, as copying and clearing pass over them.
+         (targets (let ((row top) targets)
+                    (while (< (length targets) (length rows))
+                      (when (or (>= row row-count)
+                                (grid-table-etaf--row-shown-p state row))
+                        (push row targets))
+                      (setq row (1+ row)))
+                    (nreverse targets)))
          ;; How far the pasted block reaches past the grid
          (more-rows (if (or single (null (gethash :grow source)))
                         0
-                      (max 0 (- (+ top (length rows))
-                                (grid-get-row-count source)))))
+                      (max 0 (- (1+ (car (last targets))) row-count))))
          (more-cols (if (or single (null (gethash :grow source)))
                         0
                       (max 0 (- (+ left (apply #'max (mapcar #'length rows)))
                                 (grid-get-column-count source)))))
-         (max-row (+ more-rows (1- (grid-get-row-count source))))
+         (max-row (+ more-rows (1- row-count)))
          (max-col (+ more-cols (1- (grid-get-column-count source))))
          (bottom top)
          (right left)
@@ -2205,7 +2253,8 @@ the formats of the cells it lands in."
          changes styles)
     (unless rows (user-error "Nothing to paste"))
     (if single
-        (cl-loop for row from top to (nth 2 range) do
+        (cl-loop for row from top to (nth 2 range)
+                 when (grid-table-etaf--row-shown-p state row) do
                  (cl-loop for col from left to (nth 3 range) do
                           (push (list row col
                                       (grid-table-etaf--shifted
@@ -2215,7 +2264,8 @@ the formats of the cells it lands in."
                             (push (list row col (caar styled)) styles)))
                  finally (setq bottom (nth 2 range) right (nth 3 range)))
       (cl-loop
-       for values in rows for row from top to max-row do
+       for values in rows for row in targets for line from 0
+       while (<= row max-row) do
        (setq bottom row)
        (cl-loop for value in values for col from left to max-col do
                 (setq right (max right col))
@@ -2225,7 +2275,7 @@ the formats of the cells it lands in."
                       changes)
                 (when styled
                   (push (list row col
-                              (nth (- col left) (nth (- row top) styled)))
+                              (nth (- col left) (nth line styled)))
                         styles)))))
     (let ((count (grid-table-etaf--as-one-step
                   state

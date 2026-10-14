@@ -779,7 +779,7 @@ Returns a list of column heights."
               (round (* (/ (float v) y-max) chart-height)))
             vals)))
 
-(defun grid-chart-columnplot (labels values params)
+(cl-defun grid-chart-columnplot (labels values params)
   "Generate a vertical column plot using PARAMS configuration.
 Uses grid-chart-render-with-axis for consistent rendering.
 Layout: Y axis with values, X axis with labels, columns grow upward."
@@ -947,7 +947,7 @@ Layout: Y axis with values, X axis with labels, columns grow upward."
 ;;; Line/Scatter Plot Implementation
 ;;;----------------------------------------------------------------------
 
-(defun grid-chart--lineplot-render (x-data y-series params &optional type)
+(cl-defun grid-chart--lineplot-render (x-data y-series params &optional type)
   "Render line or scatter plot for Y-SERIES using shared X-DATA."
   (let* ((params (or params (grid-chart-params-create)))
          (width (or (grid-chart-params-width params) 40))

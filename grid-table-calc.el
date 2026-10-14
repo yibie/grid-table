@@ -16,7 +16,7 @@
 (define-error 'grid-calc-cycle "Circular reference" 'grid-calc-error)
 
 (defconst grid-calc-error-values
-  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#CYCLE!" "#ERROR!")
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CYCLE!" "#ERROR!")
   "Values a cell shows when its formula cannot be computed.")
 
 (defvar grid-calc--pass nil
@@ -424,6 +424,12 @@ AST: The Abstract Syntax Tree to evaluate."
 
     ;; TRUE and FALSE
     (`(LITERAL ,value) value)
+
+    ;; An error value written in the formula, as #REF! left by a deletion
+    (`(ERROR ,value) (signal 'grid-calc-error (list value)))
+
+    ;; A bare word: no names are defined
+    (`(NAME ,_) (signal 'grid-calc-error '("#NAME?")))
     
     ;; String literal
     (`(STRING ,value) value)
@@ -577,30 +583,69 @@ hold them."
                                             (nth 3 time))))))
    (t (error "Value cannot be read as a date: %s" value))))
 
+(defun grid-calc--wildcard-regexp (pattern)
+  "Return a regexp matching the whole of text that PATTERN matches.
+In PATTERN `*' is any run of characters, `?' any one character, and `~'
+makes the character after it literal, as in Excel criteria."
+  (let ((i 0) (len (length pattern)) parts)
+    (while (< i len)
+      (let ((char (aref pattern i)))
+        (cond ((and (eq char ?~) (< (1+ i) len))
+               (setq i (1+ i))
+               (push (regexp-quote (string (aref pattern i))) parts))
+              ((eq char ?*) (push "\\(?:.\\|\n\\)*" parts))
+              ((eq char ??) (push "\\(?:.\\|\n\\)" parts))
+              (t (push (regexp-quote (string char)) parts))))
+      (setq i (1+ i)))
+    (concat "\\`" (apply #'concat (nreverse parts)) "\\'")))
+
 (defun grid-calc--parse-criteria (criteria)
-  "Parse a criteria string (e.g., \">10\", \"<>0\", \"Apple\") into a predicate lambda.
-The criteria can be a number, a string, or a string with a comparison operator."
-  (if (numberp criteria)
-      ;; Criteria is a number, e.g., 10
-      (lambda (cell-val) (= (grid-calc-to-number cell-val) criteria))
-    (let ((crit-str (grid-calc-to-string criteria)))
-      (if (string-match "^\\([<>=]+\\)\\(.*\\)$" crit-str)
-          ;; Criteria is a comparison, e.g., ">=10"
-          (let* ((op-str (match-string 1 crit-str))
-                 (val-str (match-string 2 crit-str))
-                 (op (pcase op-str
-                       ("="  '=)
-                       (">"  '>)
-                       ("<"  '<)
-                       (">=" '>=)
-                       ("<=" '<=)
-                       ("<>"  (lambda (a b) (not (= a b))))
-                       (_    'equal)))
-                 (val-num (string-to-number val-str)))
-            (lambda (cell-val)
-              (funcall op (grid-calc-to-number cell-val) val-num)))
-        ;; Criteria is a simple string match, e.g., "Apple"
-        (lambda (cell-val) (equal (grid-calc-to-string cell-val) crit-str))))))
+  "Return a predicate on cell values for CRITERIA, as COUNTIF reads it.
+CRITERIA is a number, text to match, or text after a comparison
+operator (\">10\", \"<>0\", \"<>apple\").  Text matches ignore case and
+take the wildcards `*' and `?'; numbers compare only with numbers."
+  (let* ((text (if (numberp criteria)
+                   (grid-format-general criteria)
+                 (grid-calc-to-string criteria)))
+         (op (if (string-match "\\`\\(<=\\|>=\\|<>\\|[<>=]\\)" text)
+                 (match-string 1 text)
+               "="))
+         (operand (if (string-match "\\`\\(<=\\|>=\\|<>\\|[<>=]\\)" text)
+                      (substring text (match-end 0))
+                    text))
+         (number (if (numberp criteria) criteria (grid-calc--numeric operand)))
+         (compare (pcase op
+                    ("=" #'=) (">" #'>) ("<" #'<) (">=" #'>=) ("<=" #'<=)
+                    ("<>" (lambda (a b) (not (= a b)))))))
+    (cond
+     (number
+      (lambda (value)
+        (let ((cell (grid-calc--numeric value)))
+          (if cell
+              (funcall compare cell number)
+            (equal op "<>")))))
+     ((member op '("=" "<>"))
+      (let ((regexp (grid-calc--wildcard-regexp (downcase operand)))
+            (blank (string-empty-p operand)))
+        (lambda (value)
+          (let* ((cell (if (null value) "" (grid-calc-to-string value)))
+                 (match (if blank
+                            (string-empty-p cell)
+                          (and (stringp value)
+                               (not (grid-calc--numeric value))
+                               (string-match-p regexp (downcase cell))))))
+            (if (equal op "=") match (not match))))))
+     (t
+      (let ((target (downcase operand)))
+        (lambda (value)
+          (and (stringp value) (not (string-empty-p value))
+               (not (grid-calc--numeric value))
+               (let ((cell (downcase value)))
+                 (pcase op
+                   (">" (string< target cell))
+                   ("<" (string< cell target))
+                   (">=" (not (string< cell target)))
+                   ("<=" (not (string< target cell))))))))))))
 
 (defun grid-calc-to-string (value)
   "Converts a value to a string, a number as the general format shows it."

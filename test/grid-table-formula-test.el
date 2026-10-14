@@ -1025,6 +1025,43 @@
     (should (equal (grid-get-display-value-at source 0 0) "03/04/2026"))
     (should (equal (grid-get-computed-value-at source 0 1) 46086))))
 
+(ert-deftest grid-table-formula-errors-and-names-read-as-in-excel ()
+  ;; An error written in a formula, as a deleted reference leaves it,
+  ;; is that error; a word that calls nothing is an unknown name.
+  (should (equal (grid-table-formula-test--eval "=#REF!+1") "#REF!"))
+  (should (equal (grid-table-formula-test--eval "=IFERROR(#N/A,7)") 7))
+  (should (equal (grid-table-formula-test--eval "=\"#REF!\"") "#REF!"))
+  (should (equal (grid-table-formula-test--eval "=Rate+1") "#NAME?"))
+  (let* ((model (grid-model-create 3 2 '(("1" "=A3+A2") ("2" "") ("3" ""))))
+         (model (grid-model-delete-row model 1)))
+    (should (equal (grid-model-get-computed-value model 0 1) "#REF!"))))
+
+(ert-deftest grid-table-formula-criteria-take-wildcards ()
+  (let ((cells '("apple" "b" "avocado" "10" "" "*" "12")))
+    (cl-flet ((count (criteria)
+                (apply #'grid-table-formula-test--eval
+                       (format "=COUNTIF(B1:H1,%s)" criteria) cells)))
+      (should (= (count "\"a*\"") 2))
+      (should (= (count "\"A?PLE\"") 1))
+      (should (= (count "\"<>a*\"") 5))
+      (should (= (count "\"~*\"") 1))
+      (should (= (count "\">=10\"") 2))
+      (should (= (count "10") 1))
+      (should (= (count "\"\"") 1))
+      (should (= (count "\"<>\"") 6)))))
+
+(ert-deftest grid-table-sort-keeps-frozen-rows-in-place ()
+  (let ((model (grid-model-create 4 1 '(("Title") ("Header") ("b") ("a")))))
+    (grid-model-set-frozen model 2 0)
+    (let ((sorted (grid-model-sort-by-column model 0 'ascending t)))
+      (should (equal (grid-model-get-all-raw-values sorted)
+                     '(("Title") ("Header") ("a") ("b")))))))
+
+(ert-deftest grid-table-chart-over-no-data-is-empty ()
+  (require 'grid-table-chart)
+  (should (equal (grid-chart-columnplot nil nil nil) ""))
+  (should (stringp (grid-chart--lineplot-render nil nil nil))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

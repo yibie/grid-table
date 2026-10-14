@@ -322,6 +322,7 @@ If nil, uses the `default-directory` of the current buffer."
 (declare-function grid-table-etaf-cell-at-point "grid-table-etaf")
 (declare-function grid-table-etaf-edit-cell "grid-table-etaf")
 (declare-function grid-table-etaf-set-cell "grid-table-etaf")
+(declare-function grid-table-etaf-note-frozen "grid-table-etaf")
 
 
 ;;;----------------------------------------------------------------------
@@ -703,7 +704,7 @@ In a sheet with a header row, nothing goes above that row."
 
 (defun grid-table-find-file (file-path)
   "Open a grid from a file."
-  (interactive "fFind grid file: " nil nil ".grid") ; Suggest .grid extension
+  (interactive "fFind grid file: ")
   (let* ((data-source (grid-table-persistence-create-data-source-from-file file-path))
          (buffer-name (file-name-nondirectory file-path)))
     (if data-source
@@ -843,10 +844,12 @@ not a single table."
 (defun grid-table-unfreeze-panes ()
   "Let every row and column of the current sheet scroll again."
   (interactive)
-  (let ((source (or grid-table--data-source
-                    (user-error "No grid in this buffer"))))
+  (let* ((source (or grid-table--data-source
+                     (user-error "No grid in this buffer")))
+         (old (grid-table-frozen source)))
     (unless (grid-table-set-frozen source 0 0)
       (user-error "This grid cannot keep rows and columns in place"))
+    (grid-table-etaf-note-frozen old)
     (grid-table-refresh)
     (message "No row or column is frozen")))
 

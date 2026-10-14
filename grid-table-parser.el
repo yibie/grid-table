@@ -1,6 +1,7 @@
 ;;; grid-table-parser.el --- AST parser for grid formulas -*- lexical-binding: t -*-
 
 (require 'eieio)
+(require 'cl-lib)
 
 ;;;----------------------------------------------------------------------
 ;;; Token Definitions
@@ -18,6 +19,12 @@
 (defconst grid-parser-token-type-comma 'COMMA)
 (defconst grid-parser-token-type-boolean 'BOOLEAN)
 (defconst grid-parser-token-type-eof 'EOF)
+(defconst grid-parser-token-type-error 'ERROR)
+
+(defconst grid-parser-error-literals
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!")
+  "Error values a formula may hold as written text, as `#REF!' left by a
+deleted cell.")
 
 (defconst grid-parser-sheet-prefix-regexp
   "\\(?:'\\(\\(?:[^']\\|''\\)+\\)'\\|\\([[:alpha:]_][[:alnum:]_.]*\\)\\)!"
@@ -136,6 +143,12 @@ prefix starts there."
                   tokens)
             (setq pos (1+ pos)))) ; Consume closing quote
 
+         ;; Error values written in the formula (e.g., #REF!)
+         ((and (eq char ?#) (grid-parser--error-literal-at formula-str pos))
+          (let ((text (grid-parser--error-literal-at formula-str pos)))
+            (push (grid-parser-make-token grid-parser-token-type-error text) tokens)
+            (setq pos (+ pos (length text)))))
+
          ;; Parentheses and comma
          ((eq char ?\()
           (push (grid-parser-make-token grid-parser-token-type-lparen char) tokens)
@@ -191,6 +204,14 @@ prefix starts there."
     ;; Add EOF token
     (push (grid-parser-make-token grid-parser-token-type-eof nil) tokens)
     (nreverse tokens)))
+
+(defun grid-parser--error-literal-at (formula pos)
+  "Return the error value written in FORMULA at POS, or nil."
+  (cl-find-if (lambda (text)
+                (let ((end (+ pos (length text))))
+                  (and (<= end (length formula))
+                       (string= (upcase (substring formula pos end)) text))))
+              grid-parser-error-literals))
 
 ;;;----------------------------------------------------------------------
 ;;; AST Node Definitions
@@ -470,6 +491,11 @@ Returns (ast . remaining-tokens)."
       (pop tokens)
       (cons (grid-ast-make-string (cadr token)) tokens))
 
+     ;; Error values
+     ((eq (car token) grid-parser-token-type-error)
+      (pop tokens)
+      (cons (list 'ERROR (cadr token)) tokens))
+
      ;; TRUE and FALSE
      ((eq (car token) grid-parser-token-type-boolean)
       (pop tokens)
@@ -495,8 +521,10 @@ Returns (ast . remaining-tokens)."
      ((eq (car token) grid-parser-token-type-function)
       (let ((func-name (cadr token)))
         (pop tokens) ; Consume function name
-        (unless (and tokens (grid-parser-token-is-p (car tokens) grid-parser-token-type-lparen))
-          (error "Expected '(' after function name"))
+        (if (not (and tokens (grid-parser-token-is-p (car tokens) grid-parser-token-type-lparen)))
+            ;; A word that calls nothing names something, as Excel's
+            ;; defined names do.
+            (cons (list 'NAME func-name) tokens)
         (pop tokens) ; Consume '('
 
         ;; Parse argument list
@@ -520,7 +548,7 @@ Returns (ast . remaining-tokens)."
             (error "Expected ')' after function arguments"))
           (pop remaining-tokens) ; Consume ')'
 
-          (cons (grid-ast-make-function-call func-name (nreverse args)) remaining-tokens))))
+          (cons (grid-ast-make-function-call func-name (nreverse args)) remaining-tokens)))))
 
      ;; Parenthesized expressions
      ((grid-parser-token-is-p token grid-parser-token-type-lparen)
