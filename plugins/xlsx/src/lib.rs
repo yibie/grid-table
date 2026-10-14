@@ -10,7 +10,8 @@ use std::path::Path;
 use umya_spreadsheet::{
     reader, writer, Color, ConditionalFormatValues, ConditionalFormatting,
     ConditionalFormattingOperatorValues, ConditionalFormattingRule, Formula,
-    HorizontalAlignmentValues, PatternValues, Style, Workbook, Worksheet,
+    HorizontalAlignmentValues, Pane, PaneStateValues, PaneValues, PatternValues, Selection,
+    SheetView, Style, Workbook, Worksheet,
 };
 use umya_spreadsheet::structs::drawing::Theme;
 
@@ -153,8 +154,86 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             out.push(')');
         }
     }
-    out.push_str("))");
+    out.push_str(") :widths (");
+    for column in sheet.column_dimensions() {
+        // 8.38 is what the library gives a column nobody sized.
+        if !column.hidden() && column.width() > 0.0 && (column.width() - 8.38).abs() > 1e-9 {
+            write!(out, "({} . {}) ", column.col_num() - 1, column.width())?;
+        }
+    }
+    out.push(')');
+    if let Some(pane) = frozen_pane(sheet) {
+        write!(
+            out,
+            " :frozen ({} {})",
+            pane.vertical_split() as u32,
+            pane.horizontal_split() as u32
+        )?;
+    }
+    out.push(')');
     Ok(())
+}
+
+/// The pane that keeps rows and columns of SHEET in place, if it has one.
+fn frozen_pane(sheet: &Worksheet) -> Option<&Pane> {
+    let view = sheet.sheets_views().sheet_view_list().first()?;
+    let pane = view.pane()?;
+    matches!(
+        pane.state(),
+        PaneStateValues::Frozen | PaneStateValues::FrozenSplit
+    )
+    .then_some(pane)
+}
+
+/// Keep the first ROWS rows and COLS columns of SHEET in place, or let
+/// everything scroll when both are 0.  A view split without being frozen
+/// is left as it is unless something is to be frozen.
+fn freeze(sheet: &mut Worksheet, rows: u32, cols: u32) {
+    if rows == 0 && cols == 0 {
+        if frozen_pane(sheet).is_none() {
+            return;
+        }
+        // A pane cannot be taken out of a view: the view is made anew
+        // with what it said besides.
+        let views = sheet.sheet_views_mut().sheet_view_list_mut();
+        let old = views[0].clone();
+        let mut view = SheetView::default();
+        view.set_workbook_view_id(old.workbook_view_id());
+        if old.tab_selected() {
+            view.set_tab_selected(true);
+        }
+        if old.zoom_scale() != 0 && old.zoom_scale() != 100 {
+            view.set_zoom_scale(old.zoom_scale());
+        }
+        views[0] = view;
+        return;
+    }
+    let active = match (rows > 0, cols > 0) {
+        (true, true) => PaneValues::BottomRight,
+        (true, false) => PaneValues::BottomLeft,
+        _ => PaneValues::TopRight,
+    };
+    let mut pane = Pane::default();
+    if cols > 0 {
+        pane.set_horizontal_split(cols as f64);
+    }
+    if rows > 0 {
+        pane.set_vertical_split(rows as f64);
+    }
+    pane.top_left_cell_mut().set_col_num(cols + 1).set_row_num(rows + 1);
+    pane.set_active_pane(active.clone());
+    pane.set_state(PaneStateValues::Frozen);
+    let views = sheet.sheet_views_mut().sheet_view_list_mut();
+    if views.is_empty() {
+        views.push(SheetView::default());
+    }
+    let view = &mut views[0];
+    view.set_pane(pane);
+    // Selections name the panes they are in; the old ones no longer fit.
+    view.selection_mut().clear();
+    let mut selection = Selection::default();
+    selection.set_pane(active);
+    view.set_selection(selection);
 }
 
 /// Whether BOOK, which may not have loaded its sheets, has a sheet NAME.
@@ -331,6 +410,17 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                 sheet.add_merge_cells(fields[1]);
             }
             "F" if fields.len() >= 4 => conditionals.push(&record[2..]),
+            // W col width: a column sized by hand, in characters
+            "W" if fields.len() >= 3 => {
+                let col: u32 = fields[1].parse()?;
+                sheet
+                    .column_dimension_by_number_mut(col + 1)
+                    .set_width(fields[2].parse::<f64>()?);
+            }
+            // P rows cols: the rows and columns kept in place
+            "P" if fields.len() >= 3 => {
+                freeze(sheet, fields[1].parse()?, fields[2].parse()?);
+            }
             "" => {}
             other => return Err(fail(format!("malformed record {}", other))),
         }

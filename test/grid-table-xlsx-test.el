@@ -236,6 +236,36 @@
         (should-not (grid-model-get-style back-model 2 2))
         (should (equal (grid-model-get-conditionals back-model) rules))))))
 
+(ert-deftest grid-table-xlsx-test-widths-and-frozen-panes ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((rows '(("Item" "Qty" "Note") ("a" "1" "x") ("b" "2" "y")
+                   ("c" "3" "z")))
+           (source (make-default-data-source
+                    (copy-sequence (car rows)) rows "Stock")))
+      (grid-set-column-width source 0 24)
+      (grid-set-column-width source 2 7)
+      (grid-table-set-frozen source 1 2)
+      (grid-table-xlsx-write-data-source source file)
+      (let ((back (grid-table-xlsx-create-data-source file)))
+        (should (equal (gethash 0 (grid-get-column-widths back)) 24))
+        (should (equal (gethash 2 (grid-get-column-widths back)) 7))
+        (should-not (gethash 1 (grid-get-column-widths back)))
+        (should (equal (grid-table-frozen back) '(1 . 2)))
+        ;; Rows alone, then nothing: the workbook follows the grid.
+        (grid-table-set-frozen back 2 0)
+        (grid-table-xlsx-write-data-source back file)
+        (setq back (grid-table-xlsx-create-data-source file))
+        (should (equal (grid-table-frozen back) '(2 . 0)))
+        (grid-table-set-frozen back 0 0)
+        (grid-set-column-width back 0 nil)
+        (grid-table-xlsx-write-data-source back file)
+        (setq back (grid-table-xlsx-create-data-source file))
+        (should (equal (grid-table-frozen back) '(0 . 0)))
+        ;; A column the grid no longer sizes keeps what the file has.
+        (should (equal (gethash 0 (grid-get-column-widths back)) 24))
+        (should (equal (grid-get-raw-value-at back 3 2) "z"))))))
+
 (ert-deftest grid-table-xlsx-test-export-keeps-other-sheets ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

@@ -264,6 +264,14 @@ the header row."
           (when-let* ((style (grid-table-xlsx--style (nthcdr 3 cell))))
             (grid-model-set-style model (nth 0 cell) (nth 1 cell) style)))
         (grid-model-set-conditionals model (car rules))
+        ;; A width is in characters on both sides; a workbook counts a
+        ;; little padding in, which rounding takes off again.
+        (pcase-dolist (`(,col . ,width) (plist-get data :widths))
+          (when (and (integerp col) (< -1 col cols) (numberp width))
+            (grid-set-column-width source col
+                                   (max 1 (min 200 (round width))))))
+        (when-let* ((frozen (plist-get data :frozen)))
+          (grid-table-set-frozen source (nth 0 frozen) (nth 1 frozen)))
         (puthash :xlsx-file file source)
         (puthash :xlsx-sheet sheet source)
         (puthash :xlsx-skipped-conditionals (cdr rules) source)
@@ -417,6 +425,18 @@ RAW is its raw input and STYLE its style."
             records))
     (dolist (rule (grid-get-conditional-formats source))
       (push (grid-table-xlsx--rule-record rule) records))
+    ;; Columns sized by hand; the others keep what the workbook has.
+    (when-let* ((widths (grid-get-column-widths source)))
+      (maphash (lambda (col width)
+                 (when (< col cols)
+                   (push (format "W%s%d%s%d" grid-table-xlsx--field col
+                                 grid-table-xlsx--field width)
+                         records)))
+               widths))
+    (let ((frozen (grid-table-frozen source)))
+      (push (format "P%s%d%s%d" grid-table-xlsx--field (car frozen)
+                    grid-table-xlsx--field (cdr frozen))
+            records))
     (mapconcat #'identity (nreverse records) grid-table-xlsx--record)))
 
 (defun grid-table-xlsx--sheet-name (name)
