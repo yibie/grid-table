@@ -226,6 +226,60 @@ Return non-nil when SOURCE can hide rows and columns."
     (funcall function source rows cols)
     t))
 
+(defun grid-table-validations (source)
+  "Return SOURCE's validation rules, (TOP LEFT BOTTOM RIGHT KIND SPEC) each."
+  (when-let* ((function (gethash :get-validations source)))
+    (funcall function source)))
+
+(defun grid-table-set-validations (source rules)
+  "Replace SOURCE's validation rules with RULES.
+Return non-nil when SOURCE keeps validation rules."
+  (when-let* ((function (gethash :set-validations source)))
+    (funcall function source rules)
+    t))
+
+(defun grid-table-validation-at (source row col)
+  "Return the validation rule of the cell at ROW and COL of SOURCE, or nil."
+  (when-let* ((model (gethash :model source)))
+    (grid-model-validation-at model row col)))
+
+(defun grid-table-validation-options (source rule)
+  "Return the values validation RULE of SOURCE allows, as strings.
+A formula in the rule is computed on SOURCE's sheet; blanks and errors
+in what it gives are left out."
+  (let ((spec (nth 5 rule)))
+    (if (listp spec)
+        spec
+      (let* ((workbook (grid-workbook-of source))
+             (grid-calc-sheets (and workbook (grid-workbook--resolver workbook)))
+             (grid-calc-names (and workbook
+                                   (grid-workbook--names-resolver workbook)))
+             (value (condition-case nil
+                        (grid-calc-eval-ast (gethash :model source)
+                                            (grid-parser-parse (substring spec 1)))
+                      (error nil))))
+        (delete-dups
+         (delq nil
+               (mapcar (lambda (item)
+                         (let ((text (if (stringp item) item
+                                       (grid-format-general item))))
+                           (and (not (string-empty-p text))
+                                (not (member text grid-calc-error-values))
+                                text)))
+                       (if (listp value) value (list value)))))))))
+
+(defun grid-table-validation-problem (source row col text)
+  "Return why TEXT may not go in the cell at ROW and COL of SOURCE, or nil.
+An empty TEXT is always allowed, as are formulas."
+  (when-let* ((rule (grid-table-validation-at source row col)))
+    (unless (or (string-empty-p text) (string-prefix-p "=" text))
+      (pcase (nth 4 rule)
+        ('list
+         (let ((options (grid-table-validation-options source rule)))
+           (unless (member (downcase text) (mapcar #'downcase options))
+             (format "%s is not one of: %s" text
+                     (string-join options ", ")))))))))
+
 (defun grid-get-conditional-formats (source)
   "Return SOURCE's conditional format rules.
 Each rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE)."

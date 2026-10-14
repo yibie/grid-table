@@ -82,7 +82,9 @@ Its keys are :title, :headers, :rows, :merges, :styles and
             (list :frozen (list (car frozen) (cdr frozen)))))
      (let ((hidden (grid-table-hidden data-source)))
        (and (or (car hidden) (cdr hidden))
-            (list :hidden (list (car hidden) (cdr hidden))))))))
+            (list :hidden (list (car hidden) (cdr hidden)))))
+     (and (grid-table-validations data-source)
+          (list :validations (grid-table-validations data-source))))))
 
 (defun grid-table-persistence--file-data (data-source)
   "Return the form a file holds for DATA-SOURCE and the sheets beside it.
@@ -149,6 +151,8 @@ Older releases pass over them, so they do not raise the file version."
                (list :frozen (plist-get data :frozen)))
           (and (plist-get data :hidden)
                (list :hidden (plist-get data :hidden)))
+          (and (plist-get data :validations)
+               (list :validations (plist-get data :validations)))
           (and (plist-get data :names)
                (list :names (plist-get data :names)
                      :sheet-name (plist-get data :sheet-name)))))
@@ -191,12 +195,13 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
 (defun grid-table-persistence--make-source (file-path headers rows title
                                                    merges styles conditionals
                                                    &optional widths no-header
-                                                   frozen hidden)
+                                                   frozen hidden validations)
   "Return a data source for the fields a file at FILE-PATH holds for a sheet.
 WIDTHS is a list of (COLUMN . WIDTH) for the columns sized by hand.
 NO-HEADER says the first row of the sheet is a row like any other.
 FROZEN is (ROWS COLS), the leading rows and columns kept in place.
-HIDDEN is (ROWS COLS), lists of the rows and columns hidden."
+HIDDEN is (ROWS COLS), lists of the rows and columns hidden.
+VALIDATIONS are the sheet's validation rules."
   (unless (grid-table-persistence--table-data-p headers rows)
     (error "Invalid grid file format in %s" file-path))
   (let ((source (make-default-data-source
@@ -228,6 +233,17 @@ HIDDEN is (ROWS COLS), lists of the rows and columns hidden."
     (when (and (listp hidden) (= (length hidden) 2)
                (cl-every #'listp hidden))
       (grid-table-set-hidden source (nth 0 hidden) (nth 1 hidden)))
+    (when (listp validations)
+      (grid-table-set-validations
+       source
+       (cl-remove-if-not
+        (lambda (rule)
+          (and (listp rule) (= (length rule) 6)
+               (cl-every #'natnump (cl-subseq rule 0 4))
+               (eq (nth 4 rule) 'list)
+               (or (stringp (nth 5 rule))
+                   (and (listp (nth 5 rule)) (cl-every #'stringp (nth 5 rule))))))
+        validations)))
     source))
 
 (defun grid-table-persistence--make-workbook (file-path plist)
@@ -247,7 +263,8 @@ HIDDEN is (ROWS COLS), lists of the rows and columns hidden."
         (plist-get sheet :title) (plist-get sheet :merges)
         (plist-get sheet :styles) (plist-get sheet :conditional-formats)
         (plist-get sheet :column-widths) (plist-get sheet :no-header-row)
-        (plist-get sheet :frozen) (plist-get sheet :hidden))
+        (plist-get sheet :frozen) (plist-get sheet :hidden)
+        (plist-get sheet :validations))
        ;; A name another sheet has, or none, would lose the sheet.
        (grid-workbook-fresh-name workbook (plist-get sheet :name))))
     (setf (grid-workbook-names workbook)
@@ -272,7 +289,7 @@ saved; the others are in its workbook."
                  (eql (plist-get (cdr data) :version) 5))
             (grid-table-persistence--make-workbook file-path (cdr data))
         (let (headers rows title merges styles conditionals widths no-header
-                      frozen hidden)
+                      frozen hidden validations)
           (cond
            ;; Case 1: Tagged v2 format with merge metadata
            ((eq (car-safe data) 'grid-table-file)
@@ -289,6 +306,7 @@ saved; the others are in its workbook."
                     no-header (plist-get plist :no-header-row)
                     frozen (plist-get plist :frozen)
                     hidden (plist-get plist :hidden)
+                    validations (plist-get plist :validations)
                     merges (let ((raw-merges (plist-get plist :merges)))
                              (if (and (eq (plist-get plist :version) 2)
                                       (listp raw-merges))
@@ -314,7 +332,8 @@ saved; the others are in its workbook."
                   widths (plist-get data :column-widths)
                   no-header (plist-get data :no-header-row)
                   frozen (plist-get data :frozen)
-                  hidden (plist-get data :hidden)))
+                  hidden (plist-get data :hidden)
+                  validations (plist-get data :validations)))
 
            ;; Case 2: Alist format (legacy/example files)
            ((listp (car data))
@@ -334,7 +353,7 @@ saved; the others are in its workbook."
 
           (let* ((source (grid-table-persistence--make-source
                           file-path headers rows title merges styles conditionals
-                          widths no-header frozen hidden))
+                          widths no-header frozen hidden validations))
                  (plist (cond ((eq (car-safe data) 'grid-table-file) (cdr data))
                               ((keywordp (car-safe data)) data)))
                  (names (grid-table-persistence--names

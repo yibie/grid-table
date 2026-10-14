@@ -719,6 +719,8 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c f t" grid-table-etaf-format-text "Text format")
     ("C-c f +" grid-table-etaf-more-decimals "More decimals")
     ("C-c f -" grid-table-etaf-fewer-decimals "Fewer decimals")
+    ("C-c f v" grid-table-etaf-set-validation-list "Allow only listed values")
+    ("C-c f V" grid-table-etaf-clear-validations "Clear validation")
     ("C-c f n" grid-table-etaf-add-conditional-format "Conditional format")
     ("C-c f N" grid-table-etaf-clear-conditional-formats
      "Clear conditional formats")
@@ -1700,12 +1702,20 @@ Columns only shrink on `grid-table-refresh'."
     (let* ((cursor (etaf-value (grid-table-etaf--state-cursor state)))
            (extent (with-current-buffer (grid-table-etaf--state-buffer state)
                      (grid-table-etaf--cell-extent (car cursor) (cdr cursor))))
-           (value (grid-table-etaf--end-session state)))
-      (if value
+           (value (grid-table-etaf--end-session state))
+           ;; A cell that only takes some values refuses others, and the
+           ;; edit is dropped, as a spreadsheet's stop alert does.
+           (problem (and value
+                         (grid-table-validation-problem
+                          (grid-table-etaf--source state)
+                          (nth 0 extent) (nth 1 extent) value))))
+      (if (and value (not problem))
           (grid-table-etaf--enter-cells
            state (list (list (nth 0 extent) (nth 1 extent) value)))
         (grid-table-etaf--bump state)
-        (grid-table-etaf--settle state)))))
+        (grid-table-etaf--settle state)
+        (when problem
+          (user-error "%s" problem))))))
 
 (defun grid-table-etaf-commit-edit ()
   "Store the text of the in-place edit in its cell."
@@ -1746,25 +1756,46 @@ inserts a newline and C-c C-k cancels.  Moving to another cell, with
 TAB or the mouse, stores the text too."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
-         (buffer (grid-table-etaf--state-buffer state)))
-    (unless (grid-table-etaf--state-session state)
-      (grid-table-etaf--settle state)
-      (etaf-set-value (grid-table-etaf--state-editing state) (or initial t))
-      (condition-case err
-          (progn
-            (setf (grid-table-etaf--state-session state)
-                  (etaf-input-begin
-                   (grid-table-etaf--runtime buffer) 'grid-table-etaf-cursor
-                   :keymap grid-table-etaf-edit-map
-                   :on-leave (lambda ()
-                               (when (buffer-live-p buffer)
-                                 (with-current-buffer buffer
-                                   (grid-table-etaf-commit-edit))))))
-            ;; The session's own editing commands take the printing keys.
-            (setq grid-table-etaf--typing-keys nil))
-        (error
-         (etaf-set-value (grid-table-etaf--state-editing state) nil)
-         (signal (car err) (cdr err)))))))
+         (buffer (grid-table-etaf--state-buffer state))
+         (cursor (grid-table-etaf--cursor))
+         (rule (and (not initial)
+                    (grid-table-validation-at (grid-table-etaf--source state)
+                                              (car cursor) (cdr cursor)))))
+    (if (eq (nth 4 rule) 'list)
+        (grid-table-etaf--choose state cursor rule)
+      (unless (grid-table-etaf--state-session state)
+        (grid-table-etaf--settle state)
+        (etaf-set-value (grid-table-etaf--state-editing state) (or initial t))
+        (condition-case err
+            (progn
+              (setf (grid-table-etaf--state-session state)
+                    (etaf-input-begin
+                     (grid-table-etaf--runtime buffer) 'grid-table-etaf-cursor
+                     :keymap grid-table-etaf-edit-map
+                     :on-leave (lambda ()
+                                 (when (buffer-live-p buffer)
+                                   (with-current-buffer buffer
+                                     (grid-table-etaf-commit-edit))))))
+              ;; The session's own editing commands take the printing keys.
+              (setq grid-table-etaf--typing-keys nil))
+          (error
+           (etaf-set-value (grid-table-etaf--state-editing state) nil)
+           (signal (car err) (cdr err))))))))
+
+(defun grid-table-etaf--choose (state cursor rule)
+  "Have the cell at CURSOR take one of the values its list RULE allows.
+The choice is read in the minibuffer; an empty one clears the cell."
+  (let* ((source (grid-table-etaf--source state))
+         (options (grid-table-validation-options source rule))
+         (current (grid-get-raw-value-at source (car cursor) (cdr cursor)))
+         (choice (completing-read
+                  "Value (empty clears): " options nil
+                  (lambda (text)
+                    (or (string-empty-p text)
+                        (member-ignore-case text options)))
+                  nil nil (and (member current options) current))))
+    (grid-table-etaf--enter-cells
+     state (list (list (car cursor) (cdr cursor) choice)))))
 
 (defun grid-table-etaf-self-insert ()
   "Start editing the cursor cell with the typed character as its text."
@@ -1956,6 +1987,9 @@ shifts."
        (grid-table-etaf--restore-column-width state col (if forward new old)))
       (`(names ,workbook ,old ,new)
        (grid-workbook-set-names workbook (if forward new old))
+       (grid-table-etaf--bump state))
+      (`(validations ,old ,new)
+       (grid-table-set-validations source (if forward new old))
        (grid-table-etaf--bump state))
       (`(hidden ,old ,new)
        (let ((hidden (if forward new old)))
@@ -2640,6 +2674,61 @@ rows.  `grid-table-etaf-show-columns' shows them."
      (car hidden)
      (cl-remove-if (lambda (col) (<= (nth 1 range) col (nth 3 range)))
                    (cdr hidden)))))
+
+;;;----------------------------------------------------------------------
+;;; Validation
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--set-validations (state rules)
+  "Give STATE's sheet the validation RULES as one undoable step."
+  (let* ((source (grid-table-etaf--source state))
+         (old (copy-tree (grid-table-validations source))))
+    (unless (grid-table-set-validations source rules)
+      (user-error "This grid's data source does not keep validation rules"))
+    (grid-table-etaf--record state (list 'validations old (copy-tree rules)))
+    (grid-table-etaf--bump state)))
+
+(defun grid-table-etaf-set-validation-list (choices)
+  "Let the selected cells take only CHOICES.
+CHOICES is a comma-separated list, such as \"Yes, No\", or a formula
+giving the values, such as =$F$2:$F$9 or =Sizes.  Editing such a cell
+offers the choices; typing anything else is refused.  Pasting and
+filling are not checked."
+  (interactive
+   (list (string-trim (read-string
+                       "Allowed values (a, b, c or =range or =name): "))))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (spec (cond ((string-empty-p choices)
+                      (user-error "No values given"))
+                     ((string-prefix-p "=" choices)
+                      (condition-case nil
+                          (progn (grid-parser-parse (substring choices 1))
+                                 choices)
+                        (error (user-error "Not a formula: %s" choices))))
+                     (t (delete "" (mapcar #'string-trim
+                                           (split-string choices ","))))))
+         (rule (append (cl-subseq range 0 4) (list 'list spec))))
+    (grid-table-etaf--set-validations
+     state (append (grid-table-validations source) (list rule)))
+    (message "Allowed: %s"
+             (string-join (grid-table-validation-options source rule) ", "))))
+
+(defun grid-table-etaf-clear-validations ()
+  "Let the selected cells take any value again."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection)))
+    (grid-table-etaf--set-validations
+     state
+     (cl-remove-if (lambda (rule)
+                     (and (<= (nth 0 rule) (nth 2 range))
+                          (<= (nth 0 range) (nth 2 rule))
+                          (<= (nth 1 rule) (nth 3 range))
+                          (<= (nth 1 range) (nth 3 rule))))
+                   (grid-table-validations source)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Defined names

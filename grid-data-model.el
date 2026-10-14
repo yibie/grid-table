@@ -63,7 +63,9 @@ CONDITIONALS a list of conditional format rules."
           ;; Leading rows and columns that stay in place: (ROWS . COLS)
           (cons 0 0)
           ;; Hidden rows and columns: (ROWS . COLS), sorted lists
-          (cons nil nil)))
+          (cons nil nil)
+          ;; Validation rules: (TOP LEFT BOTTOM RIGHT KIND SPEC)
+          nil))
 
 (defun grid-data-model-rows (model) (aref model 0))
 (defun grid-data-model-cols (model) (aref model 1))
@@ -239,6 +241,47 @@ A row and a column are always left to scroll."
     (aset model 7
           (cons (max 0 (min rows (1- (grid-data-model-rows model))))
                 (max 0 (min cols (1- (grid-data-model-cols model))))))))
+
+(defun grid-data-model-validations (model)
+  "Return MODEL's validation rules, (TOP LEFT BOTTOM RIGHT KIND SPEC) each.
+KIND `list' allows the values SPEC lists: a list of strings, or a
+formula such as =$F$2:$F$9 or =Sizes whose values are the choices."
+  (and (> (length model) 9) (aref model 9)))
+
+(defun grid-model-set-validations (model rules)
+  "Replace MODEL's validation rules with RULES."
+  (when (> (length model) 9)
+    (aset model 9 (copy-tree rules)))
+  rules)
+
+(defun grid-model-validation-at (model row col)
+  "Return the validation rule of the cell at ROW and COL of MODEL, or nil.
+The last rule added wins where rules overlap."
+  (car (last (cl-remove-if-not
+              (lambda (rule)
+                (and (<= (nth 0 rule) row (nth 2 rule))
+                     (<= (nth 1 rule) col (nth 3 rule))))
+              (grid-data-model-validations model)))))
+
+(defun grid-model-carry-validations (old new &optional axis at delta sheet)
+  "Give model NEW the validation rules of model OLD and return NEW.
+AXIS, AT and DELTA are as for `grid-model-carry-frozen': the ranges move
+with the lines, and a range that reads a list from the sheet, named
+SHEET, follows them too.  Sorting leaves the ranges in place."
+  (unless (eq old new)
+    (let ((rules (grid-data-model-validations old)))
+      (when axis
+        (setq rules
+              (mapcar (lambda (rule)
+                        (if (stringp (nth 5 rule))
+                            (append (cl-subseq rule 0 5)
+                                    (list (grid-calc-restructure-formula
+                                           (nth 5 rule) axis at delta
+                                           sheet sheet)))
+                          rule))
+                      (grid-model--shift-rules rules axis at delta))))
+      (grid-model-set-validations new rules)))
+  new)
 
 (defun grid-model-set-hidden (model rows cols)
   "Hide the ROWS and COLS of MODEL, lists of indexes; nil shows them all.

@@ -1135,6 +1135,39 @@
             (should (equal (grid-get-computed-value-at loaded 1 1) 8))))
       (delete-file file))))
 
+(ert-deftest grid-table-validations-follow-lines-and-files ()
+  (let* ((source (make-default-data-source
+                  '("" "" "")
+                  '(("Size" "Pick" "Sizes") ("" "" "S") ("" "" "M") ("" "" "L"))))
+         (file (make-temp-file "grid-valid" nil ".grid")))
+    (unwind-protect
+        (progn
+          (grid-table-set-validations
+           source '((1 0 3 0 list ("Yes" "No")) (1 1 3 1 list "=$C$2:$C$4")))
+          (should (equal (grid-table-validation-options
+                          source (grid-table-validation-at source 2 1))
+                         '("S" "M" "L")))
+          (should (grid-table-validation-problem source 1 0 "maybe"))
+          (should-not (grid-table-validation-problem source 1 0 "yes"))
+          (should-not (grid-table-validation-problem source 1 1 "M"))
+          (should-not (grid-table-validation-problem source 0 0 "anything"))
+          ;; A row inserted above moves the ranges, and the list's cells.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (grid-table-validations source)
+                         '((2 0 4 0 list ("Yes" "No")) (2 1 4 1 list "=$C$3:$C$5"))))
+          (should (equal (grid-table-validation-options
+                          source (grid-table-validation-at source 3 1))
+                         '("S" "M" "L")))
+          ;; Sorting leaves them where they are.
+          (funcall (gethash :sort-by-column source) source 2 'ascending)
+          (should (equal (car (grid-table-validations source))
+                         '(2 0 4 0 list ("Yes" "No"))))
+          (grid-table-persistence--save-to-file source file)
+          (should (equal (grid-table-validations
+                          (grid-table-persistence-create-data-source-from-file file))
+                         (grid-table-validations source))))
+      (delete-file file))))
+
 ;; The text table needs a data source and nothing else.
 (ert-deftest grid-table-text-render-needs-no-buffer ()
   (let* ((source (make-default-data-source

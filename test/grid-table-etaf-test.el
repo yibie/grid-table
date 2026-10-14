@@ -1293,6 +1293,32 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-undo)
     (should (equal (grid-get-computed-value-at source 6 2) 12))))
 
+(ert-deftest grid-table-etaf-validation-lists ()
+  (grid-table-etaf-test--with-grid (8 4 100 12)
+    (switch-to-buffer buffer)
+    (grid-table-etaf-goto 1 0)
+    (grid-table-etaf-goto 3 0 t)
+    (grid-table-etaf-set-validation-list "Yes, No")
+    ;; Editing such a cell offers the choices.
+    (grid-table-etaf-goto 2 0)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt options &rest _)
+                 (should (equal options '("Yes" "No")))
+                 "No")))
+      (grid-table-edit-cell))
+    (should (equal (grid-get-raw-value-at source 2 0) "No"))
+    ;; Typing something else is refused and leaves the cell alone.
+    (should-error (execute-kbd-macro (kbd "m a y b e RET")) :type 'user-error)
+    (should (equal (grid-get-raw-value-at source 2 0) "No"))
+    (execute-kbd-macro (kbd "y e s RET"))
+    (should (equal (grid-get-raw-value-at source 2 0) "yes"))
+    ;; Undo takes the rule back with it.
+    (grid-table-etaf-goto 1 0)
+    (grid-table-etaf-clear-validations)
+    (should-not (grid-table-validations source))
+    (grid-table-etaf-undo)
+    (should (grid-table-validations source))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
