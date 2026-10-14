@@ -48,6 +48,17 @@
   "Face whose colors paint the selected range."
   :group 'grid-table)
 
+(defface grid-table-etaf-note-face
+  '((t :foreground "#d0342c"))
+  "Face whose foreground marks the right edge of a cell with a note."
+  :group 'grid-table)
+
+(defface grid-table-etaf-link-face
+  '((((background dark)) :foreground "#7aa6ff")
+    (t :foreground "#1a5fb4"))
+  "Face whose foreground colors the text of a cell with a link."
+  :group 'grid-table)
+
 (defface grid-table-etaf-precedent-face
   '((((background dark)) :background "#1f3a5c")
     (t :background "#d6e6fb"))
@@ -674,6 +685,10 @@ The column follows the pointer; a cancelled drag restores its width."
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
     ("C-c g" grid-table-etaf-goto-address "Go to cell or range")
+    ("C-c ;" grid-table-etaf-edit-note "Add or edit a note")
+    ("C-c :" grid-table-etaf-delete-note "Delete notes")
+    ("C-c C-l" grid-table-etaf-set-link "Add or edit a link")
+    ("C-c C-o" grid-table-etaf-open-link "Open the link")
     ("C-c n d" grid-table-etaf-define-name "Name the selection")
     ("C-c n l" grid-table-etaf-goto-name "Go to a name")
     ("C-c n k" grid-table-etaf-delete-name "Delete a name")
@@ -819,12 +834,20 @@ position, the node key and the paint state of the cell."
                              (t 'left))
            ;; The cursor and the selection paint over a cell's own colors.
            :color (or (and face (grid-table-etaf--face-color face :foreground))
-                      (plist-get style :color))
+                      (plist-get style :color)
+                      (and (plist-get style :link)
+                           (grid-table-etaf--face-color
+                            'grid-table-etaf-link-face :foreground)))
            :background-color
            (if face
                (grid-table-etaf--face-color face :background)
              (plist-get style :background))
-           :border-right (or (plist-get spec :line-right) line)
+           ;; A note shows as a colored right edge, Excel's red corner.
+           :border-right (or (plist-get spec :line-right)
+                             (and (plist-get style :note)
+                                  (grid-table-etaf--face-color
+                                   'grid-table-etaf-note-face :foreground))
+                             line)
            :border-bottom (or (plist-get spec :line-bottom) line)
            :ref (plist-get spec :ref)
            :on-drag (grid-table-etaf--drag-cell
@@ -970,18 +993,30 @@ line border."
               'text nil
               (list (string-replace "\n" "⏎" raw)))))))))
 
+(defun grid-table-etaf--size-text (state source)
+  "Return how many rows and columns SOURCE has, as STATE shows them."
+  (if (grid-table-etaf--state-filters state)
+      (format "%d of %d rows shown (filtered) × %d columns"
+              (1- (grid-table-etaf--row-count state))
+              (1- (grid-get-row-count source))
+              (grid-get-column-count source))
+    (format "%d rows × %d columns"
+            (grid-get-row-count source) (grid-get-column-count source))))
+
 (defun grid-table-etaf--status-text (state source range)
   "Return the status bar text for SOURCE as STATE shows it.
 RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell.
 Rows hidden by a filter are left out of the figures."
   (if (null range)
-      (if (grid-table-etaf--state-filters state)
-          (format "%d of %d rows shown (filtered) × %d columns"
-                  (1- (grid-table-etaf--row-count state))
-                  (1- (grid-get-row-count source))
-                  (grid-get-column-count source))
-        (format "%d rows × %d columns"
-                (grid-get-row-count source) (grid-get-column-count source)))
+      (let* ((cursor (etaf-value (grid-table-etaf--state-cursor state)))
+             (style (grid-get-style-at source (car cursor) (cdr cursor)))
+             (note (plist-get style :note))
+             (link (plist-get style :link)))
+        (cond
+         (note (concat "Note: " (replace-regexp-in-string "\n" " / " note)
+                       (if link (format "   Link: %s" link) "")))
+         (link (format "Link: %s   (C-c C-o opens it)" link))
+         (t (grid-table-etaf--size-text state source))))
     (let ((count 0) (numbers 0) (sum 0))
       (cl-loop
        for row from (nth 0 range) to (nth 2 range)
@@ -2277,10 +2312,86 @@ PATTERN is made of yyyy, yy, mm, m, dd, d, hh, h and ss."
   (interactive)
   (grid-table-etaf--change-decimals -1))
 
+(defconst grid-table-etaf--content-keys '(:note :link)
+  "Style properties that belong to a cell's content, not its look.
+Clearing formats and pasting only formats leave them alone.")
+
+(defun grid-table-etaf--content-of (style)
+  "Return the part of STYLE that `grid-table-etaf--content-keys' name."
+  (cl-loop for (name value) on style by #'cddr
+           when (memq name grid-table-etaf--content-keys)
+           append (list name value)))
+
 (defun grid-table-etaf-clear-format ()
-  "Remove every style from the selection."
+  "Remove every style from the selection, but not notes and links."
   (interactive)
-  (grid-table-etaf--restyle #'ignore))
+  (grid-table-etaf--restyle #'grid-table-etaf--content-of))
+
+;;;----------------------------------------------------------------------
+;;; Notes and links
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--cursor-cell ()
+  "Return (ROW . COL) of the cursor cell, the top left one of a merge."
+  (let* ((cursor (grid-table-etaf--cursor))
+         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor))))
+    (cons (nth 0 extent) (nth 1 extent))))
+
+(defun grid-table-etaf--cursor-style ()
+  "Return the style of the cursor cell."
+  (let ((cell (grid-table-etaf--cursor-cell)))
+    (grid-get-style-at (grid-table-etaf--source (grid-table-etaf--state-or-error))
+                       (car cell) (cdr cell))))
+
+(defun grid-table-etaf-edit-note (note)
+  "Give the cursor cell NOTE, a remark shown when the cursor is on it.
+An empty NOTE removes it.  The cell's right edge shows that it has one,
+and the status bar shows the note."
+  (interactive
+   (list (read-string "Note (empty removes it): "
+                      (plist-get (grid-table-etaf--cursor-style) :note))))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (cell (grid-table-etaf--cursor-cell))
+         (style (copy-sequence (grid-get-style-at source (car cell) (cdr cell))))
+         (note (string-trim note)))
+    (unless (gethash :set-style-at source)
+      (user-error "This grid's data source does not store notes"))
+    (grid-table-etaf--set-styles
+     state (list (list (car cell) (cdr cell)
+                       (if (string-empty-p note)
+                           (grid-table-etaf--plist-without style :note)
+                         (plist-put style :note note)))))))
+
+(defun grid-table-etaf-delete-note ()
+  "Remove the notes of the selected cells."
+  (interactive)
+  (grid-table-etaf--set-format :note nil))
+
+(defun grid-table-etaf-set-link (link)
+  "Make the selected cells link to LINK; an empty LINK removes the link.
+LINK is a web address, a file name, or #Sheet2!A1 for a cell of this
+workbook.  `grid-table-etaf-open-link' follows it."
+  (interactive
+   (list (read-string "Link (URL, file or #A1; empty removes it): "
+                      (plist-get (grid-table-etaf--cursor-style) :link))))
+  (let ((link (string-trim link)))
+    (grid-table-etaf--set-format :link (and (not (string-empty-p link)) link))))
+
+(defun grid-table-etaf-open-link ()
+  "Follow the link of the cursor cell.
+A web address opens in the browser, #ADDRESS goes to that cell or range
+of the workbook, and anything else is visited as a file, relative to
+the grid's own."
+  (interactive)
+  (let ((link (plist-get (grid-table-etaf--cursor-style) :link)))
+    (cond
+     ((null link) (user-error "This cell has no link"))
+     ((string-prefix-p "#" link)
+      (grid-table-etaf-goto-address (substring link 1)))
+     ((string-match-p "\\`[a-zA-Z][a-zA-Z0-9+.-]*:" link)
+      (browse-url link))
+     (t (find-file (expand-file-name link))))))
 
 (defun grid-table-etaf--set-conditionals (rules)
   "Replace the grid's conditional format rules with RULES, undoably."
@@ -2628,8 +2739,23 @@ MODE is as for `grid-table-etaf--paste-material'."
                                 state (if (eq mode 'formats)
                                           nil
                                         (nreverse changes)))
-                          (grid-table-etaf--set-styles state
-                                                       (nreverse styles)))
+                          (grid-table-etaf--set-styles
+                           state
+                           (if (eq mode 'formats)
+                               ;; Formats only: the cells keep their own
+                               ;; notes and links.
+                               (mapcar
+                                (pcase-lambda (`(,row ,col ,style))
+                                  (list row col
+                                        (append
+                                         (cl-loop for (name value) on style
+                                                  by #'cddr
+                                                  unless (memq name grid-table-etaf--content-keys)
+                                                  append (list name value))
+                                         (grid-table-etaf--content-of
+                                          (grid-get-style-at source row col)))))
+                                (nreverse styles))
+                             (nreverse styles))))
                       ;; Text from elsewhere is read as if it were typed.
                       (grid-table-etaf--enter-cells
                        state (nreverse changes)))))))

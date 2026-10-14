@@ -209,6 +209,64 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-extend-right)
     (should (string-match-p "Count: 2 *\\'" (grid-table-etaf-test--text)))))
 
+(ert-deftest grid-table-etaf-notes-and-links ()
+  (grid-table-etaf-test--with-grid (6 5)
+    (let (kill-ring kill-ring-yank-pointer interprogram-cut-function
+                    interprogram-paste-function)
+      (grid-table-etaf-goto 2 1)
+      (grid-table-etaf-edit-note "Checked by\nthe auditor")
+      (should (equal (grid-get-style-at source 2 1)
+                     '(:note "Checked by\nthe auditor")))
+      (should (string-match-p "Note: Checked by / the auditor"
+                              (grid-table-etaf-test--text)))
+      (grid-table-etaf-set-link "#D5")
+      (should (string-match-p "Link: #D5" (grid-table-etaf-test--text)))
+      ;; Clearing formats keeps notes and links.
+      (grid-table-etaf-toggle-bold)
+      (grid-table-etaf-clear-format)
+      (should (equal (grid-get-style-at source 2 1)
+                     '(:note "Checked by\nthe auditor" :link "#D5")))
+      ;; An internal link goes to its cell.
+      (grid-table-etaf-open-link)
+      (should (equal (grid-table-etaf--cursor) '(4 . 3)))
+      ;; Pasting formats only leaves the target's note; a plain paste
+      ;; brings the copied one.
+      (grid-table-etaf-edit-note "own")
+      (grid-table-etaf-goto 1 0)
+      (grid-table-etaf-toggle-bold)
+      (grid-table-etaf-copy)
+      (grid-table-etaf-goto 4 3)
+      (grid-table-etaf-paste-formats)
+      (should (equal (grid-get-style-at source 4 3) '(:bold t :note "own")))
+      (grid-table-etaf-goto 2 1)
+      (grid-table-etaf-copy)
+      (grid-table-etaf-goto 3 4)
+      (grid-table-etaf-paste)
+      (should (equal (plist-get (grid-get-style-at source 3 4) :note)
+                     "Checked by\nthe auditor"))
+      ;; An empty note removes it, and that is undoable.
+      (grid-table-etaf-goto 2 1)
+      (grid-table-etaf-edit-note "")
+      (should-not (plist-get (grid-get-style-at source 2 1) :note))
+      (grid-table-etaf-undo)
+      (should (plist-get (grid-get-style-at source 2 1) :note))
+      ;; Notes and links travel with their row and are saved.
+      (grid-table-etaf-goto 1 0)
+      (grid-table-add-row 0)
+      (should (equal (plist-get (grid-get-style-at grid-table--data-source 3 1)
+                                :link)
+                     "#D5"))
+      (let ((file (make-temp-file "grid-notes" nil ".grid")))
+        (unwind-protect
+            (progn
+              (grid-table-persistence--save-to-file grid-table--data-source file)
+              (let ((loaded (grid-table-persistence-create-data-source-from-file
+                             file)))
+                (should (equal (grid-get-style-at loaded 3 1)
+                               '(:note "Checked by\nthe auditor"
+                                       :link "#D5")))))
+          (delete-file file))))))
+
 (ert-deftest grid-table-etaf-sheets ()
   (grid-table-etaf-test--with-grid (6 5)
     (let ((first source)
