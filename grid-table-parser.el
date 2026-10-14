@@ -22,7 +22,7 @@
 (defconst grid-parser-token-type-error 'ERROR)
 
 (defconst grid-parser-error-literals
-  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!")
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!")
   "Error values a formula may hold as written text, as `#REF!' left by a
 deleted cell.")
 

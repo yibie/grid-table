@@ -16,7 +16,7 @@
 (define-error 'grid-calc-cycle "Circular reference" 'grid-calc-error)
 
 (defconst grid-calc-error-values
-  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CYCLE!" "#ERROR!")
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!" "#CYCLE!" "#ERROR!")
   "Values a cell shows when its formula cannot be computed.")
 
 (defvar grid-calc--pass nil
@@ -154,8 +154,16 @@ instead of stopping the recalculation."
           cell
           (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
               (condition-case err
-                  (let ((grid-calc--depth (1+ grid-calc--depth)))
-                    (grid-calc-eval-ast model (grid-calc--parsed cell raw)))
+                  (let* ((grid-calc--depth (1+ grid-calc--depth))
+                         (ast (grid-calc--parsed cell raw))
+                         (value (grid-calc-eval-ast model ast)))
+                    ;; A cell shows one value, not the several of a range.
+                    ;; A chart is a plist and an Elisp cell anything.
+                    (cond ((or (atom value) (keywordp (car value))
+                               (eq (car-safe ast) 'ELISP-CODE))
+                           value)
+                          ((null (cdr value)) (car value))
+                          (t "#VALUE!")))
                 (grid-calc-cycle (setq cycle t) "#CYCLE!")
                 (error (grid-calc--error-value err)))
             (grid-calc--typed-value model index raw)))
@@ -598,12 +606,25 @@ AST: The Abstract Syntax Tree to evaluate."
     (`(BINARY-OP ,op ,left-ast ,right-ast)
      (let ((left-val (grid-calc-eval-ast model left-ast))
            (right-val (grid-calc-eval-ast model right-ast)))
-       (grid-calc-apply-binary-op op left-val right-val)))
-    
+       (grid-calc--each (lambda (left right)
+                          (grid-calc-apply-binary-op op left right))
+                        left-val right-val)))
+
     ;; Unary operation
     (`(UNARY-OP ,op ,operand-ast)
      (let ((operand-val (grid-calc-eval-ast model operand-ast)))
-       (grid-calc-apply-unary-op op operand-val)))
+       (grid-calc--each (lambda (operand _)
+                          (grid-calc-apply-unary-op op operand))
+                        operand-val nil)))
+
+    ;; Functions that give several values read a range of one row or column.
+    (`(FUNCTION-CALL ,(and name (or "UNIQUE" "SORT" "FILTER")) ,args-ast-list)
+     (grid-calc--check-one-line model (car args-ast-list))
+     (when (equal name "FILTER")
+       (grid-calc--check-one-line model (cadr args-ast-list)))
+     (grid-calc-call-function
+      model name (mapcar (lambda (arg-ast) (grid-calc-eval-ast model arg-ast))
+                         args-ast-list)))
     
     ;; Function call
     (`(FUNCTION-CALL ,func-name ,args-ast-list)
@@ -1835,6 +1856,99 @@ A day the target month does not have becomes its last day."
 (grid-calc-defun VLOOKUP (lookup-value table-range col-index exact-match)
   "Vertical lookup function (Placeholder)."
   (error "VLOOKUP not yet implemented."))
+
+;;; Functions giving several values
+;;
+;; A range is the list of its values, and so is what these functions
+;; give.  They work along one row or one column, and what they give is
+;; for another function to take in, as =SUM(UNIQUE(A2:A9)): a cell shows
+;; one value, so a formula that ends with several is #VALUE!.
+
+(defun grid-calc--each (function left right)
+  "Apply FUNCTION to LEFT and RIGHT, or to each pair when they are lists.
+A list against a single value pairs every element with that value; two
+lists pair element by element and must be as long as each other."
+  (cond
+   ((and (consp left) (consp right))
+    (unless (= (length left) (length right))
+      (signal 'grid-calc-error '("#VALUE!")))
+    (cl-mapcar function left right))
+   ((consp left) (mapcar (lambda (l) (funcall function l right)) left))
+   ((consp right) (mapcar (lambda (r) (funcall function left r)) right))
+   (t (funcall function left right))))
+
+(defun grid-calc--check-one-line (model ast)
+  "Signal #VALUE! when AST is a range more than one row high and wide."
+  (let ((ast (grid-calc--deref ast)))
+    (when (eq (car-safe ast) 'RANGE)
+      (pcase-let ((`(,_ ,top ,bottom ,left ,right)
+                   (grid-calc--range-bounds model (cadr ast) (caddr ast))))
+        (when (and (< top bottom) (< left right))
+          (signal 'grid-calc-error '("#VALUE!")))))))
+
+(defun grid-calc--as-list (value)
+  "Return VALUE as a list of values."
+  (if (consp value) value (list value)))
+
+(defun grid-calc--sort-before-p (a b)
+  "Return non-nil when A sorts before B.
+Numbers come first, then text without regard to case, then blanks."
+  (let ((a-blank (or (null a) (equal a "")))
+        (b-blank (or (null b) (equal b "")))
+        (a-number (grid-calc--numeric a))
+        (b-number (grid-calc--numeric b)))
+    (cond (a-blank nil)
+          (b-blank t)
+          ((and a-number b-number) (< a-number b-number))
+          (a-number t)
+          (b-number nil)
+          (t (string< (downcase (grid-calc-to-string a))
+                      (downcase (grid-calc-to-string b)))))))
+
+(grid-calc-defun UNIQUE (values)
+  "Returns the values of a row or column once each, in order of appearance.
+Text compares without regard to case."
+  (let (seen)
+    (dolist (value (grid-calc--as-list values))
+      (unless (cl-member value seen :test #'grid-calc--equal)
+        (push value seen)))
+    (nreverse seen)))
+
+(grid-calc-defun SORT (values &optional sort_index sort_order)
+  "Returns the values of a row or column sorted.
+SORT_INDEX can only be 1, the one line there is.  SORT_ORDER is 1 for
+ascending, the default, or -1 for descending; blanks stay last."
+  (unless (memq (and sort_index (grid-calc--operand sort_index)) '(nil 1))
+    (signal 'grid-calc-error '("#VALUE!")))
+  (let* ((order (if sort_order (grid-calc--operand sort_order) 1))
+         (blank (lambda (v) (or (null v) (equal v ""))))
+         (values (grid-calc--as-list values))
+         (filled (cl-remove-if blank values))
+         (blanks (cl-remove-if-not blank values)))
+    (unless (memq order '(1 -1))
+      (signal 'grid-calc-error '("#VALUE!")))
+    (append (if (= order 1)
+                (cl-stable-sort (copy-sequence filled) #'grid-calc--sort-before-p)
+              (cl-stable-sort (copy-sequence filled)
+                              (lambda (a b) (grid-calc--sort-before-p b a))))
+            blanks)))
+
+(grid-calc-defun FILTER (values include &optional if_empty)
+  "Returns the values whose matching element of INCLUDE is true.
+INCLUDE is as long as VALUES, as A2:A9=\"x\" is for B2:B9.  When nothing
+is kept the result is IF_EMPTY, or #CALC! without it."
+  (let ((values (grid-calc--as-list values))
+        (include (grid-calc--as-list include)))
+    (unless (= (length values) (length include))
+      (signal 'grid-calc-error '("#VALUE!")))
+    (or (cl-loop for value in values
+                 for keep in include
+                 when (and keep (not (equal keep ""))
+                           (not (eql (grid-calc--numeric keep) 0)))
+                 collect value)
+        (if if_empty
+            (grid-calc--as-list if_empty)
+          (signal 'grid-calc-error '("#CALC!"))))))
 
 (grid-calc-declare-known-functions)
 

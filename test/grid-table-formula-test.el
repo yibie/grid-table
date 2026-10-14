@@ -111,6 +111,28 @@
                       "=COUNTPLOT(B1:D1,\"Fruit\")" "a" "b" "a")
                      :grid-chart)))
 
+(ert-deftest grid-table-formula-several-values-feed-aggregates ()
+  (let ((data '(("x" "10" "b") ("y" "20" "a") ("x" "5" "B") ("z" "" "c")
+                ("x" "1" ""))))
+    (cl-flet ((value (formula)
+                (caar (grid-table-formula-test--values
+                       (cons (list formula "" "") data)))))
+      (should (equal (value "=SUM(UNIQUE(B2:B6))") 36))
+      ;; Text compares without case; a blank is one more value, not counted.
+      (should (equal (value "=COUNTA(UNIQUE(C2:C6))") 3))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A6=\"x\"))") 16))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A6=\"q\"))") "#CALC!"))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A6=\"q\",0))") 0))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A5=\"x\"))") "#VALUE!"))
+      ;; Comparisons and arithmetic go element by element.
+      (should (equal (value "=SUM((A2:A6=\"x\")*B2:B6)") 16))
+      (should (equal (value "=MAX(SORT(B2:B6))") 20))
+      ;; Only one row or one column; a cell shows one value.
+      (should (equal (value "=UNIQUE(A2:B6)") "#VALUE!"))
+      (should (equal (value "=B2:B4") "#VALUE!"))
+      (should (equal (value "=B3:B3") "20"))
+      (should (equal (value "=UNIQUE(A2:A2)") "x")))))
+
 (ert-deftest grid-table-formula-multi-branch-functions-return ()
   (should (equal (grid-table-formula-test--eval
                   "=IFS(B1>5,\"big\",B1>1,\"mid\",TRUE,\"small\")" "3")
