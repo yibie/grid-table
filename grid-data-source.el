@@ -324,15 +324,41 @@ the characters that keep it from being one."
     (when-let* ((source (grid-workbook-sheet workbook name)))
       (gethash :model source))))
 
+(defvar grid-workbook-holding nil
+  "Non-nil while a run of changes holds back recalculation.
+`grid-workbook-recalculate' then only notes that it was asked, and
+whoever binds this recalculates everything once at the end; see
+`grid-workbook-with-held-recalculation'.")
+
+(defvar grid-workbook--held nil
+  "Non-nil when a recalculation was held back.")
+
+(defmacro grid-workbook-with-held-recalculation (&rest body)
+  "Run BODY, recalculating the workbooks it changes once, at the end.
+Each structural change otherwise recomputes every sheet."
+  (declare (indent 0))
+  (let ((outer (make-symbol "outer")))
+    `(let ((,outer grid-workbook-holding))
+       (if ,outer
+           (progn ,@body)
+         (let ((grid-workbook--held nil))
+           (prog1 (let ((grid-workbook-holding t)
+                        (grid-calc-defer t))
+                    ,@body)
+             (dolist (workbook (delete-dups grid-workbook--held))
+               (grid-workbook-recalculate workbook t))))))))
+
 (defun grid-workbook-recalculate (workbook &optional everything)
   "Recalculate the sheets of WORKBOOK, each reading the others' new values.
 Only what changed and what reads it is computed, unless EVERYTHING is
 non-nil, as it has to be when the sheets themselves changed."
+  (if grid-workbook-holding
+      (push workbook grid-workbook--held)
   (let ((grid-calc-sheets (grid-workbook--resolver workbook))
         (grid-calc-names (grid-workbook--names-resolver workbook))
         (grid-calc-defer nil))
     (grid-table-calc-evaluate-models (grid-workbook--models workbook)
-                                     everything)))
+                                     everything))))
 
 (defun grid-workbook-create (sheets)
   "Return a workbook of SHEETS, a list of (NAME . SOURCE) in order."

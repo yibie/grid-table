@@ -701,6 +701,7 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c / v" grid-table-etaf-filter-by-cell "Filter by this value")
     ("C-c / c" grid-table-etaf-clear-column-filter "Clear column filter")
     ("C-c / a" grid-table-etaf-clear-filters "Clear all filters")
+    ("C-c / d" grid-table-etaf-remove-duplicates "Remove duplicate rows")
     ("C-c f b" grid-table-etaf-toggle-bold "Bold")
     ("C-c f i" grid-table-etaf-toggle-italic "Italic")
     ("s-b" grid-table-etaf-toggle-bold "Bold")
@@ -2674,6 +2675,78 @@ rows.  `grid-table-etaf-show-columns' shows them."
      (car hidden)
      (cl-remove-if (lambda (col) (<= (nth 1 range) col (nth 3 range)))
                    (cdr hidden)))))
+
+;;;----------------------------------------------------------------------
+;;; Removing duplicates
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--duplicate-rows (source rows cols)
+  "Return the ROWS of SOURCE that repeat an earlier one in the COLS.
+Values compare as they are shown, ignoring case."
+  (let ((seen (make-hash-table :test 'equal))
+        duplicates)
+    (dolist (row rows)
+      (let ((key (mapcar (lambda (col)
+                           (downcase (grid-table-etaf--copy-text source row col)))
+                         cols)))
+        (if (gethash key seen)
+            (push row duplicates)
+          (puthash key t seen))))
+    (nreverse duplicates)))
+
+(defun grid-table-etaf--copy-text (source row col)
+  "Return the text the cell at ROW and COL of SOURCE shows."
+  (let ((value (grid-get-computed-value-at source row col)))
+    (if (grid-table-false-value-p source row col value)
+        "FALSE"
+      (grid-table-etaf--display-text
+       value (grid-table-cell-format source row col)))))
+
+(defun grid-table-etaf-remove-duplicates ()
+  "Delete the rows that repeat an earlier row in the selected columns.
+With one cell selected, whole rows of the sheet are compared; the header
+row is never deleted.  The first of equal rows stays.  Formulas move
+with the rows that stay, and references to the deleted rows become
+#REF!; the whole is one step to undo."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (whole (and (= (nth 0 range) (nth 2 range))
+                     (= (nth 1 range) (nth 3 range))))
+         (first (max (if (grid-table-header-row-p source) 1 0)
+                     (if whole 0 (nth 0 range))))
+         (last (if whole (1- (grid-get-row-count source)) (nth 2 range)))
+         (cols (if whole
+                   (number-sequence 0 (1- (grid-get-column-count source)))
+                 (number-sequence (nth 1 range) (nth 3 range))))
+         (duplicates (grid-table-etaf--duplicate-rows
+                      source (number-sequence first last) cols))
+         (delete (gethash :delete-row source)))
+    (unless delete
+      (user-error "This grid cannot delete rows"))
+    (if (null duplicates)
+        (message "No duplicate rows")
+      (grid-table-etaf--as-one-step
+       state
+       (lambda ()
+         (grid-workbook-with-held-recalculation
+           ;; From the bottom, so the rows still to go keep their place.
+           (dolist (row (reverse duplicates))
+             ;; The row argument counts from the row under the first.
+             (funcall delete source (1- row))
+             (grid-table-etaf--track-model state)))
+         (unless (grid-workbook-of source)
+           (grid-table-recalculate source t))))
+      (grid-table-etaf--apply-filters state)
+      (grid-table-etaf--fit-widths state)
+      ;; The selection may reach past the rows left.
+      (grid-table-etaf-goto (min (nth 0 range)
+                                 (1- (grid-get-row-count source)))
+                            (nth 1 range))
+      (grid-table-etaf--bump state)
+      (message "Removed %d duplicate row%s" (length duplicates)
+               (if (cdr duplicates) "s" "")))))
 
 ;;;----------------------------------------------------------------------
 ;;; Validation

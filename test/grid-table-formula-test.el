@@ -1211,6 +1211,7 @@
   ;; is that error; a word that calls nothing is an unknown name.
   (should (equal (grid-table-formula-test--eval "=#REF!+1") "#REF!"))
   (should (equal (grid-table-formula-test--eval "=IFERROR(#N/A,7)") 7))
+  (should (equal (grid-table-formula-test--eval "=IFERROR(Sheet2!#REF!,7)") 7))
   (should (equal (grid-table-formula-test--eval "=\"#REF!\"") "#REF!"))
   (should (equal (grid-table-formula-test--eval "=Rate+1") "#NAME?"))
   (let* ((model (grid-model-create 3 2 '(("1" "=A3+A2") ("2" "") ("3" ""))))

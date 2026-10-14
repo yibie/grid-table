@@ -1319,6 +1319,36 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-undo)
     (should (grid-table-validations source))))
 
+(ert-deftest grid-table-etaf-remove-duplicates ()
+  (grid-table-etaf-test--with-grid (8 4 100 12)
+    ;; Rows 2 to 7: a, b, A, b, c, a in column A; column D reads B.
+    (cl-loop for row from 1 for key in '("a" "b" "A" "b" "c" "a") do
+             (grid-table-etaf-set-cell row 0 key))
+    (grid-table-etaf-set-cell 5 1 "4")
+    (grid-table-sheet-new "Other")
+    (grid-table-etaf-set-cell 0 0 "=Sheet1!B6+Sheet1!B4")
+    (grid-table-sheet-select "Sheet1")
+    ;; Comparing column A only.
+    (grid-table-etaf-goto 0 0)
+    (grid-table-etaf-goto 7 0 t)
+    (grid-table-etaf-remove-duplicates)
+    (should (equal (cl-loop for row below (grid-get-row-count source)
+                            collect (grid-get-raw-value-at source row 0))
+                   '("H0" "a" "b" "c" "7")))
+    ;; The formula of the row kept moved with it; the other sheet's
+    ;; reference to a deleted row is #REF!, to a kept one follows it.
+    (should (equal (grid-get-raw-value-at source 3 3) "=B4+C4"))
+    (let ((other (grid-workbook-sheet (grid-workbook-of source) "Other")))
+      (should (equal (grid-get-raw-value-at other 0 0) "=Sheet1!B4+Sheet1!#REF!"))
+      (should (equal (grid-get-computed-value-at other 0 0) "#REF!"))
+      (grid-table-etaf-undo)
+      (should (= (grid-get-row-count source) 8))
+      (should (equal (grid-get-raw-value-at other 0 0) "=Sheet1!B6+Sheet1!B4"))
+      (should (equal (grid-get-computed-value-at other 0 0) 10)))
+    (grid-table-etaf-goto 0 0)
+    (should (equal (grid-table-etaf-remove-duplicates)
+                   "No duplicate rows"))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

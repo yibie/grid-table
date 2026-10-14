@@ -102,14 +102,22 @@ prefix starts there."
 
          ;; A reference into another sheet (e.g., Sheet2!A1, 'My Sheet'!A1:B5)
          ((when-let* ((prefix (grid-parser-sheet-prefix-at formula-str pos)))
-            (when (eq (string-match grid-parser--cells-regexp
-                                    formula-str (car prefix))
-                      (car prefix))
+            (cond
+             ((eq (string-match grid-parser--cells-regexp
+                                formula-str (car prefix))
+                  (car prefix))
               (push (list grid-parser-token-type-cell-ref
                           (upcase (match-string 0 formula-str))
                           (cdr prefix))
                     tokens)
-              (setq pos (match-end 0)))))
+              (setq pos (match-end 0)))
+             ;; A deleted reference keeps its sheet: Sheet2!#REF!
+             ((grid-parser--error-literal-at formula-str (car prefix))
+              (let ((text (grid-parser--error-literal-at
+                           formula-str (car prefix))))
+                (push (grid-parser-make-token grid-parser-token-type-error text)
+                      tokens)
+                (setq pos (+ (car prefix) (length text))))))))
 
          ;; Whole rows (e.g., 2:5, $2:$5)
          ((and (or (eq char ?$) (and (>= char ?0) (<= char ?9)))
