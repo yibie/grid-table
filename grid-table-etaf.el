@@ -1420,7 +1420,11 @@ is cut off at the left and top."
          (sx0 (plist-get frame :sx0)) (sx1 (plist-get frame :sx1))
          (size (plist-get chart :size))
          (anchor (plist-get chart :anchor))
-         (row (car anchor)) (col (cdr anchor))
+         ;; An anchor past the sheet's edge, as a file may hold, sits on
+         ;; its last row or column.
+         (row (max 0 (min (car anchor) (1- (grid-table-etaf--row-count state)))))
+         (col (max 0 (min (cdr anchor)
+                          (1- (length (grid-table-etaf--state-widths state))))))
          ;; A chart anchored in the frozen rows or columns stays put along
          ;; that axis; any other scrolls with the cells.
          (y (if (< row (car frozen))

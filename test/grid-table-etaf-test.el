@@ -1517,7 +1517,13 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (grid-table-etaf-chart-delete)
       (should-not (grid-table-charts source))
       (grid-table-etaf-undo)
-      (should (grid-table-charts source)))))
+      (should (grid-table-charts source))
+      ;; A chart anchored past the sheet's edge sits on its last column.
+      (grid-table-set-charts
+       source (list (list :anchor '(1 . 50) :size '(20 . 6) :type 'line
+                          :range "B2:C6")))
+      (grid-table-etaf--bump grid-table-etaf--state)
+      (should (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))))
 
 (provide 'grid-table-etaf-test)
 
