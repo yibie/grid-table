@@ -550,7 +550,7 @@ The column follows the pointer; a cancelled drag restores its width."
 (defconst grid-table-etaf--keys
   '(("RET" grid-table-edit-cell "Edit cell")
     ("<f2>" grid-table-edit-cell "Edit cell")
-    ("C-c C-r" grid-table-refresh "Refresh")
+    ("C-c C-r" grid-table-recalculate-all "Recalculate and refresh")
     ("C-c C-q" quit-window "Quit")
     ("C-n" grid-table-next-line "Next row")
     ("C-p" grid-table-previous-line "Previous row")

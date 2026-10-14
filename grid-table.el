@@ -158,12 +158,14 @@ See `grid-table-read-entry' for how dates and percentages are read."
       (grid-set-style-at source row col (cdr entry)))
     (grid-set-raw-value-at source row col (car entry))))
 
-(defun grid-table-recalculate (source)
-  "Compute every formula of SOURCE, and of the sheets it shares a book with."
+(defun grid-table-recalculate (source &optional everything)
+  "Bring the formulas of SOURCE, and of the sheets it shares a book with, up to date.
+Only what changed and what reads it is computed, unless EVERYTHING is
+non-nil."
   (let ((workbook (grid-workbook-of source))
         (model (gethash :model source)))
-    (cond (workbook (grid-workbook-recalculate workbook))
-          (model (grid-table-calc-evaluate model)))))
+    (cond (workbook (grid-workbook-recalculate workbook everything))
+          (model (grid-table-calc-evaluate model everything)))))
 
 (defun grid-table-header-row-p (source)
   "Return non-nil when the first row of SOURCE holds its column titles.
@@ -1642,6 +1644,17 @@ TITLE is an optional title for the grid."
       (grid-table-etaf-refresh restore-row-idx restore-col-idx)
     (grid-table--classic-refresh restore-row-idx restore-col-idx)))
 
+(defun grid-table-recalculate-all ()
+  "Compute every formula of the grid anew and show the result.
+Edits only recompute the cells they reach; this is for whatever they
+cannot see, such as a formula function defined since."
+  (interactive)
+  (let ((source (or grid-table--data-source
+                    (user-error "No grid in this buffer"))))
+    (when (gethash :model source)
+      (grid-table-recalculate source t))
+    (grid-table-refresh)))
+
 (defun grid-table--classic-refresh (&optional restore-row-idx restore-col-idx)
   "Redraw a classic grid, restoring point to RESTORE-ROW-IDX and RESTORE-COL-IDX."
   (let* ((inhibit-read-only t)
@@ -1702,7 +1715,7 @@ skipping regions with a `display' property (like images)."
   (setq-local font-lock-defaults '(grid-table--font-lock-keywords))
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "q") 'quit-window)
-    (define-key map (kbd "g") 'grid-table-refresh)
+    (define-key map (kbd "g") 'grid-table-recalculate-all)
     (define-key map (kbd "e") 'grid-table-edit-cell)
     (define-key map (kbd "<tab>") 'grid-table-next-cell)
     (define-key map (kbd "<backtab>") 'grid-table-previous-cell)

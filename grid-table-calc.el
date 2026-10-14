@@ -3,6 +3,8 @@
 (require 'grid-table-parser)
 (require 'grid-table-format)
 
+(defvar grid-cell--parsed)
+(defvar grid-cell--reads)
 (declare-function grid-data-model-styles "grid-data-model")
 (declare-function grid-data-model-cols "grid-data-model")
 
@@ -39,7 +41,10 @@ into another sheet is #REF!.")
 Whoever binds it recalculates afterwards, all sheets together.")
 
 (defun grid-calc--pass-of (model)
-  "Return the state vector of MODEL in the recalculation in progress."
+  "Return the state of MODEL's cells in the recalculation in progress.
+A vector with an entry per cell when every cell is computed; a hash
+table holding only the cells to compute when the others keep their
+values."
   (or (gethash model grid-calc--pass)
       (puthash model (make-vector (length (grid-data-model-cells model)) nil)
                grid-calc--pass)))
@@ -92,11 +97,11 @@ format, is text even when it reads as a number."
   "Return the parsed form of the formula RAW that CELL holds.
 The cell keeps it for as long as it holds that text, so a formula is
 parsed once and not at every recalculation."
-  (let ((kept (aref cell grid-cell--dependencies)))
+  (let ((kept (aref cell grid-cell--parsed)))
     (if (and (consp kept) (eq (car kept) raw))
         (cdr kept)
       (let ((parsed (grid-parser-parse (substring raw 1))))
-        (aset cell grid-cell--dependencies (cons raw parsed))
+        (aset cell grid-cell--parsed (cons raw parsed))
         parsed))))
 
 (defun grid-calc--compute-cell (model index)
@@ -105,11 +110,13 @@ A formula that fails gives its cell one of `grid-calc-error-values'
 instead of stopping the recalculation."
   (let ((cell (aref (grid-data-model-cells model) index))
         (pass (grid-calc--pass-of model)))
-    (pcase (aref pass index)
+    (pcase (if (vectorp pass) (aref pass index) (gethash index pass 'done))
       ('done nil)
       ('visiting (signal 'grid-calc-cycle nil))
       (_
-       (aset pass index 'visiting)
+       (if (vectorp pass)
+           (aset pass index 'visiting)
+         (puthash index 'visiting pass))
        (let ((raw (grid-cell-raw-input cell))
              cycle)
          (set-grid-cell-computed-value
@@ -121,7 +128,9 @@ instead of stopping the recalculation."
                 (grid-calc-cycle (setq cycle t) "#CYCLE!")
                 (error (grid-calc--error-value err)))
             (grid-calc--typed-value model index raw)))
-         (aset pass index 'done)
+         (if (vectorp pass)
+             (aset pass index 'done)
+           (puthash index 'done pass))
          ;; Every formula on a cycle is part of it, not only the one that
          ;; closed it.
          (when (and cycle (> grid-calc--depth 0))
@@ -138,22 +147,218 @@ reads a stale value.  An error value is signaled on to the reader."
         (signal 'grid-calc-error (list value))
       value)))
 
-(defun grid-table-calc-evaluate-models (models)
-  "Evaluate all formulas of MODELS, the sheets of one workbook.
-Every cell is computed once; a formula computes the cells it reads
-before itself, whatever their position and whichever sheet they are in."
+;;;----------------------------------------------------------------------
+;;; Recalculating only what an edit reaches
+;;;----------------------------------------------------------------------
+
+(defvar grid-calc-incremental t
+  "Non-nil recalculates only the cells an edit can change.
+After an edit those are the cell itself, the formulas that read it and,
+in turn, the ones that read them.  With nil every cell is computed at
+every recalculation.")
+
+(defconst grid-calc--scan-limit 3000000
+  "How many range checks finding the cells to recalculate may take.
+Past it, computing every cell is the faster way.")
+
+(defconst grid-calc--volatile-functions '("TODAY" "NOW" "RAND" "RANDBETWEEN")
+  "Functions whose value changes without any cell changing.")
+
+(defvar grid-calc--known-functions (make-hash-table :test 'equal)
+  "Functions that read nothing but their arguments.
+A formula calling any other function is computed at every recalculation,
+since nothing says what such a function reads.")
+
+(defvar grid-calc--graphs (make-hash-table :test 'eq :weakness 'key)
+  "For each model, who reads what: a vector [CELLS RANGES ALWAYS DIRTY].
+CELLS maps the index of a cell to the indices of the formulas that name
+it, RANGES lists (FORMULA TOP BOTTOM LEFT RIGHT) for the ranges formulas
+name, ALWAYS lists the formulas computed at every recalculation and DIRTY
+the cells changed since the last one.  A model without an entry has
+every cell computed.")
+
+(defun grid-calc-declare-known-functions ()
+  "Record the functions defined so far as reading only their arguments."
+  (maphash (lambda (name _function)
+             (unless (member name grid-calc--volatile-functions)
+               (puthash name t grid-calc--known-functions)))
+           grid-calc-functions)
+  (dolist (name '("IF" "IFS" "IFERROR" "INDEX" "VLOOKUP" "XLOOKUP"))
+    (puthash name t grid-calc--known-functions)))
+
+(defun grid-calc-touch (model row col)
+  "Note that the cell at ROW and COL of MODEL changed.
+The next recalculation computes it and what reads it."
+  (when-let* ((graph (gethash model grid-calc--graphs)))
+    (push (+ (* row (grid-data-model-cols model)) col) (aref graph 3))))
+
+(defun grid-calc-forget (model)
+  "Have every cell of MODEL computed at the next recalculation.
+For changes made behind the model's back, such as formulas rewritten in
+place."
+  (remhash model grid-calc--graphs))
+
+(defun grid-calc--reads (model ast)
+  "Return what the formula AST reads in MODEL.
+A list of cell indices and of (TOP BOTTOM LEFT RIGHT) ranges, or the
+symbol `always' for a formula to compute at every recalculation: one
+that reads another sheet, calls a function that may read anything or
+whose value changes by itself, or runs Lisp."
+  (catch 'always
+    (let ((rows (grid-data-model-rows model))
+          (cols (grid-data-model-cols model))
+          reads)
+      (cl-labels
+          ((walk (node)
+             (pcase node
+               (`(CELL-REF ,_ ,(pred identity)) (throw 'always 'always))
+               (`(CELL-REF ,ref . ,_)
+                (let ((at (grid-calc--reference-coords ref)))
+                  (when (and (car at) (cdr at)
+                             (< (car at) rows) (< (cdr at) cols))
+                    (push (+ (* (car at) cols) (cdr at)) reads))))
+               (`(RANGE ,start ,end)
+                (when (or (nth 2 start) (nth 2 end))
+                  (throw 'always 'always))
+                (pcase-let ((`(,_ ,top ,bottom ,left ,right)
+                             (grid-calc--range-bounds model start end)))
+                  (when (and (<= top bottom) (<= left right))
+                    (push (list top bottom left right) reads))))
+               (`(FUNCTION-CALL ,name ,arguments)
+                (unless (gethash (upcase name) grid-calc--known-functions)
+                  (throw 'always 'always))
+                (mapc #'walk arguments))
+               (`(ELISP-CODE . ,_) (throw 'always 'always))
+               ((pred consp)
+                (dolist (part node)
+                  (when (consp part) (walk part)))))))
+        (walk ast))
+      reads)))
+
+(defun grid-calc--register (model graph index)
+  "Record in GRAPH what the cell at INDEX of MODEL reads."
+  (let* ((cell (aref (grid-data-model-cells model) index))
+         (raw (grid-cell-raw-input cell))
+         (reads (and (> (length raw) 0) (eq (aref raw 0) ?=)
+                     ;; A formula that does not parse reads nothing; one
+                     ;; whose ranges make no sense is anyone's guess.
+                     (condition-case nil
+                         (let ((parsed (grid-calc--parsed cell raw)))
+                           (condition-case nil
+                               (grid-calc--reads model parsed)
+                             (error 'always)))
+                       (error nil)))))
+    (aset cell grid-cell--reads reads)
+    (if (eq reads 'always)
+        (push index (aref graph 2))
+      (dolist (read reads)
+        (if (integerp read)
+            (push index (gethash read (aref graph 0)))
+          (push (cons index read) (aref graph 1)))))))
+
+(defun grid-calc--unregister (model graph index)
+  "Take out of GRAPH what the cell at INDEX of MODEL was recorded as reading."
+  (let* ((cell (aref (grid-data-model-cells model) index))
+         (reads (aref cell grid-cell--reads)))
+    (cond ((eq reads 'always)
+           (aset graph 2 (delq index (aref graph 2))))
+          (reads
+           (dolist (read reads)
+             (when (integerp read)
+               (puthash read (delq index (gethash read (aref graph 0)))
+                        (aref graph 0))))
+           (when (cl-some #'consp reads)
+             (aset graph 1 (cl-delete index (aref graph 1) :key #'car)))))
+    (aset cell grid-cell--reads nil)))
+
+(defun grid-calc--build-graph (model)
+  "Record who reads what in MODEL, whose cells were all just computed."
+  (let ((graph (vector (make-hash-table) nil nil nil))
+        (cells (grid-data-model-cells model)))
+    (dotimes (index (length cells))
+      (let ((raw (grid-cell-raw-input (aref cells index))))
+        (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
+            (grid-calc--register model graph index)
+          (aset (aref cells index) grid-cell--reads nil))))
+    (puthash model graph grid-calc--graphs)))
+
+(defun grid-calc--evaluate-dirty (models)
+  "Compute the cells of MODELS that changed and the formulas they reach.
+Return nil, having computed nothing, when a model has no record of who
+reads what or when finding the cells would take longer than computing
+them all."
+  (when (cl-every (lambda (model) (gethash model grid-calc--graphs)) models)
+    (let ((work 0)
+          plans)
+      (when (catch 'everything
+              (dolist (model models)
+                (let* ((graph (gethash model grid-calc--graphs))
+                       (cols (grid-data-model-cols model))
+                       (dirty (delete-dups (aref graph 3)))
+                       (state (make-hash-table))
+                       queue)
+                  (aset graph 3 nil)
+                  ;; A changed cell may read other cells than before.
+                  (dolist (index dirty)
+                    (grid-calc--unregister model graph index)
+                    (grid-calc--register model graph index))
+                  (setq queue (append dirty (aref graph 2)))
+                  (let* ((readers (aref graph 0))
+                         (ranges (aref graph 1))
+                         (count (length ranges)))
+                    (while queue
+                      (let ((index (pop queue)))
+                        (when (eq (gethash index state 'clean) 'clean)
+                          (puthash index nil state)
+                          (dolist (reader (gethash index readers))
+                            (push reader queue))
+                          (when ranges
+                            (setq work (+ work count))
+                            (when (> work grid-calc--scan-limit)
+                              (throw 'everything nil))
+                            (let ((row (/ index cols))
+                                  (col (% index cols)))
+                              (dolist (range ranges)
+                                (when (and (<= (nth 1 range) row (nth 2 range))
+                                           (<= (nth 3 range) col (nth 4 range)))
+                                  (push (car range) queue)))))))))
+                  (push (cons model state) plans)))
+              t)
+        (pcase-dolist (`(,model . ,state) plans)
+          (puthash model state grid-calc--pass))
+        (pcase-dolist (`(,model . ,state) plans)
+          (let (indices)
+            (maphash (lambda (index _state) (push index indices)) state)
+            (dolist (index indices)
+              (grid-calc--compute-cell model index))))
+        t))))
+
+(defun grid-table-calc-evaluate-models (models &optional everything)
+  "Evaluate the formulas of MODELS, the sheets of one workbook.
+A formula computes the cells it reads before itself, whatever their
+position and whichever sheet they are in.  Only the cells that changed
+since the last time and the formulas they reach are computed, unless
+EVERYTHING is non-nil or a model has no record of who reads what; then
+every cell is, once."
   (let ((grid-calc--pass (make-hash-table :test 'eq))
         (grid-calc--depth 0))
-    (dolist (model models)
-      (dotimes (i (length (grid-data-model-cells model)))
-        (grid-calc--compute-cell model i)))))
+    (unless (and grid-calc-incremental (not everything)
+                 (grid-calc--evaluate-dirty models))
+      (clrhash grid-calc--pass)
+      (dolist (model models)
+        (dotimes (i (length (grid-data-model-cells model)))
+          (grid-calc--compute-cell model i)))
+      (dolist (model models)
+        (if grid-calc-incremental
+            (grid-calc--build-graph model)
+          (grid-calc-forget model))))))
 
-(defun grid-table-calc-evaluate (model)
-  "Main entry point for evaluating all formulas in the model.
-Every cell is computed once; a formula computes the cells it reads
-before itself, whatever their position in the sheet."
+(defun grid-table-calc-evaluate (model &optional everything)
+  "Main entry point for evaluating the formulas in MODEL.
+See `grid-table-calc-evaluate-models' for what is computed and for
+EVERYTHING."
   (unless grid-calc-defer
-    (grid-table-calc-evaluate-models (list model))))
+    (grid-table-calc-evaluate-models (list model) everything)))
 
 (defvar grid-calc-functions (make-hash-table :test 'equal))
 
@@ -178,7 +383,7 @@ FORMULA: The formula string to set."
          (cell (grid-model-get-cell model row col)))
     (when cell
       (set-grid-cell-raw-input cell formula)
-      ;; Trigger a full recalculation
+      (grid-calc-touch model row col)
       (grid-table-calc-evaluate model))))
 
 ;;;----------------------------------------------------------------------
@@ -1435,5 +1640,7 @@ A day the target month does not have becomes its last day."
 (grid-calc-defun VLOOKUP (lookup-value table-range col-index exact-match)
   "Vertical lookup function (Placeholder)."
   (error "VLOOKUP not yet implemented."))
+
+(grid-calc-declare-known-functions)
 
 (provide 'grid-table-calc)

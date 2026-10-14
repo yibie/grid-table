@@ -12,11 +12,13 @@
 ;; Constants for slot indices
 (defconst grid-cell--raw-input 0)
 (defconst grid-cell--computed-value 1)
-(defconst grid-cell--dependencies 3)
+;; (RAW . PARSED): the formula the cell holds, parsed
+(defconst grid-cell--parsed 3)
 (defconst grid-cell--error-msg 4)
 (defconst grid-cell--row 5)
 (defconst grid-cell--col 6)
-(defconst grid-cell--dependents 7) ; New slot for dependency graph
+;; What the formula was recorded as reading; see `grid-calc--register'
+(defconst grid-cell--reads 7)
 (defconst grid-cell--length 8)
 
 ;; Manual constructor
@@ -26,7 +28,6 @@
     (aset cell grid-cell--row row)
     (aset cell grid-cell--col col)
     (aset cell grid-cell--raw-input "")
-    (aset cell grid-cell--dependencies '())
     cell))
 
 ;; Manual accessors and setters
@@ -34,14 +35,10 @@
 (defun grid-cell-computed-value (cell) (aref cell grid-cell--computed-value))
 (defun grid-cell-row (cell) (aref cell grid-cell--row))
 (defun grid-cell-col (cell) (aref cell grid-cell--col))
-(defun grid-cell-dependencies (cell) (aref cell grid-cell--dependencies))
 (defun grid-cell-error-msg (cell) (aref cell grid-cell--error-msg))
-(defun grid-cell-dependents (cell) (aref cell grid-cell--dependents))
 
 (defun set-grid-cell-raw-input (cell value) (aset cell grid-cell--raw-input value))
 (defun set-grid-cell-computed-value (cell value) (aset cell grid-cell--computed-value value))
-(defun set-grid-cell-dependencies (cell value) (aset cell grid-cell--dependencies value))
-(defun set-grid-cell-dependents (cell value) (aset cell grid-cell--dependents value))
 
 ;;;----------------------------------------------------------------------
 ;;; Data Model
@@ -155,7 +152,9 @@ If the cell is a formula, it will be evaluated on demand."
     (when styles
       (if style
           (puthash (cons row col) (copy-sequence style) styles)
-        (remhash (cons row col) styles)))
+        (remhash (cons row col) styles))
+      ;; The text format changes what a typed cell is worth.
+      (grid-calc-touch model row col))
     style))
 
 (defun grid-model-get-conditionals (model)

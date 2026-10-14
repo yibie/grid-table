@@ -1316,4 +1316,6 @@ COUNT itself counts the numbers in a range, as in a spreadsheet."
                        (grid-calc-to-number width)
                        (grid-calc-to-number height)))
 
+(grid-calc-declare-known-functions)
+
 (provide 'grid-table-chart)

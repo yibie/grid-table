@@ -263,18 +263,21 @@ the characters that keep it from being one."
     (when-let* ((source (grid-workbook-sheet workbook name)))
       (gethash :model source))))
 
-(defun grid-workbook-recalculate (workbook)
-  "Recalculate every sheet of WORKBOOK, each reading the others' new values."
+(defun grid-workbook-recalculate (workbook &optional everything)
+  "Recalculate the sheets of WORKBOOK, each reading the others' new values.
+Only what changed and what reads it is computed, unless EVERYTHING is
+non-nil, as it has to be when the sheets themselves changed."
   (let ((grid-calc-sheets (grid-workbook--resolver workbook))
         (grid-calc-defer nil))
-    (grid-table-calc-evaluate-models (grid-workbook--models workbook))))
+    (grid-table-calc-evaluate-models (grid-workbook--models workbook)
+                                     everything)))
 
 (defun grid-workbook-create (sheets)
   "Return a workbook of SHEETS, a list of (NAME . SOURCE) in order."
   (let ((workbook (grid-workbook--create)))
     (pcase-dolist (`(,name . ,source) sheets)
       (grid-workbook-add-sheet workbook source name))
-    (grid-workbook-recalculate workbook)
+    (grid-workbook-recalculate workbook t)
     workbook))
 
 (defun grid-workbook-ensure (source)
@@ -312,7 +315,7 @@ POSITION is the index it takes; it goes last by default."
              name)
             name position)
       ;; References to a sheet of that name were waiting for it.
-      (grid-workbook-recalculate workbook))))
+      (grid-workbook-recalculate workbook t))))
 
 (defun grid-workbook-remove-sheet (workbook source)
   "Take SOURCE out of WORKBOOK.  References into it become #REF!."
@@ -321,7 +324,7 @@ POSITION is the index it takes; it goes last by default."
   (setf (grid-workbook-sheets workbook)
         (delq source (grid-workbook-sheets workbook)))
   (remhash :workbook source)
-  (grid-workbook-recalculate workbook))
+  (grid-workbook-recalculate workbook t))
 
 (defun grid-workbook-move-sheet (workbook source delta)
   "Move SOURCE by DELTA places among the sheets of WORKBOOK."
@@ -353,6 +356,7 @@ the (SOURCE ROW COL OLD NEW) entries of the formulas that changed."
                 (let ((new (funcall function old name)))
                   (unless (equal old new)
                     (set-grid-cell-raw-input cell new)
+                    (grid-calc-forget model)
                     (push (list source (/ index cols) (% index cols) old new)
                           changes)))))))))
     (nreverse changes)))
@@ -367,7 +371,7 @@ the (SOURCE ROW COL OLD NEW) entries of the formulas that changed."
      workbook
      (lambda (formula _sheet)
        (grid-calc-rename-sheet-in-formula formula old name)))
-    (grid-workbook-recalculate workbook)))
+    (grid-workbook-recalculate workbook t)))
 
 (defun grid-workbook--line-change (key args old-model)
   "Return (AXIS AT DELTA) for the line that KEY, called with ARGS, moved.
@@ -417,7 +421,8 @@ change rewrote in other sheets go back with it."
       (when (memq sheet (grid-workbook-sheets workbook))
         (set-grid-cell-raw-input
          (grid-model-get-cell (gethash :model sheet) row col) new)))
-    (grid-workbook-recalculate workbook)))
+    ;; Formulas were put back in place, behind the models' backs.
+    (grid-workbook-recalculate workbook t)))
 
 (defun grid-workbook--wrap (source key)
   "Make the function KEY of SOURCE keep its workbook up to date."

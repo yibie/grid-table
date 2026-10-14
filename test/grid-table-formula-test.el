@@ -821,6 +821,172 @@
     (grid-table-enter-value source 0 1 "50")
     (should (equal (grid-get-raw-value-at source 0 1) "50"))))
 
+;;;----------------------------------------------------------------------
+;;; Recalculating only what an edit reaches
+;;;----------------------------------------------------------------------
+
+(defun grid-table-formula-test--all-values (model)
+  "Return every computed value of MODEL, row by row."
+  (cl-loop for row below (grid-data-model-rows model) collect
+           (cl-loop for col below (grid-data-model-cols model) collect
+                    (grid-model-get-computed-value model row col))))
+
+(defun grid-table-formula-test--fresh-values (model)
+  "Return what MODEL's cells are worth when every one is computed anew."
+  (grid-table-formula-test--all-values
+   (grid-model-create (grid-data-model-rows model) (grid-data-model-cols model)
+                      (grid-model-get-all-raw-values model)
+                      nil (grid-model--same-styles model))))
+
+(defun grid-table-formula-test--computed (thunk)
+  "Return how many cells calling THUNK computes."
+  (let* ((count 0)
+         (spy (lambda (&rest _) (setq count (1+ count)))))
+    (advice-add 'grid-calc--parsed :before spy)
+    (advice-add 'grid-calc--typed-value :before spy)
+    (unwind-protect (funcall thunk)
+      (advice-remove 'grid-calc--parsed spy)
+      (advice-remove 'grid-calc--typed-value spy))
+    count))
+
+(ert-deftest grid-table-edit-computes-only-what-it-reaches ()
+  (let ((model (grid-model-create
+                4 4 '(("1" "=A1*2" "=B1+1" "9")
+                      ("2" "=SUM(A1:A3)" "=B2*10" "9")
+                      ("3" "=D4" "=A:A" "9")
+                      ("4" "" "" "9")))))
+    ;; A cell nothing reads: it alone is computed.
+    (should (= (grid-table-formula-test--computed
+                (lambda () (grid-model-set-raw-value model 0 3 "5")))
+               1))
+    ;; D4 is read by B3 only.
+    (should (= (grid-table-formula-test--computed
+                (lambda () (grid-model-set-raw-value model 3 3 "6")))
+               2))
+    (should (equal (grid-model-get-computed-value model 2 1) "6"))
+    ;; A1 reaches B1, C1, the sum, what reads the sum, and the column.
+    (should (= (grid-table-formula-test--computed
+                (lambda () (grid-model-set-raw-value model 0 0 "10")))
+               6))
+    (should (equal (grid-table-formula-test--all-values model)
+                   (grid-table-formula-test--fresh-values model)))
+    (should (equal (grid-model-get-computed-value model 1 2) 150))))
+
+(ert-deftest grid-table-edit-follows-a-formula-that-reads-other-cells-now ()
+  (let ((model (grid-model-create 2 3 '(("1" "2" "=A1+1") ("" "" "=C1*2")))))
+    (grid-model-set-raw-value model 0 2 "=B1+1")
+    (should (equal (grid-model-get-computed-value model 1 2) 6))
+    ;; A1 is no longer read, B1 is.
+    (should (= (grid-table-formula-test--computed
+                (lambda () (grid-model-set-raw-value model 0 0 "50")))
+               1))
+    (grid-model-set-raw-value model 0 1 "7")
+    (should (equal (grid-model-get-computed-value model 1 2) 16))
+    ;; A formula replaced by a number is read like any number.
+    (grid-model-set-raw-value model 0 2 "100")
+    (should (equal (grid-model-get-computed-value model 1 2) 200))
+    (grid-model-set-raw-value model 0 1 "8")
+    (should (equal (grid-model-get-computed-value model 1 2) 200))))
+
+(ert-deftest grid-table-edit-makes-and-breaks-cycles-and-errors ()
+  (let ((model (grid-model-create 2 3 '(("1" "=A1+1" "=B1+1") ("=C1" "" "")))))
+    (grid-model-set-raw-value model 0 0 "=C1")
+    (should (equal (grid-table-formula-test--all-values model)
+                   '(("#CYCLE!" "#CYCLE!" "#CYCLE!") ("#CYCLE!" "" ""))))
+    (grid-model-set-raw-value model 0 0 "5")
+    (should (equal (grid-table-formula-test--all-values model)
+                   '(("5" 6 7) (7 "" ""))))
+    (grid-model-set-raw-value model 0 0 "=1/0")
+    (should (equal (grid-model-get-computed-value model 1 0) "#DIV/0!"))
+    (grid-model-set-raw-value model 0 0 "2")
+    (should (equal (grid-model-get-computed-value model 1 0) 4))))
+
+(ert-deftest grid-table-edit-recomputes-what-nothing-announces ()
+  (let ((calls 0))
+    (puthash "TICK" (lambda (_model) (setq calls (1+ calls)))
+             grid-calc-functions)
+    (unwind-protect
+        (let ((model (grid-model-create
+                      2 3 '(("1" "=TICK()" "=B1+0")
+                            ("=NOW()" "=A2+0" "x")))))
+          ;; A function that may read anything, and a clock, are
+          ;; computed at every recalculation, with what reads them.
+          (let ((before calls))
+            (grid-model-set-raw-value model 1 2 "y")
+            (should (= calls (1+ before)))
+            (should (equal (grid-model-get-computed-value model 0 2) calls)))
+          (should (numberp (grid-model-get-computed-value model 1 1)))
+          ;; The text format changes what a typed cell is worth.
+          (grid-model-set-raw-value model 0 0 "5")
+          (grid-model-set-raw-value model 1 2 "=SUM(A1:A1)")
+          (should (equal (grid-model-get-computed-value model 1 2) 5))
+          (grid-model-set-style model 0 0 '(:format (text)))
+          (grid-table-calc-evaluate model)
+          (should (equal (grid-model-get-computed-value model 1 2) 0))
+          (grid-model-set-style model 0 0 nil)
+          (grid-table-calc-evaluate model)
+          (should (equal (grid-model-get-computed-value model 1 2) 5)))
+      (remhash "TICK" grid-calc-functions))))
+
+(ert-deftest grid-table-edit-reaches-other-sheets ()
+  (let* ((workbook (grid-workbook--create))
+         (data (make-default-data-source
+                '("" "") '(("1" "=A1*2") ("2" "=Sums!A1"))))
+         (sums (make-default-data-source
+                '("" "") '(("=SUM(Data!A1:A2)" "=A1+1") ("=Data!B1" "k")))))
+    (grid-workbook-add-sheet workbook data "Data")
+    (grid-workbook-add-sheet workbook sums "Sums")
+    (grid-workbook-recalculate workbook t)
+    (should (equal (grid-get-computed-value-at sums 0 1) 4))
+    (grid-set-raw-value-at data 0 0 "10")
+    (should (equal (grid-get-computed-value-at sums 0 0) 12))
+    (should (equal (grid-get-computed-value-at sums 0 1) 13))
+    (should (equal (grid-get-computed-value-at sums 1 0) 20))
+    (should (equal (grid-get-computed-value-at data 1 1) 12))
+    ;; A row put in, which makes the model anew, then an edit.
+    (funcall (gethash :add-row data) data 0)
+    (should (equal (grid-get-raw-value-at sums 0 0) "=SUM(Data!A1:A3)"))
+    (grid-set-raw-value-at data 1 0 "100")
+    (should (equal (grid-get-computed-value-at sums 0 0) 112))
+    ;; A sheet renamed, then an edit.
+    (grid-workbook-rename-sheet workbook data "Raw")
+    (grid-set-raw-value-at data 0 0 "1")
+    (should (equal (grid-get-computed-value-at sums 0 0) 103))
+    (should (equal (grid-get-computed-value-at sums 1 0) 2))))
+
+(ert-deftest grid-table-edits-give-what-computing-everything-gives ()
+  (let* ((rows 12) (cols 6)
+         (formulas '("=A1+1" "=SUM(A1:C4)" "=B:B" "=SUM(2:3)" "=IF(A2>5,B3,C4)"
+                     "=INDEX(A1:C5,2,2)" "=VLOOKUP(3,A1:B9,2)" "=A1&B1"
+                     "=D5*2" "=E7+F8" "=AVERAGE(D1:F12)" "=MAX(A:A)"
+                     "=ROUND(C3/7,2)" "=A12" "=F1" "=COUNT(A1:F12)"
+                     "=XLOOKUP(2,A1:A9,B1:B9,0)" "=E1+E2+E3" "=\"x\"*2"))
+         (pick (lambda ()
+                 (pcase (random 4)
+                   (0 (number-to-string (random 20)))
+                   (1 (nth (random (length formulas)) formulas))
+                   (2 "")
+                   (_ (nth (random 3) '("a" "7" "2026-10-13"))))))
+         model)
+    (random "grid-table")
+    (setq model (grid-model-create
+                 rows cols
+                 (cl-loop repeat rows collect
+                          (cl-loop repeat cols collect (funcall pick)))))
+    (dotimes (_ 300)
+      (grid-model-set-raw-value model (random rows) (random cols)
+                                (funcall pick))
+      (should (equal (grid-table-formula-test--all-values model)
+                     (grid-table-formula-test--fresh-values model))))
+    ;; The same with the record of who reads what switched off.
+    (let ((grid-calc-incremental nil))
+      (grid-model-set-raw-value model 0 0 "3")
+      (should (equal (grid-table-formula-test--all-values model)
+                     (grid-table-formula-test--fresh-values model))))
+    (grid-model-set-raw-value model 0 0 "4")
+    (should (equal (grid-table-formula-test--all-values model)
+                   (grid-table-formula-test--fresh-values model)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
