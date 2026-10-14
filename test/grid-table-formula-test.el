@@ -987,6 +987,87 @@
     (should (equal (grid-table-formula-test--all-values model)
                    (grid-table-formula-test--fresh-values model)))))
 
+;; Formulas reading another sheet are computed when what they read changes,
+;; and only then.
+(ert-deftest grid-table-formula-graph-spans-sheets ()
+  (let* ((one (make-default-data-source
+               '("" "" "") '(("1" "2" "3") ("4" "5" "6") ("7" "8" "9"))))
+         (two (make-default-data-source
+               '("" "" "") '(("=S1!B2*2" "=SUM(S1!A:A)" "=A1+B1")
+                             ("=S2!A1+1" "" "") ("" "" ""))))
+         (workbook (grid-workbook-create (list (cons "S1" one) (cons "S2" two))))
+         (model (lambda (source) (gethash :model source))))
+    (should (equal (grid-get-computed-value-at two 0 0) 10))
+    (should (equal (grid-get-computed-value-at two 0 1) 12))
+    (should (equal (grid-get-computed-value-at two 1 0) 11))
+    ;; Neither the reference nor the self-named one is computed every time.
+    (should (consp (aref (grid-model-get-cell (funcall model two) 0 0)
+                         grid-cell--reads)))
+    (should (consp (aref (grid-model-get-cell (funcall model two) 1 0)
+                         grid-cell--reads)))
+    ;; An edit nothing on S2 reads computes S1's cell and no more.
+    (should (= (grid-table-formula-test--computed
+                (lambda () (grid-set-raw-value-at one 2 2 "90")))
+               1))
+    ;; An edit S2 reads reaches it, and what reads it there.
+    (grid-set-raw-value-at one 1 1 "50")
+    (should (equal (grid-get-computed-value-at two 0 0) 100))
+    (should (equal (grid-get-computed-value-at two 0 2) 112))
+    (grid-set-raw-value-at one 0 0 "100")
+    (should (equal (grid-get-computed-value-at two 0 1) 111))
+    ;; A formula that stops reading a cell is no longer reached from it.
+    (grid-set-raw-value-at two 0 0 "=S1!C1")
+    (should (equal (grid-get-computed-value-at two 0 0) "3"))
+    (should (= (grid-table-formula-test--computed
+                (lambda () (grid-set-raw-value-at one 1 1 "60")))
+               1))
+    ;; A cycle across the sheets is found.
+    (grid-set-raw-value-at one 0 2 "=S2!A1")
+    (should (equal (grid-get-computed-value-at one 0 2) "#CYCLE!"))
+    (grid-set-raw-value-at two 0 0 "=S1!C2")
+    (should (equal (grid-get-computed-value-at one 0 2) "6"))
+    (ignore workbook)))
+
+(ert-deftest grid-table-formula-graph-across-sheets-matches-full-recalc ()
+  (let* ((rows 8) (cols 4)
+         (formulas '("=A1+1" "=S1!B2*2" "=SUM(S2!A1:B4)" "=S2!C3" "=SUM(S1!A:A)"
+                     "=s1!D4+A2" "=COUNT(S2!A:D)" "=B2&S1!C1" "=MAX(S1!A1:D8)"))
+         (pick (lambda ()
+                 (pcase (random 4)
+                   (0 (number-to-string (random 20)))
+                   (1 (nth (random (length formulas)) formulas))
+                   (2 "")
+                   (_ "x"))))
+         (table (lambda ()
+                  (cl-loop repeat rows collect
+                           (cl-loop repeat cols collect (funcall pick)))))
+         sources)
+    (random "grid-table-sheets")
+    (setq sources (list (make-default-data-source (make-list cols "") (funcall table))
+                        (make-default-data-source (make-list cols "") (funcall table))))
+    (grid-workbook-create (list (cons "S1" (nth 0 sources))
+                                (cons "S2" (nth 1 sources))))
+    (cl-flet ((values (source)
+                (grid-table-formula-test--all-values (gethash :model source)))
+              (fresh ()
+                (let ((copies
+                       (mapcar (lambda (source)
+                                 (make-default-data-source
+                                  (make-list cols "")
+                                  (cl-loop for row below rows collect
+                                           (cl-loop for col below cols collect
+                                                    (grid-get-raw-value-at
+                                                     source row col)))))
+                               sources)))
+                  (grid-workbook-create (list (cons "S1" (nth 0 copies))
+                                              (cons "S2" (nth 1 copies))))
+                  copies)))
+      (dotimes (_ 200)
+        (grid-set-raw-value-at (nth (random 2) sources) (random rows) (random cols)
+                               (funcall pick))
+        (let ((copies (fresh)))
+          (should (equal (mapcar #'values sources) (mapcar #'values copies))))))))
+
 ;; The text table needs a data source and nothing else.
 (ert-deftest grid-table-text-render-needs-no-buffer ()
   (let* ((source (make-default-data-source

@@ -170,12 +170,14 @@ A formula calling any other function is computed at every recalculation,
 since nothing says what such a function reads.")
 
 (defvar grid-calc--graphs (make-hash-table :test 'eq :weakness 'key)
-  "For each model, who reads what: a vector [CELLS RANGES ALWAYS DIRTY].
-CELLS maps the index of a cell to the indices of the formulas that name
-it, RANGES lists (FORMULA TOP BOTTOM LEFT RIGHT) for the ranges formulas
-name, ALWAYS lists the formulas computed at every recalculation and DIRTY
-the cells changed since the last one.  A model without an entry has
-every cell computed.")
+  "For each model, who reads what: a vector of six slots.
+[CELLS RANGES ALWAYS DIRTY OTHER-CELLS OTHER-RANGES].  CELLS maps the
+index of a cell to the indices of the formulas that name it, RANGES
+lists (FORMULA TOP BOTTOM LEFT RIGHT) for the ranges formulas name,
+ALWAYS lists the formulas computed at every recalculation and DIRTY the
+cells changed since the last one.  OTHER-CELLS and OTHER-RANGES are the
+same as CELLS and RANGES for formulas on other sheets, each named by
+\(MODEL . INDEX).  A model without an entry has every cell computed.")
 
 (defun grid-calc-declare-known-functions ()
   "Record the functions defined so far as reading only their arguments."
@@ -200,30 +202,42 @@ place."
 
 (defun grid-calc--reads (model ast)
   "Return what the formula AST reads in MODEL.
-A list of cell indices and of (TOP BOTTOM LEFT RIGHT) ranges, or the
-symbol `always' for a formula to compute at every recalculation: one
-that reads another sheet, calls a function that may read anything or
-whose value changes by itself, or runs Lisp."
+A list of cell indices and of (TOP BOTTOM LEFT RIGHT) ranges of MODEL,
+and of (OTHER . INDEX) and (OTHER TOP BOTTOM LEFT RIGHT) for the cells
+and ranges of another sheet's model OTHER.  Or the symbol `always' for a
+formula to compute at every recalculation: one that reads a sheet that
+cannot be found, calls a function that may read anything or whose value
+changes by itself, or runs Lisp."
   (catch 'always
-    (let ((rows (grid-data-model-rows model))
-          (cols (grid-data-model-cols model))
-          reads)
+    (let (reads)
       (cl-labels
-          ((walk (node)
+          ((sheet (name)
+             ;; A sheet naming the formula's own is the formula's own.
+             (cond ((null name) model)
+                   (grid-calc-sheets (or (funcall grid-calc-sheets name)
+                                         (throw 'always 'always)))
+                   (t (throw 'always 'always))))
+           (walk (node)
              (pcase node
-               (`(CELL-REF ,_ ,(pred identity)) (throw 'always 'always))
-               (`(CELL-REF ,ref . ,_)
-                (let ((at (grid-calc--reference-coords ref)))
+               (`(CELL-REF ,ref . ,name)
+                (let* ((target (sheet (car name)))
+                       (rows (grid-data-model-rows target))
+                       (cols (grid-data-model-cols target))
+                       (at (grid-calc--reference-coords ref)))
                   (when (and (car at) (cdr at)
                              (< (car at) rows) (< (cdr at) cols))
-                    (push (+ (* (car at) cols) (cdr at)) reads))))
+                    (let ((index (+ (* (car at) cols) (cdr at))))
+                      (push (if (eq target model) index (cons target index))
+                            reads)))))
                (`(RANGE ,start ,end)
-                (when (or (nth 2 start) (nth 2 end))
-                  (throw 'always 'always))
-                (pcase-let ((`(,_ ,top ,bottom ,left ,right)
-                             (grid-calc--range-bounds model start end)))
+                (pcase-let ((`(,target ,top ,bottom ,left ,right)
+                             (progn (sheet (nth 2 start))
+                                    (grid-calc--range-bounds model start end))))
                   (when (and (<= top bottom) (<= left right))
-                    (push (list top bottom left right) reads))))
+                    (push (if (eq target model)
+                              (list top bottom left right)
+                            (list target top bottom left right))
+                          reads))))
                (`(FUNCTION-CALL ,name ,arguments)
                 (unless (gethash (upcase name) grid-calc--known-functions)
                   (throw 'always 'always))
@@ -278,7 +292,9 @@ returns it; its sheet is not looked at."
          (or (null left) (<= left col right)))))
 
 (defun grid-calc--register (model graph index)
-  "Record in GRAPH what the cell at INDEX of MODEL reads."
+  "Record in GRAPH, MODEL's, what the cell at INDEX of MODEL reads.
+What it reads on another sheet is recorded in that sheet's graph; a
+sheet without one makes the cell one to compute every time."
   (let* ((cell (aref (grid-data-model-cells model) index))
          (raw (grid-cell-raw-input cell))
          (reads (and (> (length raw) 0) (eq (aref raw 0) ?=)
@@ -290,85 +306,135 @@ returns it; its sheet is not looked at."
                                (grid-calc--reads model parsed)
                              (error 'always)))
                        (error nil)))))
+    (when (and (consp reads)
+               (cl-some (lambda (read)
+                          (and (consp read) (vectorp (car read))
+                               (null (gethash (car read) grid-calc--graphs))))
+                        reads))
+      (setq reads 'always))
     (aset cell grid-cell--reads reads)
     (if (eq reads 'always)
         (push index (aref graph 2))
-      (dolist (read reads)
-        (if (integerp read)
-            (push index (gethash read (aref graph 0)))
-          (push (cons index read) (aref graph 1)))))))
+      (let ((reader (cons model index)))
+        (dolist (read reads)
+          (pcase read
+            ((pred integerp)
+             (push index (gethash read (aref graph 0))))
+            (`(,(and other (pred vectorp)) . ,(and at (pred integerp)))
+             (let ((cells (aref (gethash other grid-calc--graphs) 4)))
+               (push reader (gethash at cells))))
+            (`(,(and other (pred vectorp)) . ,range)
+             (let ((graph (gethash other grid-calc--graphs)))
+               (aset graph 5 (cons (cons reader range) (aref graph 5)))))
+            (_ (push (cons index read) (aref graph 1)))))))))
 
 (defun grid-calc--unregister (model graph index)
   "Take out of GRAPH what the cell at INDEX of MODEL was recorded as reading."
   (let* ((cell (aref (grid-data-model-cells model) index))
-         (reads (aref cell grid-cell--reads)))
+         (reads (aref cell grid-cell--reads))
+         (reader (cons model index)))
     (cond ((eq reads 'always)
            (aset graph 2 (delq index (aref graph 2))))
           (reads
            (dolist (read reads)
-             (when (integerp read)
-               (puthash read (delq index (gethash read (aref graph 0)))
-                        (aref graph 0))))
-           (when (cl-some #'consp reads)
+             (pcase read
+               ((pred integerp)
+                (puthash read (delq index (gethash read (aref graph 0)))
+                         (aref graph 0)))
+               (`(,(and other (pred vectorp)) . ,(and at (pred integerp)))
+                (when-let* ((graph (gethash other grid-calc--graphs)))
+                  (puthash at (cl-delete reader (gethash at (aref graph 4))
+                                         :test #'equal)
+                           (aref graph 4))))
+               (`(,(and other (pred vectorp)) . ,_)
+                (when-let* ((graph (gethash other grid-calc--graphs)))
+                  (aset graph 5 (cl-delete reader (aref graph 5)
+                                           :key #'car :test #'equal))))))
+           (when (cl-some (lambda (read) (and (consp read) (integerp (car read))))
+                          reads)
              (aset graph 1 (cl-delete index (aref graph 1) :key #'car)))))
     (aset cell grid-cell--reads nil)))
 
-(defun grid-calc--build-graph (model)
-  "Record who reads what in MODEL, whose cells were all just computed."
-  (let ((graph (vector (make-hash-table) nil nil nil))
-        (cells (grid-data-model-cells model)))
-    (dotimes (index (length cells))
-      (let ((raw (grid-cell-raw-input (aref cells index))))
-        (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
-            (grid-calc--register model graph index)
-          (aset (aref cells index) grid-cell--reads nil))))
-    (puthash model graph grid-calc--graphs)))
+(defun grid-calc--build-graphs (models)
+  "Record who reads what in MODELS, whose cells were all just computed.
+A sheet outside MODELS that read one of them loses its record, as the
+new one does not know about it, and is computed in full next time."
+  (dolist (model models)
+    (when-let* ((old (gethash model grid-calc--graphs)))
+      (cl-flet ((forget-reader (reader)
+                  (unless (memq (car reader) models)
+                    (grid-calc-forget (car reader)))))
+        (maphash (lambda (_at readers) (mapc #'forget-reader readers))
+                 (aref old 4))
+        (dolist (entry (aref old 5))
+          (forget-reader (car entry)))))
+    (puthash model (vector (make-hash-table) nil nil nil
+                           (make-hash-table) nil)
+             grid-calc--graphs))
+  (dolist (model models)
+    (let ((graph (gethash model grid-calc--graphs))
+          (cells (grid-data-model-cells model)))
+      (dotimes (index (length cells))
+        (let ((raw (grid-cell-raw-input (aref cells index))))
+          (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
+              (grid-calc--register model graph index)
+            (aset (aref cells index) grid-cell--reads nil)))))))
 
 (defun grid-calc--evaluate-dirty (models)
   "Compute the cells of MODELS that changed and the formulas they reach.
-Return nil, having computed nothing, when a model has no record of who
-reads what or when finding the cells would take longer than computing
-them all."
+The formulas reached may be on any of the MODELS.  Return nil, having
+computed nothing, when a model has no record of who reads what, when a
+formula reached is on a sheet outside MODELS, or when finding the cells
+would take longer than computing them all."
   (when (cl-every (lambda (model) (gethash model grid-calc--graphs)) models)
     (let ((work 0)
-          plans)
+          (states (mapcar (lambda (model) (cons model (make-hash-table)))
+                          models))
+          queue)
+      ;; A changed cell may read other cells than before.
+      (dolist (model models)
+        (let* ((graph (gethash model grid-calc--graphs))
+               (dirty (delete-dups (aref graph 3))))
+          (aset graph 3 nil)
+          (dolist (index dirty)
+            (grid-calc--unregister model graph index)
+            (grid-calc--register model graph index)
+            (push (cons model index) queue))))
+      (dolist (model models)
+        (dolist (index (aref (gethash model grid-calc--graphs) 2))
+          (push (cons model index) queue)))
       (when (catch 'everything
-              (dolist (model models)
-                (let* ((graph (gethash model grid-calc--graphs))
-                       (cols (grid-data-model-cols model))
-                       (dirty (delete-dups (aref graph 3)))
-                       (state (make-hash-table))
-                       queue)
-                  (aset graph 3 nil)
-                  ;; A changed cell may read other cells than before.
-                  (dolist (index dirty)
-                    (grid-calc--unregister model graph index)
-                    (grid-calc--register model graph index))
-                  (setq queue (append dirty (aref graph 2)))
-                  (let* ((readers (aref graph 0))
-                         (ranges (aref graph 1))
-                         (count (length ranges)))
-                    (while queue
-                      (let ((index (pop queue)))
-                        (when (eq (gethash index state 'clean) 'clean)
-                          (puthash index nil state)
-                          (dolist (reader (gethash index readers))
-                            (push reader queue))
-                          (when ranges
-                            (setq work (+ work count))
-                            (when (> work grid-calc--scan-limit)
-                              (throw 'everything nil))
-                            (let ((row (/ index cols))
-                                  (col (% index cols)))
-                              (dolist (range ranges)
-                                (when (and (<= (nth 1 range) row (nth 2 range))
-                                           (<= (nth 3 range) col (nth 4 range)))
-                                  (push (car range) queue)))))))))
-                  (push (cons model state) plans)))
+              (while queue
+                (pcase-let* ((`(,model . ,index) (pop queue))
+                             (state (or (cdr (assq model states))
+                                        (throw 'everything nil))))
+                  (when (eq (gethash index state 'clean) 'clean)
+                    (puthash index nil state)
+                    (let* ((graph (gethash model grid-calc--graphs))
+                           (cols (grid-data-model-cols model))
+                           (row (/ index cols))
+                           (col (% index cols)))
+                      (dolist (reader (gethash index (aref graph 0)))
+                        (push (cons model reader) queue))
+                      (dolist (reader (gethash index (aref graph 4)))
+                        (push reader queue))
+                      (when (or (aref graph 1) (aref graph 5))
+                        (setq work (+ work (length (aref graph 1))
+                                      (length (aref graph 5))))
+                        (when (> work grid-calc--scan-limit)
+                          (throw 'everything nil))
+                        (dolist (range (aref graph 1))
+                          (when (and (<= (nth 1 range) row (nth 2 range))
+                                     (<= (nth 3 range) col (nth 4 range)))
+                            (push (cons model (car range)) queue)))
+                        (dolist (range (aref graph 5))
+                          (when (and (<= (nth 1 range) row (nth 2 range))
+                                     (<= (nth 3 range) col (nth 4 range)))
+                            (push (car range) queue))))))))
               t)
-        (pcase-dolist (`(,model . ,state) plans)
+        (pcase-dolist (`(,model . ,state) states)
           (puthash model state grid-calc--pass))
-        (pcase-dolist (`(,model . ,state) plans)
+        (pcase-dolist (`(,model . ,state) states)
           (let (indices)
             (maphash (lambda (index _state) (push index indices)) state)
             (dolist (index indices)
@@ -390,10 +456,9 @@ every cell is, once."
       (dolist (model models)
         (dotimes (i (length (grid-data-model-cells model)))
           (grid-calc--compute-cell model i)))
-      (dolist (model models)
-        (if grid-calc-incremental
-            (grid-calc--build-graph model)
-          (grid-calc-forget model))))))
+      (if grid-calc-incremental
+          (grid-calc--build-graphs models)
+        (mapc #'grid-calc-forget models)))))
 
 (defun grid-table-calc-evaluate (model &optional everything)
   "Main entry point for evaluating the formulas in MODEL.
