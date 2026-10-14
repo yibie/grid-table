@@ -86,7 +86,7 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
   (add-to-list 'load-path "/path/to/etaf")
   ```
 
-  Keys follow spreadsheet habits: typing replaces the cell and starts editing, `F2` or `RET` edits the existing text, `RET` stores it and moves down, `TAB` stores it and moves right, `C-c C-c` stores it in place and `C-c C-k` cancels. `C-n`/`C-p`/`C-f`/`C-b` and the arrow keys move, `DEL` clears the selection, `M-w`/`C-w`/`C-y` copy, cut and paste a range with its formats, `C-d` and `C-r` fill the selection down or right from its first row or column, `C-c C-s` continues a series (1, 2 → 3, 4; a date day by day; `Week 1` → `Week 2`), `C-s` finds the next cell holding a text (`C-u C-s` backward) and `M-%` replaces in the selection or the whole sheet, `C-/` undoes and `C-?` redoes, `C-x h` selects everything, `C-c C-r` refreshes and `C-c C-q` quits. With the mouse, click a cell to move there, shift-click or drag to select a range, click a row number, a column letter or the corner to select a row, a column or the whole sheet, and drag the right edge of a column letter to resize the column; the width is saved with the grid and stays with its column. A paste that reaches past the last row or column makes the grid grow. The single-letter commands in the tables below (`e`, `n`, `p`, `g`, `q`) belong to the classic renderer.
+  Keys follow spreadsheet habits: typing replaces the cell and starts editing, `F2` or `RET` edits the existing text, `RET` stores it and moves down, `TAB` stores it and moves right, `C-c C-c` stores it in place and `C-c C-k` cancels. `C-n`/`C-p`/`C-f`/`C-b` and the arrow keys move, `DEL` clears the selection, `M-w`/`C-w`/`C-y` copy, cut and paste a range with its formats, `C-d` and `C-r` fill the selection down or right from its first row or column, `C-c C-s` continues a series (1, 2 → 3, 4; a date day by day; `Week 1` → `Week 2`), `C-s` finds the next cell holding a text (`C-u C-s` backward) and `M-%` replaces in the selection or the whole sheet, `C-/` undoes and `C-?` redoes, `C-x h` selects everything, `C-c C-r` refreshes and `C-c C-q` quits. With the mouse, click a cell to move there, shift-click or drag to select a range, click a row number, a column letter or the corner to select a row, a column or the whole sheet, and drag the right edge of a column letter to resize the column; the width is saved with the grid and stays with its column. A paste that reaches past the last row or column makes the grid grow.
 
   Formatting applies to the selection: `C-c f b` bold, `C-c f i` italic, `C-c f c` text color, `C-c f g` fill color, `C-c f l`/`e`/`r` align left, center or right, `C-c f x` clear. Number formats: `C-c f ,` number with thousands separators, `C-c f p` percent, `C-c f $` currency, `C-c f d` date, `C-c f t` text, `C-c f G` general, and `C-c f +`/`-` for more or fewer decimal places. `C-c f n` adds a conditional format (for example "greater than 100" in red) that keeps following the values, and `C-c f N` removes the ones touching the selection. Formats move with their cells when rows and columns are inserted, deleted or sorted, and are saved in the `.grid` file. A file with formats is written as format version 4, which earlier releases cannot open; files without formats keep their older version.
 
@@ -121,9 +121,9 @@ Run the tests with `make test-model` (the model, the formulas and the text table
 | 🎯 Action                | 🤞 Shortcut        | 📝 Effect                        | ⚠️ Note                                |
 | ------------------------ | ------------------ | -------------------------------- | -------------------------------------- |
 | **✏️ Basic Editing**     |                    |                                  |                                        |
-| Cell Editing             | `e` or right-click | Enter edit mode                  | Cell focus                             |
+| Cell Editing             | `F2` or `RET`      | Enter edit mode                  | Cell focus                             |
 | Title Editing            | `C-c t`            | Modify table title               | Global display                         |
-| Merge Cells              | `C-c m`            | Merge an A1 range                | Same row or same column only           |
+| Merge Cells              | `C-c m`            | Merge an A1 range                | A row, a column or a rectangle         |
 | Unmerge Cell             | `C-c u`            | Unmerge the cell at point        | Keeps the anchor value                 |
 | **➕ Row Operations**    |                    |                                  |                                        |
 | Insert Row Below         | `C-c r a`          | Create new row below current row | Smart format inheritance               |
@@ -136,13 +136,13 @@ Run the tests with `make test-model` (the model, the formulas and the text table
 
 | 🎯 Direction | ⌨️ Key         | 🖱️ Operation |
 | ------------ | -------------- | ------------ |
-| ⬆️ Up        | `p` or `↑`     | Previous row |
-| ⬇️ Down      | `n` or `↓`     | Next row     |
+| ⬆️ Up        | `C-p` or `↑`    | Previous row |
+| ⬇️ Down      | `C-n` or `↓`    | Next row     |
 | ⬅️ Left      | `S-TAB` or `←` | Left cell    |
 | ➡️ Right     | `TAB` or `→`   | Right cell   |
-| 🔄 Refresh   | `g`            | Re-render    |
+| 🔄 Refresh   | `C-c C-r`      | Re-render    |
 
-**🎯 Tip**: Use `n`/`p` for vertical movement, `TAB` for horizontal movement
+**🎯 Tip**: Use `C-n`/`C-p` for vertical movement, `TAB` for horizontal movement
 
 ## 🧮 Formula Complete Guide
 

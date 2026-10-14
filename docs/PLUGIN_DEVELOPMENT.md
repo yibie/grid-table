@@ -333,6 +333,8 @@ my-grid-table-plugin/
 (define-key grid-table-mode-map (kbd "C-c m") #'my-plugin-custom-command)
 ```
 
+A binding in `grid-table-mode-map` takes effect only for keys the view does not bind itself: the arrows, `TAB`, `RET`, plain characters and the view's own `C-c` commands win. Pick a free key under `C-c`.
+
 ### 2. Custom Data Source Functionality
 
 ```elisp

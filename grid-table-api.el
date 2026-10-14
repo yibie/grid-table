@@ -112,7 +112,13 @@ Supported arguments:
 ;;;----------------------------------------------------------------------
 
 (defun grid-table--apply-key-bindings (bindings)
-  "Apply key bindings to the current buffer."
+  "Apply key bindings to the current buffer.
+They go into a keymap of the buffer's own, on top of the mode's.  Keys
+the view binds itself, such as the arrows, TAB and plain characters, are
+not overridden this way."
+  ;; The mode's map is shared by every grid: bind in one of this buffer.
+  (use-local-map (make-composed-keymap (make-sparse-keymap)
+                                       (current-local-map)))
   (dolist (category bindings)
     (let ((category-name (car category))
           (key-bindings (cdr category)))
