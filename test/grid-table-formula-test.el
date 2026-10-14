@@ -609,6 +609,30 @@
     (should (equal (funcall raw 2 3) "=B3/$B$4+Rates!B2"))
     (should (equal (funcall raw 1 3) "=SUM(B$2:B2)"))))
 
+(ert-deftest grid-table-sort-moves-references-naming-the-sorted-sheet ()
+  (let* ((workbook (grid-workbook--create))
+         (orders (make-default-data-source
+                  '("" "" "" "")
+                  '(("Key" "Amount" "Double" "Rated")
+                    ("b" "10" "=Orders!B2*2" "=B2*Rates!B2")
+                    ("a" "20" "='orders'!B3*2" "=B3*Rates!B3"))))
+         (rates (make-default-data-source
+                 '("" "") '(("Key" "Rate") ("b" "0.9") ("a" "0.5")))))
+    (grid-workbook-add-sheet workbook orders "Orders")
+    (grid-workbook-add-sheet workbook rates "Rates")
+    (grid-workbook-recalculate workbook)
+    (funcall (gethash :sort-by-column orders) orders 0 'ascending)
+    ;; A reference naming the sheet itself follows its row, where a
+    ;; spreadsheet that leaves it behind reads another row's amount.
+    (should (equal (grid-get-raw-value-at orders 1 2) "='orders'!B2*2"))
+    (should (equal (grid-get-raw-value-at orders 2 2) "=Orders!B3*2"))
+    (should (equal (grid-get-computed-value-at orders 1 2) 40))
+    (should (equal (grid-get-computed-value-at orders 2 2) 20))
+    ;; The other sheet did not move, so references into it stay.
+    (should (equal (grid-get-raw-value-at orders 1 3) "=B2*Rates!B3"))
+    (should (equal (grid-get-computed-value-at orders 1 3) 10))
+    (should (equal (grid-get-computed-value-at orders 2 3) 9))))
+
 ;;;----------------------------------------------------------------------
 ;;; Cell styles and conditional formats
 ;;;----------------------------------------------------------------------

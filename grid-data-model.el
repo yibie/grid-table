@@ -535,7 +535,8 @@ With WHOLE, the sheet has no header row and its first row is sorted too.
 
 A formula in a row that moves has its relative references moved by as
 many rows, as if the row had been cut and pasted; anchored parts and
-references that name a sheet stay."
+references into other sheets stay.  A reference that names the sheet
+being sorted moves like one that names none."
   (let* ((num-rows (grid-data-model-rows model))
          (num-cols (grid-data-model-cols model))
          (_ (unless (and (integerp col-idx)
@@ -583,7 +584,8 @@ references that name a sheet stay."
                                row
                              (mapcar (lambda (raw)
                                        (grid-calc-shift-formula
-                                        raw (- new-row old-idx) 0 t))
+                                        raw (- new-row old-idx) 0
+                                        (or grid-calc-current-sheet t)))
                                      row)))))
            (old-to-new (make-vector (length data-rows) nil))
            (new-idx 0)

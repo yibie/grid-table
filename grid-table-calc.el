@@ -599,7 +599,9 @@ START and END are as `grid-calc--map-references' passes them."
 Parts of a reference anchored with $ stay.  A reference pushed off the
 sheet's top or left edge becomes #REF!.  Text inside double quotes and
 anything that is not a formula are returned unchanged.  With LOCAL-ONLY,
-references that name a sheet stay as they are."
+references that name a sheet stay as they are; when LOCAL-ONLY is the
+name of the formula's own sheet, references that name that sheet move
+like the ones that name none."
   (let ((shift (lambda (reference)
                  (pcase-let ((`(,col-anchor ,col ,row-anchor ,row) reference))
                    (grid-calc--reference-text
@@ -616,7 +618,11 @@ references that name a sheet stay as they are."
      (lambda (start end sheet)
        (grid-calc--range-text
         start end
-        (if (and sheet local-only) #'grid-calc--reference-text shift))))))
+        (if (and sheet local-only
+                 (not (and (stringp local-only)
+                           (grid-calc--same-sheet-p sheet local-only))))
+            #'grid-calc--reference-text
+          shift))))))
 
 (defun grid-calc-rename-sheet-in-formula (formula old new)
   "Return FORMULA with its references into sheet OLD naming NEW instead."
