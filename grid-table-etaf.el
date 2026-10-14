@@ -614,6 +614,9 @@ The column follows the pointer; a cancelled drag restores its width."
     ("M-w" grid-table-etaf-copy "Copy")
     ("C-w" grid-table-etaf-cut "Cut")
     ("C-y" grid-table-etaf-paste "Paste")
+    ("C-c y v" grid-table-etaf-paste-values "Paste values")
+    ("C-c y f" grid-table-etaf-paste-formats "Paste formats")
+    ("C-c y t" grid-table-etaf-paste-transposed "Paste transposed")
     ("C-d" grid-table-etaf-fill-down "Fill down")
     ("C-r" grid-table-etaf-fill-right "Fill right")
     ("C-c C-s" grid-table-etaf-fill-series "Fill series")
@@ -2297,7 +2300,72 @@ value should be pasted as it is."
       (grid-calc-shift-formula value (- row (car origin)) (- col (cdr origin)))
     value))
 
-(defun grid-table-etaf-paste ()
+(defun grid-table-etaf--transpose (rows)
+  "Return the matrix ROWS turned so that its rows become its columns.
+Short rows are padded with nil."
+  (let ((width (apply #'max 0 (mapcar #'length rows))))
+    (cl-loop for col below width collect
+             (mapcar (lambda (row) (nth col row)) rows))))
+
+(defun grid-table-etaf--paste-material (own text mode top left)
+  "Return (ROWS STYLES ORIGIN OWN) for pasting at TOP and LEFT in MODE.
+OWN is the grid's own clipboard entry when it holds TEXT, else nil.
+MODE nil pastes values, formulas and formats; `values' pastes what the
+copied cells show, as if typed; `formats' only formats; `transpose'
+turns rows into columns.  ROWS are the values, STYLES the formats or
+nil, ORIGIN the cell to move formula references from, or nil; OWN is
+nil when the values are to be read as typed."
+  (let ((rows (if own (nth 1 own) (grid-table-etaf--tsv-decode text)))
+        (styles (and own (nth 5 own)))
+        (origin (and own (not (nth 4 own)) (cons (nth 2 own) (nth 3 own)))))
+    (pcase mode
+      ('values
+       (when own
+         ;; What the cells show, except that text kept as text stays so.
+         (setq rows (cl-mapcar
+                     (lambda (shown raws)
+                       (cl-mapcar (lambda (value raw)
+                                    (if (string-prefix-p "'" raw) raw value))
+                                  shown raws))
+                     (grid-table-etaf--tsv-decode (car own)) rows)))
+       (list rows nil nil nil))
+      ('formats
+       (unless own
+         (user-error "Only cells copied in a grid carry formats"))
+       (list rows styles nil own))
+      ('transpose
+       ;; Each formula moves by its own distance: the cell copied from row
+       ;; I and column J lands in row J and column I of the target.
+       (when origin
+         (setq rows
+               (cl-loop for values in rows for i from 0 collect
+                        (cl-loop for value in values for j from 0 collect
+                                 (grid-calc-shift-formula
+                                  value
+                                  (- (+ top j) (+ (car origin) i))
+                                  (- (+ left i) (+ (cdr origin) j)))))))
+       (list (mapcar (lambda (row) (mapcar (lambda (v) (or v "")) row))
+                     (grid-table-etaf--transpose rows))
+             (and styles (grid-table-etaf--transpose styles))
+             nil own))
+      (_ (list rows styles origin own)))))
+
+(defun grid-table-etaf-paste-values ()
+  "Paste what the copied cells show, without their formulas or formats."
+  (interactive)
+  (grid-table-etaf-paste 'values))
+
+(defun grid-table-etaf-paste-formats ()
+  "Paste only the formats of the copied cells."
+  (interactive)
+  (grid-table-etaf-paste 'formats))
+
+(defun grid-table-etaf-paste-transposed ()
+  "Paste the copied cells with their rows turned into columns."
+  (interactive)
+  (grid-table-etaf-paste 'transpose))
+
+(defun grid-table-etaf-paste (&optional mode)
   "Paste the current kill at the selected range.
 The top left cell of the range receives the first value.  A single
 copied cell fills the whole range.  The grid grows to take values that
@@ -2306,23 +2374,24 @@ them.  Copied formulas have their relative references moved
 by the distance they travel, as in a spreadsheet; cut formulas do not.
 Cells copied in a grid bring their formats; text from elsewhere leaves
 the formats of the cells it lands in.  Rows hidden by a filter are
-passed over: the pasted lines go to the rows that are shown."
+passed over: the pasted lines go to the rows that are shown.
+MODE is as for `grid-table-etaf--paste-material'."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
          (source (grid-table-etaf--source state))
-         (text (current-kill 0))
-         (own (and grid-table-etaf--clipboard
-                   (equal text (car grid-table-etaf--clipboard))
-                   grid-table-etaf--clipboard))
-         (rows (if own
-                   (nth 1 own)
-                 (grid-table-etaf--tsv-decode
-                  (substring-no-properties text))))
-         ;; Where a copied range came from, to move its references.
-         (origin (and own (not (nth 4 own)) (cons (nth 2 own) (nth 3 own))))
+         (text (substring-no-properties (current-kill 0)))
          (range (grid-table-etaf-selection))
          (top (nth 0 range))
          (left (nth 1 range))
+         (material (grid-table-etaf--paste-material
+                    (and grid-table-etaf--clipboard
+                         (equal text (car grid-table-etaf--clipboard))
+                         grid-table-etaf--clipboard)
+                    text mode top left))
+         (rows (nth 0 material))
+         ;; Where a copied range came from, to move its references.
+         (origin (nth 2 material))
+         (own (nth 3 material))
          (single (and (null (cdr rows)) (null (cdr (car rows)))))
          (row-count (grid-get-row-count source))
          ;; The rows the pasted lines land in: rows hidden by a filter
@@ -2346,7 +2415,7 @@ passed over: the pasted lines go to the rows that are shown."
          (max-col (+ more-cols (1- (grid-get-column-count source))))
          (bottom top)
          (right left)
-         (styled (and own (nth 5 own)))
+         (styled (nth 1 material))
          changes styles)
     (unless rows (user-error "Nothing to paste"))
     (if single
@@ -2385,7 +2454,9 @@ passed over: the pasted lines go to the rows that are shown."
                       (grid-table-etaf--fit-widths state))
                     (if own
                         (prog1 (grid-table-etaf--set-cells
-                                state (nreverse changes))
+                                state (if (eq mode 'formats)
+                                          nil
+                                        (nreverse changes)))
                           (grid-table-etaf--set-styles state
                                                        (nreverse styles)))
                       ;; Text from elsewhere is read as if it were typed.
@@ -2393,7 +2464,9 @@ passed over: the pasted lines go to the rows that are shown."
                        state (nreverse changes)))))))
       (grid-table-etaf-goto bottom right)
       (grid-table-etaf-goto top left t)
-      (message "Pasted %d cell%s" count (if (= count 1) "" "s")))))
+      (if (eq mode 'formats)
+          (message "Pasted formats")
+        (message "Pasted %d cell%s" count (if (= count 1) "" "s"))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Tracing formulas

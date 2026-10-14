@@ -504,19 +504,44 @@ Display column 0 is the row numbers; the first column of the grid is 1.")
                (or new-align grid-table-title-align) 
                (or new-decoration grid-table-title-decoration)))))
 
-(defun grid-table-sort-column ()
-  "Sort the table by the current column or a user-specified column.
-Prompts for sort direction (ascending/descending)."
-  (interactive)
+(defun grid-table--read-sort-order (prompt)
+  "Read with PROMPT whether to sort ascending or descending."
+  (intern (completing-read prompt '("ascending" "descending") nil t
+                           nil nil "ascending")))
+
+(defun grid-table-sort-column (&optional more)
+  "Sort the rows by the current column, asking for the direction.
+With a prefix argument MORE, then ask for more columns, each with its
+direction, to order the rows the ones before leave equal; an empty
+column ends the list."
+  (interactive "P")
   (when grid-table--data-source
-    (let* ((coords (grid-table-get-cell-at-point))
+    (let* ((source grid-table--data-source)
+           (coords (grid-table-get-cell-at-point))
            (current-col (if coords (plist-get coords :anchor-col) 1))
            (col-idx (if (and coords (> current-col 0)) ; Skip row header column
-                       (1- current-col) ; Adjust for row header column
-                     (read-number "Sort by column (0-based index): " 0)))
-           (sort-direction (completing-read "Sort direction: " '("ascending" "descending") nil t "ascending"))
-           (sort-order (if (string= sort-direction "ascending") 'ascending 'descending))
-           (sort-fn (gethash :sort-by-column grid-table--data-source)))
+                        (1- current-col) ; Adjust for row header column
+                      (read-number "Sort by column (0-based index): " 0)))
+           (keys (list (cons col-idx
+                             (grid-table--read-sort-order
+                              (format "Sort by %s: "
+                                      (grid-calc-col-number-to-letter col-idx))))))
+           (sort-fn (gethash :sort-by-column source)))
+      (when more
+        (cl-loop
+         for letters = (string-trim
+                        (read-string "Then by column (letter, RET to sort): "))
+         until (string-empty-p letters) do
+         (let ((col (and (string-match-p "\\`[A-Za-z]+\\'" letters)
+                         (grid-calc-col-letter-to-number letters))))
+           (unless (and col (< col (grid-get-column-count source)))
+             (user-error "No column %s" letters))
+           (push (cons col (grid-table--read-sort-order
+                            (format "Then by %s: " (upcase letters))))
+                 keys)))
+        (setq keys (nreverse keys))
+        (when (and (cdr keys) (null (gethash :model source)))
+          (user-error "This grid sorts by one column at a time")))
       (when sort-fn
         (let* ((current-coords (grid-table-get-cell-at-point))
                (restore-row-idx
@@ -525,10 +550,18 @@ Prompts for sort direction (ascending/descending)."
                (restore-col-idx
                 (when current-coords
                   (plist-get current-coords :slice-col)))
-               (new-data-source (funcall sort-fn grid-table--data-source col-idx sort-order)))
+               (new-data-source
+                (if (cdr keys)
+                    (funcall sort-fn source keys nil)
+                  (funcall sort-fn source (caar keys) (cdar keys)))))
           (setq-local grid-table--data-source new-data-source)
           (grid-table-refresh restore-row-idx restore-col-idx) ; Force full refresh to display sorted results
-          (message "Table sorted by column %s (%s)." col-idx sort-direction))))))
+          (message "Sorted by %s"
+                   (mapconcat (lambda (key)
+                                (format "%s (%s)"
+                                        (grid-calc-col-number-to-letter (car key))
+                                        (cdr key)))
+                              keys ", then ")))))))
 
 ;;----------------------------------------------------------------------
 ;; Column Letter Conversion

@@ -531,6 +531,10 @@ both directions."
 SORT-ORDER can be 'ascending or 'descending.
 Returns a new model instance with sorted data.
 
+COL-IDX can also be a list of keys, (COL . ORDER) each: rows that the
+first key leaves equal are ordered by the second, and so on.  SORT-ORDER
+is then not used.
+
 Note: This function sorts the actual data rows, excluding the first row
 which is considered user-defined headers. The first row will remain in place.
 With WHOLE, the sheet has no header row and its first row is sorted too.
@@ -542,12 +546,13 @@ references into other sheets stay.  A reference that names the sheet
 being sorted moves like one that names none."
   (let* ((num-rows (grid-data-model-rows model))
          (num-cols (grid-data-model-cols model))
-         (_ (unless (and (integerp col-idx)
-                         (>= col-idx 0)
-                         (< col-idx num-cols))
-              (error "Invalid column index: %s" col-idx)))
-         (_ (unless (memq sort-order '(ascending descending))
-              (error "Invalid sort order: %s" sort-order)))
+         (keys (if (listp col-idx) col-idx (list (cons col-idx sort-order))))
+         (_ (unless keys (error "No column to sort by")))
+         (_ (pcase-dolist (`(,col . ,order) keys)
+              (unless (and (integerp col) (>= col 0) (< col num-cols))
+                (error "Invalid column index: %s" col))
+              (unless (memq order '(ascending descending))
+                (error "Invalid sort order: %s" order))))
          (_ (when (cl-some #'grid-model--vertical-merge-p
                            (grid-data-model-merges model))
               (error "Cannot sort a model containing vertical merges; unmerge them first")))
@@ -564,15 +569,23 @@ being sorted moves like one that names none."
           (cl-loop for row in data-rows
                    for old-idx from 0
                    collect (list old-idx row
-                                 (grid-model--sort-key
-                                  (grid-model-get-computed-value
-                                   model (+ kept old-idx) col-idx)))))
+                                 (mapcar (lambda (key)
+                                           (grid-model--sort-key
+                                            (grid-model-get-computed-value
+                                             model (+ kept old-idx) (car key))))
+                                         keys))))
          (sorted-data-rows
           (sort decorated-data-rows
                 (lambda (row1 row2)
-                  (let ((order (grid-model--compare-sort-keys
-                                (nth 2 row1) (nth 2 row2)
-                                (eq sort-order 'descending))))
+                  (let ((order (cl-loop
+                                for left in (nth 2 row1)
+                                for right in (nth 2 row2)
+                                for key in keys
+                                for order = (grid-model--compare-sort-keys
+                                             left right
+                                             (eq (cdr key) 'descending))
+                                unless (= order 0) return order
+                                finally return 0)))
                     ;; Equal values keep their order, in either direction.
                     (if (= order 0)
                         (< (nth 0 row1) (nth 0 row2))

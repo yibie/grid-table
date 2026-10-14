@@ -1153,6 +1153,64 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-goto 0 0)
     (should-error (grid-table-etaf-trace-precedents) :type 'user-error)))
 
+(ert-deftest grid-table-etaf-paste-special ()
+  (grid-table-etaf-test--with-grid (14 5 100 12)
+    ;; D2 is =B2+C2, which shows 5; make it bold.
+    (grid-table-etaf-goto 1 3)
+    (grid-table-etaf-toggle-bold)
+    (grid-table-etaf-copy)
+    ;; Values: the number shown, the target's format left alone.
+    (grid-table-etaf-goto 9 0)
+    (grid-table-etaf-paste-values)
+    (should (equal (grid-get-raw-value-at source 9 0) "5"))
+    (should-not (plist-get (grid-get-style-at source 9 0) :bold))
+    ;; Formats: the value stays, the format arrives.
+    (grid-table-etaf-goto 9 1)
+    (grid-table-etaf-paste-formats)
+    (should (equal (grid-get-raw-value-at source 9 1) "18"))
+    (should (plist-get (grid-get-style-at source 9 1) :bold))
+    ;; Text kept as text survives a paste of values.
+    (grid-table-etaf-set-cell 2 4 "'007")
+    (grid-table-etaf-goto 2 4)
+    (grid-table-etaf-copy)
+    (grid-table-etaf-goto 9 4)
+    (grid-table-etaf-paste-values)
+    (should (equal (grid-get-raw-value-at source 9 4) "'007"))
+    ;; Transposed: B2:C3 lands as rows of two, B3's =B2 moving with it.
+    (grid-table-etaf-set-cell 2 1 "=B2")
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-goto 2 2 t)
+    (grid-table-etaf-copy)
+    (grid-table-etaf-goto 10 1)
+    (grid-table-etaf-paste-transposed)
+    (should (equal (grid-get-raw-value-at source 10 1) "2"))
+    (should (equal (grid-get-raw-value-at source 10 2) "=C10"))
+    (should (equal (grid-get-raw-value-at source 11 1) "3"))
+    (should (equal (grid-get-raw-value-at source 11 2) "6"))
+    ;; One undo step each.
+    (grid-table-etaf-undo)
+    (should (equal (grid-get-raw-value-at source 10 2) "30"))))
+
+(ert-deftest grid-table-etaf-sort-by-several-columns ()
+  (grid-table-etaf-test--with-grid (6 3 100 12)
+    (grid-table-etaf-set-cell 1 0 "b")
+    (grid-table-etaf-set-cell 2 0 "a")
+    (grid-table-etaf-set-cell 3 0 "b")
+    (grid-table-etaf-set-cell 4 0 "a")
+    (grid-table-etaf-set-cell 5 0 "a")
+    (grid-table-etaf-goto 1 0)
+    (let ((answers '("ascending" "descending")))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _) (pop answers)))
+                ((symbol-function 'read-string)
+                 (let ((columns '("B" "")))
+                   (lambda (&rest _) (pop columns)))))
+        (grid-table-sort-column t)))
+    (should (equal (cl-loop for row from 1 to 5 collect
+                            (cons (grid-get-raw-value-at grid-table--data-source row 0)
+                                  (grid-get-raw-value-at grid-table--data-source row 1)))
+                   '(("a" . "10") ("a" . "8") ("a" . "4") ("b" . "6") ("b" . "2"))))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
