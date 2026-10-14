@@ -734,14 +734,24 @@ Returns the value at the specified row and column in the range."
                                             (caddr range-ast)))
            (start-row (nth 1 bounds))
            (start-col (nth 3 bounds))
-           (row-num (grid-calc-eval-ast model row-num-ast))
-           (col-num (if col-num-ast
-                        (grid-calc-eval-ast model col-num-ast)
-                      1))
-           ;; Calculate absolute coordinates from relative 1-based indices
-           (target-row (+ start-row row-num -1))
-           (target-col (+ start-col col-num -1)))
-      (grid-calc--value (car bounds) target-row target-col))))
+           (height (1+ (- (nth 2 bounds) start-row)))
+           (width (1+ (- (nth 4 bounds) start-col)))
+           (first (grid-calc-to-number
+                   (grid-calc-eval-ast model row-num-ast)))
+           ;; One number alone counts along a range that is a single row.
+           (along-row (and (null col-num-ast) (= height 1) (> width 1)))
+           (row-num (if along-row 1 first))
+           (col-num (cond (along-row first)
+                          (col-num-ast
+                           (grid-calc-to-number
+                            (grid-calc-eval-ast model col-num-ast)))
+                          (t 1))))
+      ;; A position outside the range is no cell of it.
+      (unless (and (integerp row-num) (integerp col-num)
+                   (<= 1 row-num height) (<= 1 col-num width))
+        (signal 'grid-calc-error '("#REF!")))
+      (grid-calc--value (car bounds)
+                        (+ start-row row-num -1) (+ start-col col-num -1)))))
 
 (defun grid-calc-eval-iferror-function (model args-ast-list)
   "Special evaluator for the IFERROR function.
@@ -916,7 +926,7 @@ Each argument is a value or the list of values of a range."
 
 (grid-calc-defun INT (number)
   "Rounds a number down to the nearest integer."
-  (truncate (grid-calc-to-number number)))
+  (floor (grid-calc-to-number number)))
 
 (grid-calc-defun MOD (number divisor)
   "Returns the remainder after a number is divided by a divisor."
@@ -1078,7 +1088,8 @@ NOTE: Only exact match (match-type = 0) is currently implemented."
   (setq match-type (or match-type 0))
   (when (/= match-type 0)
     (error "MATCH only supports exact match (match-type 0) at this time"))
-  (let ((pos (cl-position lookup-value lookup-array :test #'equal)))
+  (let ((pos (cl-position lookup-value lookup-array
+                          :test #'grid-calc--equal)))
     (if pos
         (1+ pos) ; Return 1-based index
       (error "Value not available in MATCH"))))

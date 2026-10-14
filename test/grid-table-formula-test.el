@@ -713,6 +713,37 @@
             (should (equal (grid-get-raw-value-at loaded 3 0) "b"))))
       (delete-file file))))
 
+;; Found by an independent review: results that looked right and were not.
+(ert-deftest grid-table-formula-large-numbers-round-to-themselves ()
+  (should (equal (grid-format-display 5000000000 '(currency 2 "$"))
+                 "$5,000,000,000.00"))
+  (should (= (grid-format-round 1000000000000) 1000000000000))
+  (should (= (grid-format-round 1e15) 1000000000000000))
+  (should (equal (grid-format-edit-text "0.5" '(percent 0)) "50%"))
+  ;; A product a hair short of a half still rounds as the half.
+  (should (= (grid-format-round (* 1.005 100)) 101))
+  (should (= (grid-format-round -2.5) -3))
+  (should (equal (grid-table-formula-test--values
+                  '(("=ROUND(1234567890.125,2)" "=ROUND(2.5,0)" "=INT(-1.5)"
+                     "=INT(1.5)")))
+                 '((1234567890.13 3 -2 1)))))
+
+(ert-deftest grid-table-formula-index-stays-inside-its-range ()
+  (should (equal (grid-table-formula-test--values
+                  '(("1" "2" "3" "=INDEX(A1:A2,3)" "=INDEX(A1:C1,2)")
+                    ("4" "5" "6" "=INDEX(A1:C3,2,3)" "=INDEX(A1:A3,3)")
+                    ("7" "8" "9" "=INDEX(A1:C3,0,1)" "=INDEX(A1:C3,2,4)")))
+                 '(("1" "2" "3" "#REF!" "2")
+                   ("4" "5" "6" "6" "7")
+                   ("7" "8" "9" "#REF!" "#REF!")))))
+
+(ert-deftest grid-table-formula-match-compares-numbers-by-value ()
+  (should (equal (grid-table-formula-test--values
+                  '(("10" "20" "30" "=MATCH(20,A1:C1,0)" "=MATCH(\"B\",A2:C2,0)")
+                    ("a" "b" "c" "=MATCH(99,A1:C1,0)" "")))
+                 '(("10" "20" "30" 2 2)
+                   ("a" "b" "c" "#N/A" "")))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

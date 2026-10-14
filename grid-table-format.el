@@ -50,9 +50,14 @@
 (defun grid-format-round (number)
   "Round NUMBER to the nearest integer, a half going away from zero.
 A product that falls a hair short of a half, as 1.005 * 100 does, still
-counts as the half it stands for."
+counts as the half it stands for.  The allowance for that is a few
+steps of what a float of that size can tell apart, so it never reaches a
+number that is whole already, however large."
   (let* ((size (abs number))
-         (rounded (floor (+ size 0.5 (* size 1e-12)))))
+         (rounded (cond ((integerp size) size)
+                        ;; Floats this large have no half to round.
+                        ((>= size 1e15) (truncate size))
+                        (t (floor (+ size 0.5 (* size 1e-15)))))))
     (if (< number 0) (- rounded) rounded)))
 
 ;;;----------------------------------------------------------------------

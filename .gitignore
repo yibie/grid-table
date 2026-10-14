@@ -10,6 +10,7 @@ tp/
 # Local agent artifacts
 .cursor/
 .gemini-clipboard/
+.scratch/
 
 # Emacs byte-compiled files
 *.elc
