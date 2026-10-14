@@ -23,6 +23,8 @@
 (declare-function grid-table-xlsx-module-read "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-write "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-prune "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-names "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-set-names "grid-table-xlsx-module")
 
 (defcustom grid-table-xlsx-module-file nil
   "File of the xlsx dynamic module, or nil to look in the usual places.
@@ -214,6 +216,47 @@ conditional formats grid-table has no counterpart for."
                     rules))))))
     (cons (nreverse rules) skipped)))
 
+(defun grid-table-xlsx--validations (validations)
+  "Return grid-table rules for the list VALIDATIONS of a sheet.
+Each of VALIDATIONS is (SQREF FORMULA): the cells of SQREF, ranges
+separated by spaces, take the values FORMULA gives, a quoted list such
+as \"Yes,No\" or a reference."
+  (let (rules)
+    (pcase-dolist (`(,sqref ,formula) validations)
+      (let ((spec (if (string-match "\\`\"\\(.*\\)\"\\'" formula)
+                      (mapcar #'string-trim
+                              (split-string (match-string 1 formula) ","))
+                    (concat "=" formula))))
+        (dolist (range (split-string sqref " " t))
+          (when-let* ((bounds (grid-table-xlsx--parse-range range)))
+            (push (append bounds (list 'list spec)) rules)))))
+    (nreverse rules)))
+
+(defun grid-table-xlsx--names (file)
+  "Return the names defined across the workbook of the xlsx FILE.
+An alist from each name to its definition as a formula; names
+grid-table cannot take are left out."
+  (cl-remove-if
+   (lambda (entry) (grid-calc-name-problem (car entry)))
+   (mapcar (lambda (entry) (cons (car entry) (concat "=" (cdr entry))))
+           (car (read-from-string (grid-table-xlsx-module-names file))))))
+
+(defun grid-table-xlsx--write-names (file names &optional keep)
+  "Give the xlsx FILE the defined NAMES, an alist from name to formula.
+With KEEP, the names FILE has besides are kept; otherwise they go."
+  (let ((names (append names
+                       (and keep
+                            (cl-remove-if
+                             (lambda (entry) (assoc-string (car entry) names t))
+                             (grid-table-xlsx--names file))))))
+    (grid-table-xlsx-module-set-names
+     file
+     (mapconcat (lambda (entry)
+                  (concat (grid-table-xlsx--clean (car entry))
+                          grid-table-xlsx--field
+                          (grid-table-xlsx--clean (substring (cdr entry) 1))))
+                names grid-table-xlsx--record))))
+
 (defun grid-table-xlsx-create-data-source (file &optional sheet)
   "Return a data source holding sheet SHEET of the xlsx FILE.
 SHEET defaults to the first sheet.  The first row of the sheet becomes
@@ -272,6 +315,10 @@ the header row."
                                    (max 1 (min 200 (round width))))))
         (when-let* ((frozen (plist-get data :frozen)))
           (grid-table-set-frozen source (nth 0 frozen) (nth 1 frozen)))
+        (grid-table-set-hidden source (plist-get data :hidden-rows)
+                               (plist-get data :hidden-cols))
+        (grid-table-set-validations
+         source (grid-table-xlsx--validations (plist-get data :validations)))
         (puthash :xlsx-file file source)
         (puthash :xlsx-sheet sheet source)
         (puthash :xlsx-skipped-conditionals (cdr rules) source)
@@ -279,12 +326,16 @@ the header row."
 
 ;;;###autoload
 (defun grid-table-xlsx-create-workbook (file)
-  "Return a workbook holding every sheet of the xlsx FILE."
-  (grid-workbook-create
-   (mapcar (lambda (name)
-             (cons name (grid-table-xlsx-create-data-source file name)))
-           (or (grid-table-xlsx-sheet-names file)
-               (error "No sheet in %s" file)))))
+  "Return a workbook holding every sheet of the xlsx FILE, and its names."
+  (let ((workbook
+         (grid-workbook-create
+          (mapcar (lambda (name)
+                    (cons name (grid-table-xlsx-create-data-source file name)))
+                  (or (grid-table-xlsx-sheet-names file)
+                      (error "No sheet in %s" file))))))
+    (when-let* ((names (grid-table-xlsx--names (expand-file-name file))))
+      (grid-workbook-set-names workbook names))
+    workbook))
 
 ;;;###autoload
 (defun grid-table-xlsx-find-file (file &optional sheet)
@@ -436,6 +487,28 @@ RAW is its raw input and STYLE its style."
       (push (format "P%s%d%s%d" grid-table-xlsx--field (car frozen)
                     grid-table-xlsx--field (cdr frozen))
             records))
+    (let ((hidden (grid-table-hidden source)))
+      (dolist (row (car hidden))
+        (push (format "H%sr%s%d" grid-table-xlsx--field grid-table-xlsx--field row)
+              records))
+      (dolist (col (cdr hidden))
+        (push (format "H%sc%s%d" grid-table-xlsx--field grid-table-xlsx--field col)
+              records)))
+    (dolist (rule (grid-table-validations source))
+      (pcase-let ((`(,top ,left ,bottom ,right ,_kind ,spec) rule))
+        (push (concat "V" grid-table-xlsx--field
+                      (grid-table-xlsx--range-name top left bottom right)
+                      grid-table-xlsx--field
+                      (grid-table-xlsx--clean
+                       (if (stringp spec)
+                           (substring spec 1)
+                         (format "\"%s\""
+                                 (string-join
+                                  (mapcar (lambda (item)
+                                            (string-replace "\"" "\"\"" item))
+                                          spec)
+                                  ",")))))
+              records)))
     (mapconcat #'identity (nreverse records) grid-table-xlsx--record)))
 
 (defun grid-table-xlsx--sheet-name (name)
@@ -462,6 +535,19 @@ added.  SHEET defaults to the sheet SOURCE came from, else its title."
           (grid-table-xlsx-module-write
            temporary (and (file-exists-p file) file) sheet
            (grid-table-xlsx--payload source))
+          ;; Names, written for the sheet as the workbook calls it, join
+          ;; the ones the file has.
+          (when-let* ((workbook (grid-workbook-of source))
+                      (names (grid-workbook-names workbook)))
+            (let ((own (grid-workbook-sheet-name source)))
+              (grid-table-xlsx--write-names
+               temporary
+               (mapcar (lambda (entry)
+                         (cons (car entry)
+                               (grid-calc-rename-sheet-in-formula
+                                (cdr entry) own sheet)))
+                       names)
+               t)))
           (rename-file temporary file t))
       (when (file-exists-p temporary)
         (delete-file temporary)))
@@ -500,6 +586,11 @@ and no others."
              written
              (mapconcat #'grid-workbook-sheet-name sheets
                         grid-table-xlsx--record)))
+          ;; The workbook's names are FILE's when it came from FILE; a
+          ;; file it did not come from keeps its own besides.
+          (when (or own (grid-workbook-names workbook))
+            (grid-table-xlsx--write-names
+             written (grid-workbook-names workbook) (not own)))
           (rename-file written file t))
       (dolist (temporary spare)
         (when (file-exists-p temporary)

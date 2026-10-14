@@ -265,6 +265,36 @@
         (should (equal (gethash 0 (grid-get-column-widths back)) 24))
         (should (equal (grid-get-raw-value-at back 3 2) "z"))))))
 
+(ert-deftest grid-table-xlsx-test-hidden-lines-validations-and-names ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "" "" "")
+                  '(("Item" "Qty" "Ok" "Sizes") ("a" "2" "Yes" "S")
+                    ("b" "3" "No" "M") ("c" "4" "" "L"))))
+           (sum (make-default-data-source '("") '(("=SUM(Qty)"))))
+           (workbook (grid-workbook-create (list (cons "Data" data)
+                                                 (cons "Sum" sum)))))
+      (grid-table-set-hidden data '(2) '(3))
+      (grid-table-set-validations
+       data '((1 2 3 2 list ("Yes" "No")) (1 0 3 0 list "=$D$2:$D$4")))
+      (grid-workbook-define-name workbook "Qty" "=Data!$B$2:$B$4")
+      (should (equal (grid-get-computed-value-at sum 0 0) 9))
+      (grid-table-xlsx-write-workbook workbook file)
+      (let* ((back (grid-table-xlsx-create-workbook file))
+             (data (grid-workbook-sheet back "Data"))
+             (sum (grid-workbook-sheet back "Sum")))
+        (should (equal (grid-table-hidden data) '((2) 3)))
+        (should (equal (grid-table-validations data)
+                       '((1 2 3 2 list ("Yes" "No")) (1 0 3 0 list "=$D$2:$D$4"))))
+        (should (equal (grid-workbook-names back) '(("Qty" . "=Data!$B$2:$B$4"))))
+        (should (equal (grid-get-computed-value-at sum 0 0) 9))
+        ;; Written back to the file it came from, the grid's names are the
+        ;; file's: one deleted is gone.
+        (grid-workbook-delete-name back "Qty")
+        (grid-table-xlsx-write-workbook back file)
+        (should-not (grid-workbook-names (grid-table-xlsx-create-workbook file)))))))
+
 (ert-deftest grid-table-xlsx-test-export-keeps-other-sheets ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

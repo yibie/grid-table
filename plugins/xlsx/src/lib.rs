@@ -9,9 +9,9 @@ use std::fmt::Write;
 use std::path::Path;
 use umya_spreadsheet::{
     reader, writer, Color, ConditionalFormatValues, ConditionalFormatting,
-    ConditionalFormattingOperatorValues, ConditionalFormattingRule, Formula,
-    HorizontalAlignmentValues, Pane, PaneStateValues, PaneValues, PatternValues, Selection,
-    SheetView, Style, Workbook, Worksheet,
+    ConditionalFormattingOperatorValues, ConditionalFormattingRule, DataValidation,
+    DataValidationValues, DataValidations, DefinedName, Formula, HorizontalAlignmentValues, Pane,
+    PaneStateValues, PaneValues, PatternValues, Selection, SheetView, Style, Workbook, Worksheet,
 };
 use umya_spreadsheet::structs::drawing::Theme;
 
@@ -159,6 +159,31 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
         // 8.38 is what the library gives a column nobody sized.
         if !column.hidden() && column.width() > 0.0 && (column.width() - 8.38).abs() > 1e-9 {
             write!(out, "({} . {}) ", column.col_num() - 1, column.width())?;
+        }
+    }
+    out.push_str(") :hidden-rows (");
+    for row in sheet.row_dimensions() {
+        if row.hidden() {
+            write!(out, "{} ", row.row_num() - 1)?;
+        }
+    }
+    out.push_str(") :hidden-cols (");
+    for column in sheet.column_dimensions() {
+        if column.hidden() {
+            write!(out, "{} ", column.col_num() - 1)?;
+        }
+    }
+    // Only list validations: the others have nowhere to go in grid-table.
+    out.push_str(") :validations (");
+    if let Some(validations) = sheet.data_validations() {
+        for validation in validations.data_validation_list() {
+            if matches!(validation.get_type(), DataValidationValues::List) {
+                out.push('(');
+                quote(out, &validation.sequence_of_references().get_sqref());
+                out.push(' ');
+                quote(out, validation.formula1());
+                out.push(')');
+            }
         }
     }
     out.push(')');
@@ -372,10 +397,18 @@ fn clear(sheet: &mut Worksheet) {
     }
     sheet.merge_cells_mut().clear();
     sheet.set_conditional_formatting_collection(Vec::new());
+    sheet.remove_data_validations();
+    for row in sheet.row_dimensions_mut() {
+        row.set_hidden(false);
+    }
+    for column in sheet.column_dimensions_mut() {
+        column.set_hidden(false);
+    }
 }
 
 fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     let mut conditionals = Vec::new();
+    let mut validations = DataValidations::default();
     for record in payload.split(RECORD) {
         let fields: Vec<&str> = record.split(FIELD).collect();
         match fields[0] {
@@ -421,9 +454,31 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
             "P" if fields.len() >= 3 => {
                 freeze(sheet, fields[1].parse()?, fields[2].parse()?);
             }
+            // H r|c index: a hidden row or column
+            "H" if fields.len() >= 3 => {
+                let index: u32 = fields[2].parse()?;
+                if fields[1] == "r" {
+                    sheet.row_dimension_mut(index + 1).set_hidden(true);
+                } else {
+                    sheet.column_dimension_by_number_mut(index + 1).set_hidden(true);
+                }
+            }
+            // V range formula: the cells of RANGE take the values of a list
+            "V" if fields.len() >= 3 => {
+                let mut validation = DataValidation::default();
+                validation.set_type(DataValidationValues::List);
+                validation.set_allow_blank(true);
+                validation.set_show_error_message(true);
+                validation.sequence_of_references_mut().set_sqref(fields[1]);
+                validation.set_formula1(fields[2]);
+                validations.add_data_validation_list(validation);
+            }
             "" => {}
             other => return Err(fail(format!("malformed record {}", other))),
         }
+    }
+    if !validations.data_validation_list().is_empty() {
+        sheet.set_data_validations(validations);
     }
     // grid-table lets a later rule win; in a workbook priority 1 wins.
     let count = conditionals.len() as i32;
@@ -431,6 +486,57 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
         let fields: Vec<&str> = record.split(FIELD).collect();
         sheet.add_conditional_formatting_collection(conditional(&fields, count - index as i32)?);
     }
+    Ok(())
+}
+
+/// Whether NAME is one the workbook uses for itself, as a print area.
+fn builtin_name(name: &DefinedName) -> bool {
+    name.name().starts_with("_xlnm.") || name.hidden() || name.has_local_sheet_id()
+}
+
+/// Return the names defined across the workbook of the xlsx file PATH, as
+/// a printed alist from each name to its reference.  Names that belong to
+/// one sheet or to the workbook itself are left out.
+#[defun]
+fn names(path: String) -> Result<String> {
+    let book = reader::xlsx::lazy_read(Path::new(&path)).map_err(fail)?;
+    let mut out = String::from("(");
+    let sheet_names = book
+        .sheet_collection_no_check()
+        .iter()
+        .flat_map(|sheet| sheet.defined_names().iter());
+    for name in book.defined_names().iter().chain(sheet_names) {
+        if !builtin_name(name) {
+            out.push('(');
+            quote(&mut out, name.name());
+            out.push_str(" . ");
+            quote(&mut out, &name.address());
+            out.push(')');
+        }
+    }
+    out.push(')');
+    Ok(out)
+}
+
+/// Give the xlsx file PATH the workbook names of PAYLOAD, records of NAME
+/// and REFERENCE fields, in place of the ones it had.
+#[defun]
+fn set_names(path: String, payload: String) -> Result<()> {
+    let mut book = reader::xlsx::read(Path::new(&path)).map_err(fail)?;
+    book.defined_names_mut().retain(|name| builtin_name(name));
+    for sheet in book.sheet_collection_mut() {
+        sheet.defined_names_mut().retain(|name| builtin_name(name));
+    }
+    for record in payload.split(RECORD) {
+        let fields: Vec<&str> = record.split(FIELD).collect();
+        if fields.len() >= 2 && !fields[0].is_empty() {
+            let mut name = DefinedName::default();
+            name.set_name(fields[0]);
+            name.set_address(fields[1]);
+            book.add_defined_names(name);
+        }
+    }
+    writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
     Ok(())
 }
 
