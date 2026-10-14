@@ -14,7 +14,7 @@
 (define-error 'grid-calc-cycle "Circular reference" 'grid-calc-error)
 
 (defconst grid-calc-error-values
-  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#CYCLE!" "#ERROR!")
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#CYCLE!" "#ERROR!")
   "Values a cell shows when its formula cannot be computed.")
 
 (defvar grid-calc--pass nil
@@ -253,16 +253,16 @@ AST: The Abstract Syntax Tree to evaluate."
   (pcase op
     ;; Arithmetic operations
     ('+ (grid-calc--tidy-number
-         (+ (grid-calc-to-number left) (grid-calc-to-number right))))
+         (+ (grid-calc--operand left) (grid-calc--operand right))))
     ('- (grid-calc--tidy-number
-         (- (grid-calc-to-number left) (grid-calc-to-number right))))
+         (- (grid-calc--operand left) (grid-calc--operand right))))
     ('* (grid-calc--tidy-number
-         (* (grid-calc-to-number left) (grid-calc-to-number right))))
-    ('/ (let ((r (grid-calc-to-number right)))
+         (* (grid-calc--operand left) (grid-calc--operand right))))
+    ('/ (let ((r (grid-calc--operand right)))
           (if (= r 0)
               (error "Division by zero")
-            (grid-calc--tidy-number (/ (float (grid-calc-to-number left)) r)))))
-    ('^ (expt (grid-calc-to-number left) (grid-calc-to-number right)))
+            (grid-calc--tidy-number (/ (float (grid-calc--operand left)) r)))))
+    ('^ (expt (grid-calc--operand left) (grid-calc--operand right)))
     
     ;; Comparison operations
     ('= (grid-calc--equal left right))
@@ -284,10 +284,10 @@ AST: The Abstract Syntax Tree to evaluate."
 (defun grid-calc-apply-unary-op (op operand)
   "Applies a unary operator."
   (pcase op
-    ('+ (grid-calc-to-number operand))
-    ('- (- (grid-calc-to-number operand)))
+    ('+ (grid-calc--operand operand))
+    ('- (- (grid-calc--operand operand)))
     ('NOT (not operand))
-    ('% (grid-calc--tidy-number (/ (grid-calc-to-number operand) 100.0)))
+    ('% (grid-calc--tidy-number (/ (grid-calc--operand operand) 100.0)))
     (_ (error "Unknown unary operator: %s" op))))
 
 ;;;----------------------------------------------------------------------
@@ -329,6 +329,23 @@ Returns 0 for non-numeric values instead of throwing an error."
           (t (or (grid-format-number value) 0))))
    ((null value) 0)
    (t 0))) ; Return 0 for any other type instead of throwing error
+
+(defun grid-calc--operand (value)
+  "Return VALUE as the number that arithmetic works on.
+An empty cell counts as 0 and TRUE as 1.  Text that reads as a number,
+or as a date written year first, is that number.  Any other text is no
+number: the formula is #VALUE! rather than quietly taking it for 0."
+  (cond
+   ((numberp value) value)
+   ((null value) 0)
+   ((eq value t) 1)
+   ((stringp value)
+    (let ((text (substring-no-properties value)))
+      (cond ((string-empty-p text) 0)
+            ((grid-format-number text))
+            ((grid-format-parse-date text))
+            (t (signal 'grid-calc-error '("#VALUE!"))))))
+   (t (signal 'grid-calc-error '("#VALUE!")))))
 
 (defun grid-calc--to-serial (value)
   "Return the date VALUE as a serial number.
@@ -802,13 +819,13 @@ condition that evaluates to true. If no conditions are met, raises an error."
    (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
          (table-array-ast (nth 1 args-ast-list))
          (col-index-num (grid-calc-eval-ast model (nth 2 args-ast-list)))
-         (exact-match (if (nth 3 args-ast-list)
-                          (grid-calc-to-boolean (grid-calc-eval-ast model (nth 3 args-ast-list)))
-                        t))) ; Default to approximate match if omitted
+         ;; Without a fourth argument, or with TRUE, the first column is
+         ;; taken as sorted and the last row not above the value is found.
+         (approximate (or (null (nth 3 args-ast-list))
+                          (grid-calc-to-boolean
+                           (grid-calc-eval-ast model (nth 3 args-ast-list))))))
     (unless (eq (car table-array-ast) 'RANGE)
       (error "Second argument to VLOOKUP must be a range"))
-    (when exact-match
-      (error "VLOOKUP only supports exact match (FALSE) at this time."))
 
     (let* ((bounds (grid-calc--range-bounds model (cadr table-array-ast)
                                             (caddr table-array-ast)))
@@ -818,11 +835,35 @@ condition that evaluates to true. If no conditions are met, raises an error."
            (target-col (+ start-col col-index-num -1))
            (model (car bounds)))
 
-      (cl-loop for r from start-row to end-row
-               do (let ((cell-val (grid-calc--value model r start-col)))
-                    (when (grid-calc--equal cell-val lookup-value)
-                      (cl-return-from grid-calc-eval-vlookup-function
-                        (grid-calc--value model r target-col)))))
+      (unless (and (integerp col-index-num)
+                   (<= start-col target-col (nth 4 bounds)))
+        (signal 'grid-calc-error '("#REF!")))
+      (if approximate
+          (let ((wanted (grid-calc--numeric lookup-value))
+                found)
+            (cl-loop
+             for r from start-row to end-row
+             do (let* ((cell-val (grid-calc--value model r start-col))
+                       (number (grid-calc--numeric cell-val)))
+                  (cond
+                   ;; Numbers are looked up among numbers, text among text.
+                   ((and wanted number)
+                    (if (<= number wanted) (setq found r) (cl-return)))
+                   ((and (not wanted) (not number)
+                         (stringp lookup-value) (stringp cell-val)
+                         (not (string-empty-p cell-val)))
+                    (if (string-greaterp (downcase cell-val)
+                                         (downcase lookup-value))
+                        (cl-return)
+                      (setq found r))))))
+            (when found
+              (cl-return-from grid-calc-eval-vlookup-function
+                (grid-calc--value model found target-col))))
+        (cl-loop for r from start-row to end-row
+                 do (let ((cell-val (grid-calc--value model r start-col)))
+                      (when (grid-calc--equal cell-val lookup-value)
+                        (cl-return-from grid-calc-eval-vlookup-function
+                          (grid-calc--value model r target-col))))))
 
       ;; If loop finishes, no match was found
       (error "No match found in VLOOKUP")))))
@@ -901,8 +942,8 @@ Each argument is a value or the list of values of a range."
 ;;; Math functions
 (defun grid-calc--round-by (round-fn number num_digits)
   "Helper for rounding functions."
-  (let* ((num (grid-calc-to-number number))
-         (digits (grid-calc-to-number num_digits))
+  (let* ((num (grid-calc--operand number))
+         (digits (grid-calc--operand num_digits))
          (p (expt 10.0 digits)))
     (grid-calc--tidy-number (/ (funcall round-fn (* num p)) p))))
 
@@ -912,40 +953,40 @@ Each argument is a value or the list of values of a range."
 
 (grid-calc-defun ROUNDUP (number num_digits)
   "Rounds a number up, away from zero."
-  (let ((num (grid-calc-to-number number)))
+  (let ((num (grid-calc--operand number)))
     (if (>= num 0)
         (grid-calc--round-by #'ceiling number num_digits)
       (grid-calc--round-by #'floor number num_digits))))
 
 (grid-calc-defun ROUNDDOWN (number num_digits)
   "Rounds a number down, toward zero."
-  (let ((num (grid-calc-to-number number)))
+  (let ((num (grid-calc--operand number)))
     (if (>= num 0)
         (grid-calc--round-by #'floor number num_digits)
       (grid-calc--round-by #'ceiling number num_digits))))
 
 (grid-calc-defun INT (number)
   "Rounds a number down to the nearest integer."
-  (floor (grid-calc-to-number number)))
+  (floor (grid-calc--operand number)))
 
 (grid-calc-defun MOD (number divisor)
   "Returns the remainder after a number is divided by a divisor."
-  (mod (grid-calc-to-number number) (grid-calc-to-number divisor)))
+  (mod (grid-calc--operand number) (grid-calc--operand divisor)))
 
 (grid-calc-defun ABS (number)
   "Returns the absolute value of a number."
-  (abs (grid-calc-to-number number)))
+  (abs (grid-calc--operand number)))
 
 (grid-calc-defun SQRT (number)
   "Returns a positive square root."
-  (let ((num (grid-calc-to-number number)))
+  (let ((num (grid-calc--operand number)))
     (if (< num 0)
-        (error "SQRT of negative number: %s" num)
-      (sqrt num))))
+        (signal 'grid-calc-error '("#NUM!"))
+      (grid-calc--tidy-number (sqrt num)))))
 
 (grid-calc-defun POWER (number power)
   "Returns the result of a number raised to a power."
-  (expt (grid-calc-to-number number) (grid-calc-to-number power)))
+  (expt (grid-calc--operand number) (grid-calc--operand power)))
 
 (defun grid-calc--get-numeric-values (values)
   "From a list of VALUES, return a new list containing only numbers.
@@ -998,6 +1039,93 @@ Uses grid-calc-to-number for consistent conversion."
   (let ((numbers (grid-calc--numbers-among arguments)))
     (if (null numbers) 0
       (apply #'min numbers))))
+
+(grid-calc-defun MEDIAN (&rest arguments)
+  "Returns the middle of numbers and ranges. Ignores non-numeric values."
+  (let* ((numbers (sort (grid-calc--numbers-among arguments) #'<))
+         (count (length numbers)))
+    (cond ((zerop count) (signal 'grid-calc-error '("#NUM!")))
+          ((cl-oddp count) (nth (/ count 2) numbers))
+          (t (grid-calc--tidy-number
+              (/ (+ (nth (1- (/ count 2)) numbers) (nth (/ count 2) numbers))
+                 2.0))))))
+
+(defun grid-calc--nth-of (array k descending)
+  "Return the K-th number of ARRAY, counting from the largest if DESCENDING."
+  (let ((numbers (sort (grid-calc--numbers-among (list array))
+                       (if descending #'> #'<)))
+        (k (grid-calc--operand k)))
+    (unless (and (integerp k) (<= 1 k (length numbers)))
+      (signal 'grid-calc-error '("#NUM!")))
+    (nth (1- k) numbers)))
+
+(grid-calc-defun LARGE (array k)
+  "Returns the K-th largest number of a range."
+  (grid-calc--nth-of array k t))
+
+(grid-calc-defun SMALL (array k)
+  "Returns the K-th smallest number of a range."
+  (grid-calc--nth-of array k nil))
+
+(grid-calc-defun RANK (number ref &optional order)
+  "Returns the rank of a number among the numbers of a range.
+The largest is first, or the smallest when ORDER is not 0."
+  (let ((number (grid-calc--operand number))
+        (numbers (grid-calc--numbers-among (list ref)))
+        (ascending (and order (/= (grid-calc--operand order) 0))))
+    (unless (cl-member number numbers :test #'=)
+      (error "Value not available in RANK"))
+    (1+ (cl-count-if (lambda (other)
+                       (if ascending (< other number) (> other number)))
+                     numbers))))
+
+(grid-calc-defun SUMPRODUCT (&rest arrays)
+  "Multiplies ranges of the same size cell by cell and sums the products.
+Cells that hold no number count as 0."
+  (let* ((lists (mapcar (lambda (array) (if (listp array) array (list array)))
+                        arrays))
+         (count (length (car lists))))
+    (unless (and lists (cl-every (lambda (list) (= (length list) count)) lists))
+      (signal 'grid-calc-error '("#VALUE!")))
+    (grid-calc--tidy-number
+     (cl-loop for index below count
+              sum (cl-loop with product = 1
+                           for list in lists
+                           do (setq product
+                                    (* product
+                                       (or (grid-calc--numeric (nth index list))
+                                           (and (numberp (nth index list))
+                                                (nth index list))
+                                           0)))
+                           finally return product)))))
+
+(grid-calc-defun TRUNC (number &optional num_digits)
+  "Cuts a number off at a number of digits, toward zero."
+  (grid-calc--round-by #'truncate number num_digits))
+
+(defun grid-calc--to-multiple (round-fn number significance)
+  "Round NUMBER to a multiple of SIGNIFICANCE with ROUND-FN."
+  (let ((number (grid-calc--operand number))
+        (significance (if significance (grid-calc--operand significance) 1)))
+    (cond ((zerop number) 0)
+          ((zerop significance) (error "Division by zero"))
+          (t (grid-calc--tidy-number
+              (/ (grid-format-round
+                  (* (funcall round-fn (/ (float number) significance))
+                     significance 1e10))
+                 1e10))))))
+
+(grid-calc-defun FLOOR (number &optional significance)
+  "Rounds a number down to a multiple of SIGNIFICANCE."
+  (grid-calc--to-multiple #'floor number significance))
+
+(grid-calc-defun CEILING (number &optional significance)
+  "Rounds a number up to a multiple of SIGNIFICANCE."
+  (grid-calc--to-multiple #'ceiling number significance))
+
+(grid-calc-defun MROUND (number multiple)
+  "Rounds a number to the nearest multiple of MULTIPLE."
+  (grid-calc--to-multiple #'grid-format-round number multiple))
 
 (grid-calc-defun COUNTIF (range criteria)
   "Counts the number of cells within a range that meet the given criteria.

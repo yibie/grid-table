@@ -138,7 +138,13 @@ no styles, and cells with the text format, store TEXT as it is."
          (format (plist-get style :format))
          (typed (and (gethash :set-style-at source)
                      (not (eq (car-safe format) 'text))
-                     (grid-format-parse-entry text))))
+                     (or (grid-format-parse-entry text)
+                         ;; A bare number typed into a percentage is that
+                         ;; many percent.
+                         (and (eq (car-safe format) 'percent)
+                              (grid-format-number text)
+                              (grid-format-parse-entry
+                               (concat (string-trim text) "%")))))))
     (cond ((null typed) (cons text 'keep))
           (format (cons (car typed) 'keep))
           (t (cons (car typed)

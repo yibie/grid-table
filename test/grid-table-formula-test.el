@@ -744,6 +744,59 @@
                  '(("10" "20" "30" 2 2)
                    ("a" "b" "c" "#N/A" "")))))
 
+(ert-deftest grid-table-formula-text-is-no-number-in-arithmetic ()
+  (should (equal (grid-table-formula-test--eval "=\"abc\"*2") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=B1*2" "abc") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=-B1" "abc") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=ROUND(B1,1)" "abc") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=IFERROR(B1*2,\"-\")" "abc")
+                 "-"))
+  ;; An empty cell is 0, text that reads as a number or a date is one.
+  (should (equal (grid-table-formula-test--eval "=B1+1" "") 1))
+  (should (equal (grid-table-formula-test--eval "=B1*2" "21") 42))
+  (should (equal (grid-table-formula-test--eval "=\"3\"+4") 7))
+  (should (equal (grid-table-formula-test--eval "=TRUE+1") 2))
+  (should (equal (grid-table-formula-test--eval "=B1+1" "2026-10-13") 46309))
+  ;; Aggregates still pass over text.
+  (should (equal (grid-table-formula-test--eval "=SUM(B1:D1)" "1" "abc" "2") 3))
+  (should (equal (grid-table-formula-test--eval "=SQRT(-1)") "#NUM!")))
+
+(ert-deftest grid-table-formula-vlookup-finds-the-row-not-above ()
+  (let ((rows '(("=VLOOKUP(25,B1:C3,2)" "10" "low")
+                ("=VLOOKUP(5,B1:C3,2)" "20" "mid")
+                ("=VLOOKUP(99,B1:C3,2,TRUE)" "30" "high")
+                ("=VLOOKUP(20,B1:C3,2,FALSE)" "" "")
+                ("=VLOOKUP(25,B1:C3,2,FALSE)" "" "")
+                ("=VLOOKUP(20,B1:C3,3)" "" ""))))
+    (should (equal (mapcar #'car (grid-table-formula-test--values rows))
+                   '("mid" "#N/A" "high" "mid" "#N/A" "#REF!")))))
+
+(ert-deftest grid-table-formula-common-functions ()
+  (should (equal (grid-table-formula-test--values
+                  '(("=TRUNC(1.59)" "=TRUNC(-1.59,1)" "=FLOOR(7,2)"
+                     "=CEILING(7,2)" "=MROUND(7,2)" "=FLOOR(0.35,0.1)"
+                     "=CEILING(7.2)" "=FLOOR(1,0)")))
+                 '((1 -1.5 6 8 8 0.3 8 "#DIV/0!"))))
+  (should (equal (grid-table-formula-test--values
+                  '(("3" "1" "x" "4" "=MEDIAN(A1:D1)" "=MEDIAN(A1:D1,10)")
+                    ("2" "5" "7" "1" "=LARGE(A1:D1,2)" "=SMALL(A1:D1,1)")
+                    ("=RANK(3,A1:D1)" "=RANK(3,A1:D1,1)" "=RANK(9,A1:D1)"
+                     "=LARGE(A1:D1,5)" "=SUMPRODUCT(A1:D1,A2:D2)"
+                     "=SUMPRODUCT(A1:B1,A2:D2)")))
+                 '(("3" "1" "x" "4" 3 3.5)
+                   ("2" "5" "7" "1" 3 1)
+                   (2 2 "#N/A" "#NUM!" 15 "#VALUE!")))))
+
+(ert-deftest grid-table-typing-a-number-into-a-percentage ()
+  (let ((source (make-default-data-source '("" "") '(("" "")))))
+    (grid-table-enter-value source 0 0 "12.5%")
+    (grid-table-enter-value source 0 0 "50")
+    (should (equal (grid-get-raw-value-at source 0 0) "0.5"))
+    (should (equal (grid-get-display-value-at source 0 0) "50.0%"))
+    ;; A cell with another format takes the number as typed.
+    (grid-table-enter-value source 0 1 "50")
+    (should (equal (grid-get-raw-value-at source 0 1) "50"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
