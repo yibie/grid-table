@@ -1064,21 +1064,27 @@ like the ones that name none."
    (lambda (sheet)
      (and (grid-calc--same-sheet-p sheet old) new))))
 
+(defun grid-calc--lines-before (lines index)
+  "Return how many of the line indexes LINES are below INDEX."
+  (cl-count-if (lambda (line) (< line index)) lines))
+
 (defun grid-calc-restructure-formula (formula axis at delta
                                               &optional home target)
   "Return FORMULA rewritten for a row or column inserted or deleted.
 AXIS is `row' or `col' and AT the zero-based index of the line inserted
-\(DELTA 1) or deleted (DELTA -1).  A reference keeps pointing at the cell
-it pointed at, anchored or not: one at or past an inserted line moves
-on, one past a deleted line moves back.  A reference to a deleted cell
-becomes #REF!; a range that loses a line shrinks, and becomes #REF! only
-when nothing of it is left.
+\(DELTA 1) or deleted (DELTA -1).  For a deletion AT may also be a list
+of indexes, the lines deleted together.  A reference keeps pointing at
+the cell it pointed at, anchored or not: one at or past an inserted line
+moves on, one past a deleted line moves back.  A reference to a deleted
+cell becomes #REF!; a range that loses a line shrinks, and becomes #REF!
+only when nothing of it is left.
 
 HOME names the sheet FORMULA is in and TARGET the sheet that changed;
 TARGET defaults to HOME.  Only references into the changed sheet are
 rewritten: those written without a sheet when the formula lives there,
 and those that name it."
   (let* ((target (or target home))
+         (lines (if (listp at) at (list at)))
          (local (or (null target) (grid-calc--same-sheet-p home target)))
          ;; nil for whole columns when rows change, and the other way round
          (index (lambda (reference)
@@ -1108,13 +1114,16 @@ and those that name it."
                          (funcall moved end (if (>= to at) (1+ to) to)))
                (funcall moved start new-from))))
           ((not end)
-           (cond ((= from at) "#REF!")
-                 (t (funcall moved start (if (> from at) (1- from) from)))))
+           (if (memql from lines)
+               "#REF!"
+             (funcall moved start
+                      (- from (grid-calc--lines-before lines from)))))
           (t
            ;; Keep the ends in the order they were written.
            (let* ((low (min from to)) (high (max from to))
-                  (new-low (if (> low at) (1- low) low))
-                  (new-high (if (>= high at) (1- high) high)))
+                  (new-low (- low (grid-calc--lines-before lines low)))
+                  (new-high (- high (grid-calc--lines-before
+                                     lines (1+ high)))))
              (if (< new-high new-low)
                  "#REF!"
                (concat (funcall moved start (if (<= from to) new-low new-high))

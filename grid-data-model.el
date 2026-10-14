@@ -191,8 +191,12 @@ or nil when the cell is gone."
 
 (defun grid-model--shift-index (index at delta)
   "Return INDEX after a line is inserted at AT (DELTA 1) or deleted (-1).
-A deleted line itself gives nil."
+A deleted line itself gives nil.  For a deletion AT may be a list of the
+lines deleted together."
   (cond ((> delta 0) (if (>= index at) (1+ index) index))
+        ((listp at)
+         (and (not (memql index at))
+              (- index (grid-calc--lines-before at index))))
         ((= index at) nil)
         ((> index at) (1- index))
         (t index)))
@@ -200,8 +204,13 @@ A deleted line itself gives nil."
 (defun grid-model--shift-rules (rules axis at delta)
   "Return conditional RULES after a line change along AXIS.
 AXIS is `row' or `col', AT the index of the line and DELTA 1 for an
-insertion or -1 for a deletion.  A rule whose range is deleted
-entirely is dropped."
+insertion or -1 for a deletion; for a deletion AT may be a list of the
+lines deleted together.  A rule whose range is deleted entirely is
+dropped."
+  (if (listp at)
+      ;; From the last line up, so the ones still to go keep their place.
+      (dolist (line (sort (copy-sequence at) #'>) rules)
+        (setq rules (grid-model--shift-rules rules axis line delta)))
   (let ((first (if (eq axis 'row) 0 1))
         (last (if (eq axis 'row) 2 3)))
     (delq nil
@@ -224,7 +233,7 @@ entirely is dropped."
                 ((> at end) rule)
                 ((= start end) nil)
                 (t (setf (nth last rule) (1- end)) rule))))
-           rules))))
+           rules)))))
 
 (defun grid-model-set-column-width (model col width)
   "Give column COL of MODEL a width of WIDTH characters; nil forgets it."
@@ -305,9 +314,11 @@ up."
   (if (null at)
       lines
     (delq nil (mapcar (lambda (line)
-                        (cond ((< line at) line)
-                              ((and (= line at) (< delta 0)) nil)
-                              (t (+ line delta))))
+                        (if (listp at)
+                            (grid-model--shift-index line at delta)
+                          (cond ((< line at) line)
+                                ((and (= line at) (< delta 0)) nil)
+                                (t (+ line delta)))))
                       lines))))
 
 (defun grid-model-carry-hidden (old new &optional axis at delta)
@@ -322,8 +333,12 @@ AXIS, AT and DELTA are as for `grid-model-carry-frozen'."
   new)
 
 (defun grid-model--frozen-after (count at delta)
-  "Return frozen COUNT after a line was inserted or deleted at AT by DELTA."
-  (if (and at (< at count)) (+ count delta) count))
+  "Return frozen COUNT after a line was inserted or deleted at AT by DELTA.
+For a deletion AT may be a list of the lines deleted together."
+  (cond ((null at) count)
+        ((listp at) (- count (grid-calc--lines-before at count)))
+        ((< at count) (+ count delta))
+        (t count)))
 
 (defun grid-model-carry-frozen (old new &optional axis at delta)
   "Give model NEW the frozen rows and columns of model OLD and return NEW.
@@ -856,6 +871,59 @@ Returns a new model instance. Errors if ROW-IDX is invalid or only one row remai
                   (and moved (cons moved col)))))
        (grid-model--shift-rules (grid-data-model-conditionals model)
                                 'row delete-row -1)))))
+
+(defun grid-model-delete-rows (model rows)
+  "Return MODEL without its ROWS, a list of row indexes counted from 0.
+The result is the same as deleting the rows one at a time, but the
+model is built once: formulas, merges, styles and conditional formats
+follow the rows that stay, and references to deleted cells become
+#REF!.  Errors when ROWS would leave no row."
+  (let* ((rows (sort (delete-dups (copy-sequence rows)) #'<))
+         (count (grid-data-model-rows model))
+         (cols (grid-data-model-cols model))
+         (raw (vconcat (mapcar #'copy-sequence
+                               (grid-model-get-all-raw-values model))))
+         (merges (grid-data-model-merges model)))
+    (unless (cl-every (lambda (row) (and (natnump row) (< row count))) rows)
+      (error "Invalid row index in %S" rows))
+    (when (>= (length rows) count)
+      (error "Cannot delete the last row."))
+    ;; From the last row up, as deleting them one at a time would.
+    (dolist (row (reverse rows))
+      ;; A vertical merge that loses its top row keeps its value, in the
+      ;; row now under it: the next one that stays, as the rows below
+      ;; ROW in ROWS are gone already.
+      (dolist (merge merges)
+        (when (and (= row (nth 0 merge)) (< (nth 0 merge) (nth 2 merge)))
+          (let ((next (cl-loop for r from (1+ row)
+                               unless (memql r rows) return r)))
+            (setf (nth (nth 1 merge) (aref raw next))
+                  (nth (nth 1 merge) (aref raw row))))))
+      (setq merges
+            (delq nil
+                  (mapcar
+                   (lambda (merge)
+                     (pcase-let ((`(,top ,left ,bottom ,right) merge))
+                       (cond ((< row top)
+                              (list (1- top) left (1- bottom) right))
+                             ((> row bottom) merge)
+                             ((= top bottom) nil)
+                             ((and (= top (1- bottom)) (= left right)) nil)
+                             (t (list top left (1- bottom) right)))))
+                   merges))))
+    (grid-model-create
+     (- count (length rows)) cols
+     (grid-model--restructure-formulas
+      (cl-loop for row below count
+               unless (memql row rows) collect (aref raw row))
+      'row rows -1)
+     merges
+     (grid-model--map-styles
+      model (lambda (row col)
+              (let ((moved (grid-model--shift-index row rows -1)))
+                (and moved (cons moved col)))))
+     (grid-model--shift-rules (grid-data-model-conditionals model)
+                              'row rows -1))))
 
 (defun grid-model-add-column (model &optional col-idx)
   "Adds a new empty column to the model at COL-IDX (0-based).

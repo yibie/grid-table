@@ -450,6 +450,46 @@
                              '((1 0 1 2) (2 0 2 1) (3 1 4 1)))))))
       (delete-file file))))
 
+(ert-deftest grid-table-deleting-rows-together-matches-one-at-a-time ()
+  ;; Formulas, ranges, merges, styles and rules end up as if the rows
+  ;; were deleted from the bottom up one by one, for many random sets.
+  (random "grid-delete-rows")
+  (dotimes (_ 40)
+    (let* ((rows 14)
+           (raw (cl-loop for r below rows collect
+                         (list (format "%d" r)
+                               (format "=A%d*2" (1+ (random rows)))
+                               (format "=SUM(A%d:A%d)+$A$%d" (1+ (random rows))
+                                       (1+ (random rows)) (1+ (random rows)))
+                               (if (= r 3) "top" "")
+                               "")))
+           (model (grid-model-create rows 5 raw)))
+      (setq model (grid-model-merge-cells model 3 3 6 3))
+      (setq model (grid-model-merge-cells model 9 3 9 4))
+      (grid-model-set-style model (random rows) 4 '(:bold t))
+      (grid-model-set-style model (random rows) 1 '(:italic t))
+      (grid-model-set-conditionals
+       model (list (list 2 0 8 0 '(> 3) '(:bold t))
+                   (list 11 2 11 2 '(< 1) '(:italic t))))
+      (let* ((doomed (cl-remove-duplicates
+                      (cl-loop repeat (1+ (random 5)) collect (random rows))))
+             (together (grid-model-delete-rows model doomed))
+             (one-by-one model))
+        (dolist (row (sort (copy-sequence doomed) #'>))
+          (setq one-by-one (grid-model-delete-row one-by-one (1- row))))
+        (should (equal (grid-model-get-all-raw-values together)
+                       (grid-model-get-all-raw-values one-by-one)))
+        (should (equal (grid-model-get-merges together)
+                       (grid-model-get-merges one-by-one)))
+        (should (equal (grid-data-model-conditionals together)
+                       (grid-data-model-conditionals one-by-one)))
+        (dotimes (r (grid-data-model-rows together))
+          (dotimes (c 5)
+            (should (equal (grid-model-get-style together r c)
+                           (grid-model-get-style one-by-one r c)))
+            (should (equal (grid-model-get-computed-value together r c)
+                           (grid-model-get-computed-value one-by-one r c)))))))))
+
 (provide 'grid-table-vertical-model-test)
 
 ;;; grid-table-vertical-model-test.el ends here

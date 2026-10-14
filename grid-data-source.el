@@ -148,6 +148,13 @@ TITLE is an optional string for the grid title."
                  (puthash :model new-model s)
                  s))
              source)
+    ;; Several rows at once, counted from the first row of the sheet.
+    (puthash :delete-rows
+             (lambda (s rows)
+               (puthash :model (grid-model-delete-rows (gethash :model s) rows)
+                        s)
+               s)
+             source)
     (puthash :add-column
              (lambda (s &optional col-idx)
                (let* ((old-model (gethash :model s))
@@ -252,7 +259,7 @@ A name defined already is redefined, keeping how it was written."
 
 (defconst grid-workbook--changing-keys
   '(:set-raw-value-at :merge-cells :unmerge-cell :sort-by-column
-    :add-row :delete-row :add-column :delete-column :grow)
+    :add-row :delete-row :delete-rows :add-column :delete-column :grow)
   "Data source functions after which a workbook recalculates.")
 
 (defvar grid-workbook--rewrites (make-hash-table :test 'eq :weakness 'key)
@@ -480,6 +487,8 @@ moved, as when a line is added at the end."
       ;; A row is counted from the first row under the header row.
       (:add-row (and index (< -2 index (1- rows)) (list 'row (1+ index) 1)))
       (:delete-row (and index (list 'row (1+ index) -1)))
+      ;; A list of rows, counted from the first row of the sheet
+      (:delete-rows (and index (list 'row index -1)))
       (:add-column (and index (< -1 index cols) (list 'col index 1)))
       (:delete-column (and index (list 'col index -1))))))
 

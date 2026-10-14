@@ -2769,22 +2769,26 @@ with the rows that stay, and references to the deleted rows become
                  (number-sequence (nth 1 range) (nth 3 range))))
          (duplicates (grid-table-etaf--duplicate-rows
                       source (number-sequence first last) cols))
+         (delete-all (gethash :delete-rows source))
          (delete (gethash :delete-row source)))
-    (unless delete
+    (unless (or delete-all delete)
       (user-error "This grid cannot delete rows"))
     (if (null duplicates)
         (message "No duplicate rows")
       (grid-table-etaf--as-one-step
        state
        (lambda ()
-         (grid-workbook-with-held-recalculation
-           ;; From the bottom, so the rows still to go keep their place.
-           (dolist (row (reverse duplicates))
-             ;; The row argument counts from the row under the first.
-             (funcall delete source (1- row))
-             (grid-table-etaf--track-model state)))
-         (unless (grid-workbook-of source)
-           (grid-table-recalculate source t))))
+         (if delete-all
+             (progn (funcall delete-all source duplicates)
+                    (grid-table-etaf--track-model state))
+           (grid-workbook-with-held-recalculation
+             ;; From the bottom, so the rows still to go keep their place.
+             (dolist (row (reverse duplicates))
+               ;; The row argument counts from the row under the first.
+               (funcall delete source (1- row))
+               (grid-table-etaf--track-model state)))
+           (unless (grid-workbook-of source)
+             (grid-table-recalculate source t)))))
       (grid-table-etaf--apply-filters state)
       (grid-table-etaf--fit-widths state)
       ;; The selection may reach past the rows left.
