@@ -91,15 +91,24 @@ releases keep reading the files they can represent."
   (let* ((workbook (grid-workbook-of data-source))
          (sheets (and workbook (grid-workbook-sheets workbook))))
     (if (cdr sheets)
-        (list 'grid-table-file
-              :version 5
-              :active (cl-position data-source sheets)
-              :sheets (mapcar
-                       (lambda (sheet)
-                         (append (list :name (grid-workbook-sheet-name sheet))
-                                 (grid-table-persistence--sheet-data sheet)))
-                       sheets))
-      (let* ((data (grid-table-persistence--sheet-data data-source))
+        (append
+         (list 'grid-table-file
+               :version 5
+               :active (cl-position data-source sheets)
+               :sheets (mapcar
+                        (lambda (sheet)
+                          (append (list :name (grid-workbook-sheet-name sheet))
+                                  (grid-table-persistence--sheet-data sheet)))
+                        sheets))
+         (and (grid-workbook-names workbook)
+              (list :names (grid-workbook-names workbook))))
+      (let* ((data (append
+                    (grid-table-persistence--sheet-data data-source)
+                    ;; Names name the sheet, so a lone sheet keeps its name.
+                    (and workbook (grid-workbook-names workbook)
+                         (list :names (grid-workbook-names workbook)
+                               :sheet-name (grid-workbook-sheet-name
+                                            data-source)))))
              (merges (plist-get data :merges))
              (has-vertical
               (cl-some (lambda (merge) (< (nth 0 merge) (nth 2 merge)))
@@ -139,7 +148,10 @@ Older releases pass over them, so they do not raise the file version."
           (and (plist-get data :frozen)
                (list :frozen (plist-get data :frozen)))
           (and (plist-get data :hidden)
-               (list :hidden (plist-get data :hidden)))))
+               (list :hidden (plist-get data :hidden)))
+          (and (plist-get data :names)
+               (list :names (plist-get data :names)
+                     :sheet-name (plist-get data :sheet-name)))))
 
 (defun grid-table-persistence--save-to-file (data-source file-path)
   "Save the DATA-SOURCE to FILE-PATH using Lisp's S-expression format.
@@ -238,8 +250,10 @@ HIDDEN is (ROWS COLS), lists of the rows and columns hidden."
         (plist-get sheet :frozen) (plist-get sheet :hidden))
        ;; A name another sheet has, or none, would lose the sheet.
        (grid-workbook-fresh-name workbook (plist-get sheet :name))))
+    (setf (grid-workbook-names workbook)
+          (grid-table-persistence--names (plist-get plist :names)))
     ;; Each sheet was calculated before the ones after it existed.
-    (grid-workbook-recalculate workbook)
+    (grid-workbook-recalculate workbook t)
     (nth (if (and (integerp active) (< -1 active (length sheets))) active 0)
          (grid-workbook-sheets workbook))))
 
@@ -318,9 +332,34 @@ saved; the others are in its workbook."
 
            (t (error "Unknown grid file format in %s" file-path)))
 
-          (grid-table-persistence--make-source
-           file-path headers rows title merges styles conditionals
-           widths no-header frozen hidden)))))))
+          (let* ((source (grid-table-persistence--make-source
+                          file-path headers rows title merges styles conditionals
+                          widths no-header frozen hidden))
+                 (plist (cond ((eq (car-safe data) 'grid-table-file) (cdr data))
+                              ((keywordp (car-safe data)) data)))
+                 (names (grid-table-persistence--names
+                         (plist-get plist :names))))
+            ;; Names name the sheet, which is called as it was when saved.
+            (when names
+              (grid-workbook-set-names
+               (grid-workbook-create
+                (list (cons (grid-workbook-fresh-name
+                             nil (plist-get plist :sheet-name))
+                            source)))
+               names))
+            source)))))))
+
+(defun grid-table-persistence--names (names)
+  "Return the entries of NAMES that are good, or nil.
+A good entry is (NAME . DEFINITION) with a valid name and a definition
+that is a formula."
+  (and (listp names)
+       (cl-remove-if-not
+        (lambda (entry)
+          (and (consp entry) (stringp (car entry)) (stringp (cdr entry))
+               (string-prefix-p "=" (cdr entry))
+               (null (grid-calc-name-problem (car entry)))))
+        names)))
 
 (provide 'grid-table-persistence)
 

@@ -1262,6 +1262,37 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-hide-rows)
     (should (equal (car (grid-table-hidden source)) '(0 5 6)))))
 
+(ert-deftest grid-table-etaf-defined-names ()
+  (grid-table-etaf-test--with-grid (8 4 100 12)
+    ;; B2:B4 hold 2, 4, 6.
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-goto 3 1 t)
+    (grid-table-etaf-define-name "Amounts")
+    (should (equal (grid-workbook-name-definition
+                    (grid-workbook-of source) "amounts")
+                   (concat "=" (grid-calc-sheet-prefix
+                                (grid-workbook-sheet-name source))
+                           "$B$2:$B$4")))
+    (grid-table-etaf-set-cell 6 2 "=SUM(Amounts)")
+    (should (equal (grid-get-computed-value-at source 6 2) 12))
+    ;; Going to the name selects its cells.
+    (grid-table-etaf-goto 0 0)
+    (grid-table-etaf-goto-name "Amounts")
+    (should (equal (grid-table-etaf-selection) '(1 1 3 1)))
+    (grid-table-etaf-goto 0 0)
+    (grid-table-etaf-goto-address "amounts")
+    (should (equal (grid-table-etaf-selection) '(1 1 3 1)))
+    ;; Tracing the formula shows the named cells.
+    (grid-table-etaf-goto 6 2)
+    (grid-table-etaf-trace-precedents)
+    (should (eq (grid-table-etaf--traced source 2 1) 'precedent))
+    (should-error (grid-table-etaf-define-name "B12") :type 'user-error)
+    ;; Deleting it is a step undo takes back.
+    (grid-table-etaf-delete-name "Amounts")
+    (should (equal (grid-get-computed-value-at source 6 2) "#NAME?"))
+    (grid-table-etaf-undo)
+    (should (equal (grid-get-computed-value-at source 6 2) 12))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

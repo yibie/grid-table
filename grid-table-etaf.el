@@ -674,6 +674,9 @@ The column follows the pointer; a cancelled drag restores its width."
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
     ("C-c g" grid-table-etaf-goto-address "Go to cell or range")
+    ("C-c n d" grid-table-etaf-define-name "Name the selection")
+    ("C-c n l" grid-table-etaf-goto-name "Go to a name")
+    ("C-c n k" grid-table-etaf-delete-name "Delete a name")
     ("C-c a p" grid-table-etaf-trace-precedents "Trace precedents")
     ("C-c a d" grid-table-etaf-trace-dependents "Trace dependents")
     ("C-c a n" grid-table-etaf-next-trace "Go to next traced cell")
@@ -1350,15 +1353,23 @@ spreadsheet does."
   (interactive
    (list (completing-read
           "Go to (e.g. D120, A1:B3, Sheet2!A1): "
-          (mapcar (lambda (sheet)
-                    (concat (grid-calc-sheet-prefix
-                             (grid-workbook-sheet-name sheet))
-                            "!"))
-                  (cdr (grid-table-sheets)))
+          (append
+           (mapcar #'car (and (grid-workbook-of grid-table--data-source)
+                              (grid-workbook-names
+                               (grid-workbook-of grid-table--data-source))))
+           (mapcar (lambda (sheet)
+                     (grid-calc-sheet-prefix
+                             (grid-workbook-sheet-name sheet)))
+                   (cdr (grid-table-sheets))))
           nil nil nil 'grid-table-etaf--goto-history)))
   (pcase-let ((`(,sheet ,top ,left ,bottom ,right)
                (or (grid-table-etaf--parse-address address)
-                   (user-error "Not a cell or range: %s" address))))
+                   (when-let* ((workbook (grid-workbook-of
+                                          grid-table--data-source))
+                               (definition (grid-workbook-name-definition
+                                            workbook (string-trim address))))
+                     (grid-table-etaf--parse-address (substring definition 1)))
+                   (user-error "Not a cell, range or name: %s" address))))
     (when sheet
       (grid-table-switch-to-sheet
        (or (grid-workbook-sheet (grid-table--workbook) sheet)
@@ -1943,6 +1954,9 @@ shifts."
        (grid-table-etaf--settle state))
       (`(width ,col ,old ,new)
        (grid-table-etaf--restore-column-width state col (if forward new old)))
+      (`(names ,workbook ,old ,new)
+       (grid-workbook-set-names workbook (if forward new old))
+       (grid-table-etaf--bump state))
       (`(hidden ,old ,new)
        (let ((hidden (if forward new old)))
          (grid-table-set-hidden source (car hidden) (cdr hidden)))
@@ -2628,6 +2642,70 @@ rows.  `grid-table-etaf-show-columns' shows them."
                    (cdr hidden)))))
 
 ;;;----------------------------------------------------------------------
+;;; Defined names
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--set-names (state workbook names)
+  "Give WORKBOOK the defined NAMES as one undoable step of STATE."
+  (let ((old (copy-tree (grid-workbook-names workbook))))
+    (grid-workbook-set-names workbook names)
+    (grid-table-etaf--record state (list 'names workbook old
+                                         (copy-tree names)))
+    (grid-table-etaf--bump state)))
+
+(defun grid-table-etaf-define-name (name)
+  "Give the selected cell or range the defined NAME.
+Formulas then read it by name, as =SUM(Sales) or =Price*Rate; the name
+follows its cells when lines are inserted or deleted, and a name already
+defined is moved to the selection."
+  (interactive
+   (list (string-trim (read-string "Name for the selection: "))))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (workbook (grid-table--workbook))
+         (range (grid-table-etaf-selection))
+         (cell (lambda (row col)
+                 (format "$%s$%d" (grid-calc-col-number-to-letter col) (1+ row))))
+         (reference
+          (concat "=" (grid-calc-sheet-prefix (grid-workbook-sheet-name source))
+                  (funcall cell (nth 0 range) (nth 1 range))
+                  (unless (and (= (nth 0 range) (nth 2 range))
+                               (= (nth 1 range) (nth 3 range)))
+                    (concat ":" (funcall cell (nth 2 range) (nth 3 range))))))
+         (names (copy-tree (grid-workbook-names workbook)))
+         (entry (assoc-string name names t)))
+    (when-let* ((problem (grid-calc-name-problem name)))
+      (user-error "%s" problem))
+    (if entry
+        (setcdr entry reference)
+      (setq names (append names (list (cons name reference)))))
+    (grid-table-etaf--set-names state workbook names)
+    (message "%s is %s" name (substring reference 1))))
+
+(defun grid-table-etaf--read-name (prompt)
+  "Read with PROMPT a name defined in the current grid's workbook."
+  (let ((names (mapcar #'car (and (grid-workbook-of grid-table--data-source)
+                                  (grid-workbook-names
+                                   (grid-workbook-of grid-table--data-source))))))
+    (unless names
+      (user-error "No names are defined; C-c n d names the selection"))
+    (completing-read prompt names nil t)))
+
+(defun grid-table-etaf-goto-name (name)
+  "Select the cells the defined NAME stands for, showing their sheet."
+  (interactive (list (grid-table-etaf--read-name "Go to name: ")))
+  (grid-table-etaf-goto-address name))
+
+(defun grid-table-etaf-delete-name (name)
+  "Forget the defined NAME; formulas that use it show #NAME?."
+  (interactive (list (grid-table-etaf--read-name "Delete name: ")))
+  (let ((workbook (grid-table--workbook)))
+    (grid-table-etaf--set-names
+     (grid-table-etaf--state-or-error) workbook
+     (cl-remove-if (lambda (entry) (string-equal-ignore-case (car entry) name))
+                   (grid-workbook-names workbook)))))
+
+;;;----------------------------------------------------------------------
 ;;; Tracing formulas
 ;;;----------------------------------------------------------------------
 
@@ -2679,7 +2757,11 @@ goes there."
                      (and sheet
                           (append (list sheet) (cdr reference)
                                   '(precedent)))))
-                 (grid-calc-precedents model (car cursor) (cdr cursor))))))
+                 (let ((grid-calc-names
+                        (and (grid-workbook-of source)
+                             (grid-workbook--names-resolver
+                              (grid-workbook-of source)))))
+                   (grid-calc-precedents model (car cursor) (cdr cursor)))))))
     (unless (string-prefix-p
              "=" (or (grid-get-raw-value-at source (car cursor) (cdr cursor))
                      ""))
@@ -2696,6 +2778,9 @@ Formulas on every sheet of the workbook are looked at."
          traces)
     (dolist (sheet (or (grid-table-sheets) (list source)))
       (when-let* ((model (gethash :model sheet)))
+        (let ((grid-calc-names
+               (and (grid-workbook-of sheet)
+                    (grid-workbook--names-resolver (grid-workbook-of sheet)))))
         (dotimes (r (grid-data-model-rows model))
           (dotimes (c (grid-data-model-cols model))
             (when (cl-some
@@ -2704,7 +2789,7 @@ Formulas on every sheet of the workbook are looked at."
                               source)
                           (grid-calc-reference-covers-p reference row col)))
                    (grid-calc-precedents model r c))
-              (push (list sheet r c r c 'dependent) traces))))))
+              (push (list sheet r c r c 'dependent) traces)))))))
     (grid-table-etaf--show-traces (nreverse traces) "dependent")))
 
 (defun grid-table-etaf-next-trace ()

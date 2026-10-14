@@ -1068,6 +1068,73 @@
         (let ((copies (fresh)))
           (should (equal (mapcar #'values sources) (mapcar #'values copies))))))))
 
+(ert-deftest grid-table-formula-defined-names ()
+  (let* ((one (make-default-data-source
+               '("" "") '(("Item" "Qty") ("a" "2") ("b" "3") ("=SUM(Qty)*Rate" ""))))
+         (two (make-default-data-source
+               '("") '(("=INDEX(Qty,2)+VLOOKUP(\"b\",Table,2,FALSE)"))))
+         (workbook (grid-workbook-create (list (cons "Sheet1" one)
+                                               (cons "Two" two))))
+         (file (make-temp-file "grid-names" nil ".grid")))
+    (unwind-protect
+        (progn
+          (should (equal (grid-get-computed-value-at one 3 0) "#NAME?"))
+          (grid-workbook-define-name workbook "Qty" "=Sheet1!$B$2:$B$3")
+          (grid-workbook-define-name workbook "rate" "=Sheet1!$B$2")
+          (grid-workbook-define-name workbook "Table" "=Sheet1!$A$2:$B$3")
+          (should (equal (grid-get-computed-value-at one 3 0) 10))
+          (should (equal (grid-get-computed-value-at two 0 0) 6))
+          ;; An edit inside a name reaches the formulas using it.
+          (grid-set-raw-value-at one 1 1 "10")
+          (should (equal (grid-get-computed-value-at one 3 0) 130))
+          ;; Names follow their cells when lines move, and undo with them.
+          (let ((before (gethash :model one)))
+            (funcall (gethash :add-row one) one 1)
+            (should (equal (grid-workbook-name-definition workbook "QTY")
+                           "=Sheet1!$B$2:$B$4"))
+            (grid-workbook-model-restored one (gethash :model one) before)
+            (puthash :model before one)
+            (should (equal (grid-workbook-name-definition workbook "Qty")
+                           "=Sheet1!$B$2:$B$3")))
+          ;; Renaming the sheet renames it in the definitions.
+          (grid-workbook-rename-sheet workbook one "Data")
+          (should (equal (grid-workbook-name-definition workbook "Rate")
+                         "=Data!$B$2"))
+          (should (equal (grid-get-computed-value-at two 0 0) 6))
+          ;; Saved and read back.
+          (grid-table-persistence--save-to-file one file)
+          (let* ((loaded (grid-table-persistence-create-data-source-from-file file))
+                 (other (cadr (grid-workbook-sheets (grid-workbook-of loaded)))))
+            (should (equal (grid-workbook-names (grid-workbook-of loaded))
+                           (grid-workbook-names workbook)))
+            (should (equal (grid-get-computed-value-at other 0 0) 6)))
+          ;; A name can only be one that no reference or function takes.
+          (should (grid-calc-name-problem "TAX1"))
+          (should (grid-calc-name-problem "Q1Sales"))
+          (should (grid-calc-name-problem "Sum"))
+          (should (grid-calc-name-problem "TRUE"))
+          (should-not (grid-calc-name-problem "Sales_2024"))
+          (grid-workbook-delete-name workbook "rate")
+          (should (equal (grid-get-computed-value-at one 3 0) "#NAME?")))
+      (delete-file file))))
+
+(ert-deftest grid-table-formula-names-on-a-lone-sheet-are-saved ()
+  (let* ((source (make-default-data-source
+                  '("" "") '(("x" "4") ("y" "=Four*2"))))
+         (workbook (grid-workbook-ensure source))
+         (file (make-temp-file "grid-lone-names" nil ".grid")))
+    (unwind-protect
+        (progn
+          (grid-workbook-define-name
+           workbook "Four"
+           (concat "=" (grid-calc-sheet-prefix (grid-workbook-sheet-name source))
+                   "$B$1"))
+          (should (equal (grid-get-computed-value-at source 1 1) 8))
+          (grid-table-persistence--save-to-file source file)
+          (let ((loaded (grid-table-persistence-create-data-source-from-file file)))
+            (should (equal (grid-get-computed-value-at loaded 1 1) 8))))
+      (delete-file file))))
+
 ;; The text table needs a data source and nothing else.
 (ert-deftest grid-table-text-render-needs-no-buffer ()
   (let* ((source (make-default-data-source

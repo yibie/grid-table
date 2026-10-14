@@ -33,6 +33,37 @@ sheets is found.")
 Bound by whoever keeps several sheets together; without it a reference
 into another sheet is #REF!.")
 
+(defvar grid-calc-names nil
+  "Function that returns the parsed definition of a defined name, or nil.
+A definition is a cell or range reference, such as Sheet1!$B$2:$B$9.
+Bound by whoever keeps the names; without it every name is #NAME?.")
+
+(defun grid-calc--name-ast (name)
+  "Return the parsed definition of NAME, or nil when it is not defined."
+  (and grid-calc-names (funcall grid-calc-names name)))
+
+(defun grid-calc--deref (ast)
+  "Return AST, or the definition it names when it is a defined name."
+  (or (and (eq (car-safe ast) 'NAME) (grid-calc--name-ast (cadr ast)))
+      ast))
+
+(defun grid-calc-name-problem (name)
+  "Return why NAME cannot be a defined name, or nil when it can.
+A name starts with a letter or an underscore and goes on with letters,
+digits, underscores and dots.  It may not read as a cell, column or row
+reference, nor start like a cell reference (Q1Sales), nor be TRUE,
+FALSE or a function's name."
+  (let ((upper (and (stringp name) (upcase name))))
+    (cond
+     ((not (and upper (string-match-p "\\`[A-Za-z_][A-Za-z0-9_.]*\\'" name)))
+      "A name starts with a letter or _ and holds letters, digits, _ and .")
+     ((> (length name) 255) "A name cannot be longer than 255 characters")
+     ((string-match-p "\\`\\$?[A-Za-z]+\\$?[0-9]" name)
+      "A name cannot start like a cell reference")
+     ((member upper '("TRUE" "FALSE")) "TRUE and FALSE cannot be names")
+     ((gethash upper grid-calc-functions)
+      (format "%s is a function" upper)))))
+
 (defvar grid-calc-current-sheet nil
   "Name of the sheet whose model is being changed, when it has one.")
 
@@ -243,6 +274,12 @@ changes by itself, or runs Lisp."
                   (throw 'always 'always))
                 (mapc #'walk arguments))
                (`(ELISP-CODE . ,_) (throw 'always 'always))
+               ;; A name reads what it is defined as; one not defined
+               ;; reads nothing until defining it recomputes everything.
+               (`(NAME ,name)
+                (unless grid-calc-names (throw 'always 'always))
+                (when-let* ((definition (grid-calc--name-ast name)))
+                  (walk definition)))
                ((pred consp)
                 (dolist (part node)
                   (when (consp part) (walk part)))))))
@@ -277,6 +314,9 @@ that holds no formula, or one that does not parse, reads nothing."
              (`(CELL-REF ,ref . ,sheet) (add (car sheet) ref ref))
              (`(RANGE (CELL-REF ,start . ,sheet) (CELL-REF ,end . ,_))
               (add (car sheet) start end))
+             (`(NAME ,name)
+              (when-let* ((definition (grid-calc--name-ast name)))
+                (walk definition)))
              ((pred consp)
               (dolist (part node)
                 (when (consp part) (walk part)))))))
@@ -535,8 +575,11 @@ AST: The Abstract Syntax Tree to evaluate."
     ;; An error value written in the formula, as #REF! left by a deletion
     (`(ERROR ,value) (signal 'grid-calc-error (list value)))
 
-    ;; A bare word: no names are defined
-    (`(NAME ,_) (signal 'grid-calc-error '("#NAME?")))
+    ;; A defined name stands for its definition.
+    (`(NAME ,name)
+     (if-let* ((definition (grid-calc--name-ast name)))
+         (grid-calc-eval-ast model definition)
+       (signal 'grid-calc-error '("#NAME?"))))
     
     ;; String literal
     (`(STRING ,value) value)
@@ -1115,7 +1158,7 @@ ARGS-AST-LIST: List of arguments in AST form.
 Returns the value at the specified row and column in the range."
   (when (< (length args-ast-list) 2)
     (error "INDEX requires at least 2 arguments"))
-  (let* ((range-ast (car args-ast-list))
+  (let* ((range-ast (grid-calc--deref (car args-ast-list)))
          (row-num-ast (cadr args-ast-list))
          (col-num-ast (caddr args-ast-list)))
     (unless (eq (car range-ast) 'RANGE)
@@ -1190,7 +1233,7 @@ condition that evaluates to true. If no conditions are met, raises an error."
     (error "VLOOKUP requires at least 3 arguments"))
   (cl-block grid-calc-eval-vlookup-function
    (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
-         (table-array-ast (nth 1 args-ast-list))
+         (table-array-ast (grid-calc--deref (nth 1 args-ast-list)))
          (col-index-num (grid-calc-eval-ast model (nth 2 args-ast-list)))
          ;; Without a fourth argument, or with TRUE, the first column is
          ;; taken as sorted and the last row not above the value is found.

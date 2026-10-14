@@ -194,8 +194,53 @@ TITLE is an optional string for the grid title."
 ;; no workbook stands alone, as before.
 
 (cl-defstruct (grid-workbook (:constructor grid-workbook--create))
-  "Sheets kept together: SHEETS is the list of their data sources, in order."
-  sheets)
+  "Sheets kept together: SHEETS is the list of their data sources, in order.
+NAMES is an alist of the defined names, from each to its definition as a
+formula, such as =Sheet1!$B$2:$B$9."
+  sheets names)
+
+(defvar grid-workbook--parsed-names (make-hash-table :test 'equal)
+  "Definitions of names already parsed, from their text.")
+
+(defun grid-workbook-name-definition (workbook name)
+  "Return the definition of NAME in WORKBOOK, ignoring case, or nil."
+  (cdr (assoc-string name (grid-workbook-names workbook) t)))
+
+(defun grid-workbook--names-resolver (workbook)
+  "Return the function that finds the parsed definition of a name of WORKBOOK."
+  (lambda (name)
+    (when-let* ((text (grid-workbook-name-definition workbook name)))
+      (with-memoization (gethash text grid-workbook--parsed-names)
+        (condition-case nil
+            (let ((ast (grid-parser-parse (substring text 1))))
+              (and (memq (car-safe ast) '(CELL-REF RANGE)) ast))
+          (error nil))))))
+
+(defun grid-workbook-set-names (workbook names)
+  "Give WORKBOOK the defined NAMES, an alist from name to definition.
+Every formula is computed again, as any of them may use a name."
+  (setf (grid-workbook-names workbook) (copy-tree names))
+  (mapc #'grid-calc-forget (grid-workbook--models workbook))
+  (grid-workbook-recalculate workbook t))
+
+(defun grid-workbook-define-name (workbook name definition)
+  "Define NAME in WORKBOOK as DEFINITION, a reference such as =Sheet1!$B$2.
+A name defined already is redefined, keeping how it was written."
+  (when-let* ((problem (grid-calc-name-problem name)))
+    (error "%s" problem))
+  (let* ((names (copy-tree (grid-workbook-names workbook)))
+         (entry (assoc-string name names t)))
+    (if entry
+        (setcdr entry definition)
+      (setq names (append names (list (cons name definition)))))
+    (grid-workbook-set-names workbook names)))
+
+(defun grid-workbook-delete-name (workbook name)
+  "Take the defined NAME out of WORKBOOK."
+  (grid-workbook-set-names
+   workbook
+   (cl-remove-if (lambda (entry) (string-equal-ignore-case (car entry) name))
+                 (grid-workbook-names workbook))))
 
 (defconst grid-workbook--changing-keys
   '(:set-raw-value-at :merge-cells :unmerge-cell :sort-by-column
@@ -276,6 +321,7 @@ the characters that keep it from being one."
 Only what changed and what reads it is computed, unless EVERYTHING is
 non-nil, as it has to be when the sheets themselves changed."
   (let ((grid-calc-sheets (grid-workbook--resolver workbook))
+        (grid-calc-names (grid-workbook--names-resolver workbook))
         (grid-calc-defer nil))
     (grid-table-calc-evaluate-models (grid-workbook--models workbook)
                                      everything)))
@@ -367,6 +413,14 @@ the (SOURCE ROW COL OLD NEW) entries of the formulas that changed."
                     (grid-calc-forget model)
                     (push (list source (/ index cols) (% index cols) old new)
                           changes)))))))))
+    ;; Definitions of names name their sheet: they are read as formulas
+    ;; of no sheet.
+    (dolist (entry (grid-workbook-names workbook))
+      (let* ((old (cdr entry))
+             (new (funcall function old nil)))
+        (unless (equal old new)
+          (setcdr entry new)
+          (push (list :name (car entry) nil old new) changes))))
     (nreverse changes)))
 
 (defun grid-workbook-rename-sheet (workbook source name)
@@ -419,16 +473,21 @@ every sheet is recalculated."
 That is what undoing or redoing a structural change does.  Formulas the
 change rewrote in other sheets go back with it."
   (when-let* ((workbook (grid-workbook-of source)))
-    (pcase-dolist (`(,sheet ,row ,col ,old ,_new)
-                   (gethash from grid-workbook--rewrites))
-      (when (memq sheet (grid-workbook-sheets workbook))
-        (set-grid-cell-raw-input
-         (grid-model-get-cell (gethash :model sheet) row col) old)))
-    (pcase-dolist (`(,sheet ,row ,col ,_old ,new)
-                   (gethash to grid-workbook--rewrites))
-      (when (memq sheet (grid-workbook-sheets workbook))
-        (set-grid-cell-raw-input
-         (grid-model-get-cell (gethash :model sheet) row col) new)))
+    (cl-flet ((put-back (entries pick)
+                (pcase-dolist (`(,sheet ,row ,col ,old ,new) entries)
+                  (cond
+                   ((eq sheet :name)
+                    (when-let* ((entry (assoc-string
+                                        row (grid-workbook-names workbook) t)))
+                      (setcdr entry (funcall pick old new))))
+                   ((memq sheet (grid-workbook-sheets workbook))
+                    (set-grid-cell-raw-input
+                     (grid-model-get-cell (gethash :model sheet) row col)
+                     (funcall pick old new)))))))
+      (put-back (gethash from grid-workbook--rewrites)
+                (lambda (old _new) old))
+      (put-back (gethash to grid-workbook--rewrites)
+                (lambda (_old new) new)))
     ;; Formulas were put back in place, behind the models' backs.
     (grid-workbook-recalculate workbook t)))
 
