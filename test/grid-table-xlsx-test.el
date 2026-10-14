@@ -324,6 +324,39 @@
           (should (equal (grid-get-style-at again 1 0) '(:bold t)))
           (should (equal (grid-get-style-at again 2 2) '(:note "to do"))))))))
 
+(ert-deftest grid-table-xlsx-test-charts ()
+  "Floating charts become workbook charts and come back from them."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  (make-list 5 "")
+                  '(("Region" "Q1" "Q2" "Q3" "Q4") ("North" "1" "2" "3" "4")
+                    ("South" "5" "6" "7" "8"))))
+           (workbook (grid-workbook-create (list (cons "My Data" data))))
+           (charts (list (list :anchor '(4 . 0) :size '(51 . 15) :type 'column
+                               :range "A1:E3" :by 'rows :title "Sales")
+                         (list :anchor '(4 . 7) :size '(42 . 12) :type 'line
+                               :range "A1:E3" :by 'columns :title nil)
+                         (list :anchor '(20 . 0) :size '(42 . 12) :type 'pie
+                               :range "A1:E2" :by 'rows :title "North"))))
+      (grid-table-set-charts data charts)
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                       "My Data")))
+        (should (equal (grid-table-charts back) charts))
+        ;; Written back, the workbook holds them once, not twice.
+        (grid-table-xlsx-write-workbook (grid-workbook-of back) file)
+        (let ((again (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                          "My Data")))
+          (should (equal (grid-table-charts again) charts))
+          ;; Deleted in the grid, a chart is gone from the file.
+          (grid-table-set-charts again (cdr charts))
+          (grid-table-xlsx-write-workbook (grid-workbook-of again) file)
+          (should (equal (grid-table-charts
+                          (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                               "My Data"))
+                         (cdr charts))))))))
+
 (ert-deftest grid-table-xlsx-test-export-keeps-other-sheets ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

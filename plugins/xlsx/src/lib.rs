@@ -15,6 +15,12 @@ use umya_spreadsheet::{
     PaneStateValues, PaneValues, PatternValues, Selection, SheetView, Style, Workbook, Worksheet,
 };
 use umya_spreadsheet::structs::drawing::Theme;
+use umya_spreadsheet::structs::drawing::charts::{
+    BarDirectionValues, CategoryAxisData, ChartText, GroupingValues, ScatterStyleValues, Smooth,
+    StringReference,
+};
+use umya_spreadsheet::structs::drawing::spreadsheet::MarkerType;
+use umya_spreadsheet::structs::{Chart, ChartType};
 
 emacs::plugin_is_GPL_compatible!();
 
@@ -22,6 +28,8 @@ emacs::plugin_is_GPL_compatible!();
 const RECORD: char = '\u{1e}';
 /// Separates the fields of a record.
 const FIELD: char = '\u{1f}';
+/// Separates the items of a list inside a field.
+const ITEM: char = '\u{1d}';
 
 #[emacs::module(name = "grid-table-xlsx-module")]
 fn init(_: &Env) -> Result<()> {
@@ -208,6 +216,27 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
                 quote(out, validation.formula1());
                 out.push(')');
             }
+        }
+    }
+    out.push(')');
+    out.push_str(" :charts (");
+    for chart in sheet.chart_collection() {
+        if let Some(info) = chart_info(chart, sheet.name()) {
+            out.push('(');
+            for field in [&info.kind, &info.title] {
+                quote(out, field);
+                out.push(' ');
+            }
+            write!(
+                out,
+                "{} {} {} {} (",
+                info.from.0, info.from.1, info.to.0, info.to.1
+            )?;
+            for reference in &info.refs {
+                quote(out, reference);
+                out.push(' ');
+            }
+            out.push_str("))");
         }
     }
     out.push(')');
@@ -421,6 +450,12 @@ fn clear(sheet: &mut Worksheet) {
     }
     sheet.merge_cells_mut().clear();
     sheet.comments_mut().clear();
+    // Charts grid-table reads in are written back from it; the others
+    // stay as they are.
+    let name = sheet.name().to_string();
+    sheet
+        .chart_collection_mut()
+        .retain(|chart| chart_info(chart, &name).is_none());
     sheet.set_conditional_formatting_collection(Vec::new());
     sheet.remove_data_validations();
     for row in sheet.row_dimensions_mut() {
@@ -490,6 +525,10 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                 sheet.cell_mut((col + 1, row + 1)).set_hyperlink(link);
             }
             "F" if fields.len() >= 4 => conditionals.push(&record[2..]),
+            // G type from to title names categories ref...: a chart
+            "G" if fields.len() >= 8 => {
+                sheet.add_chart(chart(&fields)?);
+            }
             // W col width: a column sized by hand, in characters
             "W" if fields.len() >= 3 => {
                 let col: u32 = fields[1].parse()?;
@@ -534,6 +573,229 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
         sheet.add_conditional_formatting_collection(conditional(&fields, count - index as i32)?);
     }
     Ok(())
+}
+
+/// What grid-table takes from a chart of a workbook.
+struct ChartInfo {
+    /// The grid-table type, such as column or bar-stacked
+    kind: String,
+    title: String,
+    /// The zero-based (ROW, COL) of the cells the chart's corners sit on
+    from: (u32, u32),
+    to: (u32, u32),
+    /// The ranges the chart reads: values, labels and x values
+    refs: Vec<String>,
+}
+
+/// Describe CHART of the sheet named SHEET, or None when grid-table
+/// cannot hold it: a type it does not draw, or data on another sheet.
+fn chart_info(chart: &Chart, sheet: &str) -> Option<ChartInfo> {
+    let space = chart.chart_space().chart();
+    let plot = space.plot_area();
+    let (kind, list) = if let Some(bar) = plot.bar_chart() {
+        let horizontal = matches!(bar.bar_direction().val(), BarDirectionValues::Bar);
+        let stacked = matches!(bar.grouping().val(), GroupingValues::Stacked);
+        let kind = match (horizontal, stacked) {
+            (false, false) => "column",
+            (false, true) => "column-stacked",
+            (true, false) => "bar",
+            (true, true) => "bar-stacked",
+        };
+        (kind, bar.area_chart_series_list())
+    } else if let Some(line) = plot.line_chart() {
+        ("line", line.area_chart_series_list())
+    } else if let Some(area) = plot.area_chart() {
+        ("area", area.area_chart_series_list())
+    } else if let Some(pie) = plot.pie_chart() {
+        ("pie", pie.area_chart_series_list())
+    } else if let Some(doughnut) = plot.doughnut_chart() {
+        ("doughnut", doughnut.area_chart_series_list())
+    } else if let Some(scatter) = plot.scatter_chart() {
+        ("scatter", scatter.area_chart_series_list())
+    } else {
+        return None;
+    };
+    let mut refs = Vec::new();
+    for series in list.area_chart_series() {
+        let formulas = [
+            series.values().map(|v| v.number_reference().formula()),
+            series.x_values().map(|v| v.number_reference().formula()),
+            series.y_values().map(|v| v.number_reference().formula()),
+            series
+                .category_axis_data()
+                .and_then(|c| c.string_reference())
+                .map(|r| r.formula()),
+            series
+                .category_axis_data()
+                .and_then(|c| c.number_reference())
+                .map(|r| r.formula()),
+        ];
+        let name = series
+            .chart_text()
+            .and_then(|t| t.string_reference())
+            .map(|r| r.formula());
+        for formula in formulas.into_iter().chain([name]).flatten() {
+            let owner = formula.address().sheet_name();
+            if !owner.is_empty() && owner != sheet {
+                return None;
+            }
+            refs.push(formula.address().range().range());
+        }
+    }
+    if refs.is_empty() {
+        return None;
+    }
+    let title = space
+        .title()
+        .and_then(|t| t.chart_text())
+        .and_then(|t| t.rich_text())
+        .map(|rich| {
+            rich.paragraph()
+                .iter()
+                .flat_map(|p| p.run().iter().map(|r| r.text().to_string()))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let anchor = chart.two_cell_anchor();
+    Some(ChartInfo {
+        kind: kind.to_string(),
+        title,
+        from: (anchor.from_marker().row(), anchor.from_marker().col()),
+        to: (anchor.to_marker().row(), anchor.to_marker().col()),
+        refs,
+    })
+}
+
+/// The names of the sheets CHART reads cells from.
+fn chart_sheets(chart: &Chart) -> Vec<String> {
+    let mut names = Vec::new();
+    let plot = chart.chart_space().chart().plot_area();
+    let lists = [
+        plot.bar_chart().map(|c| c.area_chart_series_list()),
+        plot.line_chart().map(|c| c.area_chart_series_list()),
+        plot.area_chart().map(|c| c.area_chart_series_list()),
+        plot.pie_chart().map(|c| c.area_chart_series_list()),
+        plot.doughnut_chart().map(|c| c.area_chart_series_list()),
+        plot.scatter_chart().map(|c| c.area_chart_series_list()),
+        plot.radar_chart().map(|c| c.area_chart_series_list()),
+    ];
+    for list in lists.into_iter().flatten() {
+        for series in list.area_chart_series() {
+            let formulas = [
+                series.values().map(|v| v.number_reference().formula()),
+                series.x_values().map(|v| v.number_reference().formula()),
+                series.y_values().map(|v| v.number_reference().formula()),
+                series
+                    .category_axis_data()
+                    .and_then(|c| c.string_reference())
+                    .map(|r| r.formula()),
+            ];
+            for formula in formulas.into_iter().flatten() {
+                let name = formula.address().sheet_name().to_string();
+                if !name.is_empty() && !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Build the chart a G record describes.
+///
+/// FIELDS are: G, the grid-table type, the cells its top left and bottom
+/// right corners sit on, its title, the cells naming the series (items
+/// of a list) and the range of the category labels, then the data ranges as the
+/// chart type takes
+/// them: one per series, or x and y ranges in turn for a scatter chart,
+/// labels and values in turn for a doughnut.
+fn chart(fields: &[&str]) -> Result<Chart> {
+    let kind = fields[1];
+    let chart_type = match kind {
+        "column" | "column-stacked" | "bar" | "bar-stacked" => ChartType::BarChart,
+        "line" => ChartType::LineChart,
+        "area" => ChartType::AreaChart,
+        "pie" => ChartType::PieChart,
+        "doughnut" => ChartType::DoughnutChart,
+        "scatter" => ChartType::ScatterChart,
+        other => return Err(fail(format!("unknown chart type {}", other))),
+    };
+    let mut from = MarkerType::default();
+    from.set_coordinate(fields[2]);
+    let mut to = MarkerType::default();
+    to.set_coordinate(fields[3]);
+    let mut chart = Chart::default();
+    chart.new_chart(&chart_type, from, to, fields[7..].to_vec());
+    let stacked = kind.ends_with("stacked");
+    let plot = chart.plot_area_mut();
+    if let Some(bar) = plot.bar_chart_mut() {
+        bar.bar_direction_mut().set_val(if kind.starts_with("bar") {
+            BarDirectionValues::Bar
+        } else {
+            BarDirectionValues::Column
+        });
+        // The library has no clustered grouping; standard with no
+        // overlap draws the series side by side.
+        bar.grouping_mut().set_val(if stacked {
+            GroupingValues::Stacked
+        } else {
+            GroupingValues::Standard
+        });
+        bar.overlap_mut().set_val(if stacked { 100 } else { 0 });
+    }
+    if let Some(line) = plot.line_chart_mut() {
+        line.grouping_mut().set_val(GroupingValues::Standard);
+        for series in line.area_chart_series_list_mut().area_chart_series_mut() {
+            if let Some(smooth) = series.smooth_mut() {
+                smooth.set_val(false);
+            }
+        }
+    }
+    if let Some(area) = plot.area_chart_mut() {
+        area.grouping_mut().set_val(GroupingValues::Standard);
+    }
+    if let Some(scatter) = plot.scatter_chart_mut() {
+        scatter.scatter_style_mut().set_val(ScatterStyleValues::LineMarker);
+        // Without the element a reader may smooth the lines.
+        for series in scatter.area_chart_series_list_mut().area_chart_series_mut() {
+            let mut smooth = Smooth::default();
+            smooth.set_val(false);
+            series.set_smooth(smooth);
+        }
+    }
+    let items = |field: &str| -> Vec<String> {
+        if field.is_empty() {
+            Vec::new()
+        } else {
+            field.split(ITEM).map(String::from).collect()
+        }
+    };
+    // The series names are read from their cells too.
+    let names = items(fields[5]);
+    if kind != "doughnut" {
+        let list = chart.area_chart_series_list_mut().area_chart_series_mut();
+        for (series, name) in list.iter_mut().zip(names.iter()) {
+            let mut reference = StringReference::default();
+            reference.formula_mut().set_address_str(name);
+            let mut text = ChartText::default();
+            text.set_string_reference(reference);
+            series.set_chart_text(text);
+        }
+    }
+    // The labels are read from their cells, as the values are.
+    if !fields[6].is_empty() && kind != "doughnut" && kind != "scatter" {
+        for series in chart.area_chart_series_list_mut().area_chart_series_mut() {
+            let mut reference = StringReference::default();
+            reference.formula_mut().set_address_str(fields[6]);
+            let mut labels = CategoryAxisData::default();
+            labels.set_string_reference(reference);
+            series.set_category_axis_data(labels);
+        }
+    }
+    if !fields[4].is_empty() {
+        chart.set_title(fields[4]);
+    }
+    Ok(chart)
 }
 
 /// Whether NAME is one the workbook uses for itself, as a print area.
@@ -622,6 +884,23 @@ fn write(path: String, base: Option<String>, sheet: String, payload: String) -> 
             let mut book = reader::xlsx::lazy_read(Path::new(base)).map_err(fail)?;
             if has_sheet(&book, &sheet) {
                 book.read_sheet_by_name(&sheet);
+                // Writing a chart reads the cells it draws, so the sheets
+                // the kept charts read from must be loaded too.
+                let others: Vec<String> = book
+                    .sheet_by_name(&sheet)
+                    .map(|target| {
+                        target
+                            .chart_collection()
+                            .iter()
+                            .flat_map(chart_sheets)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for other in others {
+                    if other != sheet && has_sheet(&book, &other) {
+                        book.read_sheet_by_name(&other);
+                    }
+                }
             }
             book
         }

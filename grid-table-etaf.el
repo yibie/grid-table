@@ -1330,20 +1330,7 @@ TICK, the view's change counter, lets the data be read once per change."
 
 (defun grid-table-etaf--read-chart-data (source chart)
   "Read the data CHART draws from SOURCE."
-  (let* ((range (grid-chart-svg-parse-range (plist-get chart :range)))
-         (rows (grid-get-row-count source))
-         (cols (grid-get-column-count source)))
-    (if (or (null range) (>= (nth 0 range) rows) (>= (nth 1 range) cols))
-        (list :categories nil :series nil)
-      (grid-chart-svg-data
-       (list (nth 0 range) (nth 1 range)
-             (min (nth 2 range) (1- rows)) (min (nth 3 range) (1- cols)))
-       (lambda (row col) (grid-get-computed-value-at source row col))
-       (lambda (row col)
-         (let ((value (grid-get-display-value-at source row col)))
-           (if (stringp value) (substring-no-properties value)
-             (format "%s" (or value "")))))
-       (plist-get chart :by) (plist-get chart :type)))))
+  (grid-table-chart-data source chart))
 
 (defun grid-table-etaf--chart-image (chart data columns lines view)
   "Return the image of CHART with DATA, COLUMNS by LINES, showing VIEW.

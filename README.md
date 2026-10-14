@@ -207,7 +207,7 @@ As in Excel, select a block of data (or put the cursor in it), press `C-c i` and
 | Move to the cursor / resize | `C-c k m` / `C-c k z` |
 | Select next chart / deselect / delete | `C-c k n` / `C-c k x` / `C-c k d` |
 
-Floating charts are not exported to xlsx yet. The chart formulas below still work in cells; insert them with `M-x grid-table-insert-chart`.
+Floating charts travel through xlsx; see Excel workbooks below. The chart formulas below still work in cells; insert them with `M-x grid-table-insert-chart`.
 
 ### Available Chart Functions
 
@@ -392,6 +392,7 @@ What does not travel:
 - Borders, fonts, conditional formats other than comparisons, "contains text", "is blank" and "is an error", validations other than lists, and names that belong to one sheet are left out on import. On export the cells, merges, notes, conditional formats, validations and hidden rows and columns of the sheet are replaced by the grid's, so those of them that were left out are gone; the rest of the sheet stays as it was, and the other sheets are untouched.
 - A formula that uses a function grid-table lacks shows an error value in the grid. It is kept as written and exported unchanged.
 - Written back to the workbook it was opened from, the grid's sheets replace the workbook's: a sheet deleted or renamed in the grid is gone from the file. Written into another workbook, they are added to it and its own sheets stay.
+- Floating charts are exported as the workbook's own charts, their data, labels and series names referring to cells, so they follow edits made in Excel. A workbook's column, bar (stacked or not), line, area, pie, doughnut and scatter charts whose data is all on their sheet come in as floating charts; other charts (radar, 3-D, ones reading another sheet) are not imported and are written back as they were. A chart's size is rounded to whole columns, so it may change a little on its first trip. Exported bar and column charts use the standard grouping rather than Excel's clustered one, which should look the same; scatter charts are written with straight lines between the points; a doughnut is written with its first series.
 - Chart formulas are exported as text.
 
 The file format is handled by a dynamic module written in Rust (`plugins/xlsx/`), so Emacs must be built with module support. `plugins/` holds a prebuilt module for macOS (`grid-table-xlsx-module.dylib`, Apple silicon and Intel), which is loaded as it is. On other platforms, build the module with `M-x grid-table-xlsx-build-module` or `make module`; building needs cargo. A module you build is used in place of the prebuilt one, and `grid-table-xlsx-module-file` names a module kept elsewhere.

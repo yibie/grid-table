@@ -46,6 +46,9 @@ prebuilt grid-table-xlsx-module file next to this plugin."
 (defconst grid-table-xlsx--field (string #x1f)
   "Separator of the fields of a record.")
 
+(defconst grid-table-xlsx--default-width 8.43
+  "Width in characters of a column a workbook has not sized.")
+
 (defconst grid-table-xlsx--number-regexp
   "\\`[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
   "Matches the text of a number.")
@@ -259,6 +262,37 @@ With KEEP, the names FILE has besides are kept; otherwise they go."
                           (grid-table-xlsx--clean (substring (cdr entry) 1))))
                 names grid-table-xlsx--record))))
 
+(defun grid-table-xlsx--chart (source entry)
+  "Return the floating chart of SOURCE that ENTRY, read from a workbook, is.
+ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL RANGES); the chart
+draws the block covering RANGES, its series running the way its first
+range does.  Return nil for an ENTRY that reads no cells."
+  (pcase-let* ((`(,type ,title ,top ,left ,bottom ,right ,ranges) entry)
+               (boxes (delq nil (mapcar #'grid-chart-svg-parse-range ranges)))
+               (widths (grid-get-column-widths source)))
+    (when (and boxes (assq (intern type) grid-chart-svg-types))
+      (let ((first (car boxes))
+            (box (list (apply #'min (mapcar (lambda (b) (nth 0 b)) boxes))
+                       (apply #'min (mapcar (lambda (b) (nth 1 b)) boxes))
+                       (apply #'max (mapcar (lambda (b) (nth 2 b)) boxes))
+                       (apply #'max (mapcar (lambda (b) (nth 3 b)) boxes)))))
+        (list :anchor (cons top left)
+              ;; Columns count their width in characters; a row is a line.
+              :size (cons (max 8 (min 999 (round (cl-loop
+                                                  for col from left below (max right (1+ left))
+                                                  sum (or (and widths (gethash col widths))
+                                                          grid-table-xlsx--default-width)))))
+                          (max 4 (min 999 (- bottom top))))
+              :type (intern type)
+              :range (apply #'grid-chart-svg-range-text box)
+              :by (cond ((and (= (nth 1 first) (nth 3 first))
+                              (< (nth 0 first) (nth 2 first)))
+                         'columns)
+                        ((and (= (nth 0 first) (nth 2 first))
+                              (< (nth 1 first) (nth 3 first)))
+                         'rows))
+              :title (and (not (string-empty-p title)) title))))))
+
 (defun grid-table-xlsx-create-data-source (file &optional sheet)
   "Return a data source holding sheet SHEET of the xlsx FILE.
 SHEET defaults to the first sheet.  The first row of the sheet becomes
@@ -330,6 +364,10 @@ the header row."
                                (plist-get data :hidden-cols))
         (grid-table-set-validations
          source (grid-table-xlsx--validations (plist-get data :validations)))
+        (grid-table-set-charts
+         source (delq nil (mapcar (lambda (entry)
+                                    (grid-table-xlsx--chart source entry))
+                                  (plist-get data :charts))))
         (puthash :xlsx-file file source)
         (puthash :xlsx-sheet sheet source)
         (puthash :xlsx-skipped-conditionals (cdr rules) source)
@@ -387,7 +425,7 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
 
 (defun grid-table-xlsx--clean (text)
   "Return TEXT without the characters that separate records and fields."
-  (replace-regexp-in-string "[\x1e\x1f]" "" text))
+  (replace-regexp-in-string "[\x1d\x1e\x1f]" "" text))
 
 (defun grid-table-xlsx--rgb (color)
   "Return COLOR, a name or #RRGGBB, as RRGGBB, or \"\" when unknown."
@@ -461,8 +499,68 @@ RAW is its raw input and STYLE its style."
       (butlast (grid-table-xlsx--style-fields style) 2))
      grid-table-xlsx--field)))
 
-(defun grid-table-xlsx--payload (source)
-  "Return the records that describe the data source SOURCE."
+(defconst grid-table-xlsx--item (string #x1d)
+  "Separator of the items of a list inside a field.")
+
+(defun grid-table-xlsx--chart-record (source chart sheet)
+  "Return the record for floating CHART of SOURCE, written as sheet SHEET.
+Its data ranges name SHEET, so the workbook's chart reads the cells it
+was drawn from; its size in characters and lines becomes the columns
+and rows it covers."
+  (let* ((data (grid-table-chart-data source chart))
+         (type (plist-get chart :type))
+         (prefix (grid-calc-sheet-prefix sheet))
+         (absolute (lambda (range)
+                     (pcase-let ((`(,top ,left ,bottom ,right) range))
+                       (format "%s$%s$%d:$%s$%d" prefix
+                               (grid-table-xlsx--column-name left) (1+ top)
+                               (grid-table-xlsx--column-name right) (1+ bottom)))))
+         (ranges (plist-get data :ranges))
+         (labels (plist-get data :category-range))
+         (anchor (plist-get chart :anchor))
+         (size (plist-get chart :size))
+         (widths (grid-get-column-widths source))
+         ;; The columns the chart covers, to the nearest whole one, so
+         ;; that reading it back gives the same columns again.
+         (right (let ((col (cdr anchor)) (room (car size)))
+                  (while (let ((width (or (and widths (gethash col widths))
+                                          grid-table-xlsx--default-width)))
+                           (when (> room (/ width 2.0))
+                             (setq room (- room width)
+                                   col (1+ col))))
+                    nil)
+                  (max col (1+ (cdr anchor)))))
+         (refs (pcase type
+                 ;; Pie charts draw the first series alone, as here.
+                 ('pie (list (funcall absolute (car ranges))))
+                 ('doughnut (and labels
+                                 (list (funcall absolute labels)
+                                       (funcall absolute (car ranges)))))
+                 ('scatter (and labels
+                                (cl-loop for range in ranges
+                                         append (list (funcall absolute labels)
+                                                      (funcall absolute range)))))
+                 (_ (mapcar absolute ranges)))))
+    (when refs
+      (mapconcat
+       #'identity
+       (append
+        (list "G" (symbol-name type)
+              (grid-table-xlsx--cell-name (car anchor) (cdr anchor))
+              (grid-table-xlsx--cell-name (+ (car anchor) (cdr size)) right)
+              (grid-table-xlsx--clean (or (plist-get chart :title) ""))
+              (mapconcat absolute (plist-get data :names) grid-table-xlsx--item)
+              ;; The cells holding the category labels; none when the
+              ;; categories are only numbered.
+              (if (and labels (not (memq type '(doughnut scatter))))
+                  (funcall absolute labels)
+                ""))
+        refs)
+       grid-table-xlsx--field))))
+
+(defun grid-table-xlsx--payload (source &optional sheet)
+  "Return the records that describe the data source SOURCE.
+SHEET is the name SOURCE is written as, which its charts' ranges name."
   (let ((rows (grid-get-row-count source))
         (cols (grid-get-column-count source))
         records)
@@ -529,6 +627,10 @@ RAW is its raw input and STYLE its style."
                                           spec)
                                   ",")))))
               records)))
+    (when sheet
+      (dolist (chart (grid-table-charts source))
+        (when-let* ((record (grid-table-xlsx--chart-record source chart sheet)))
+          (push record records))))
     (mapconcat #'identity (nreverse records) grid-table-xlsx--record)))
 
 (defun grid-table-xlsx--sheet-name (name)
@@ -554,7 +656,7 @@ added.  SHEET defaults to the sheet SOURCE came from, else its title."
         (progn
           (grid-table-xlsx-module-write
            temporary (and (file-exists-p file) file) sheet
-           (grid-table-xlsx--payload source))
+           (grid-table-xlsx--payload source sheet))
           ;; Names, written for the sheet as the workbook calls it, join
           ;; the ones the file has.
           (when-let* ((workbook (grid-workbook-of source))
@@ -598,7 +700,7 @@ and no others."
             (let ((target (car spare)))
               (grid-table-xlsx-module-write
                target written (grid-workbook-sheet-name sheet)
-               (grid-table-xlsx--payload sheet))
+               (grid-table-xlsx--payload sheet (grid-workbook-sheet-name sheet)))
               (setq written target
                     spare (reverse spare))))
           (when own

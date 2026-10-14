@@ -17,6 +17,7 @@
 (require 'grid-table-persistence)
 (require 'grid-table-text)
 (require 'grid-table-chart)
+(require 'grid-table-chart-svg)
 (require 'grid-table-plugins)
 
 ;; Public version identifier.
@@ -237,6 +238,25 @@ Return nil when SOURCE keeps no charts."
   (when-let* ((function (gethash :set-charts source)))
     (funcall function source charts)
     t))
+
+(defun grid-table-chart-data (source chart)
+  "Return the data floating CHART reads from SOURCE.
+It is what `grid-chart-svg-data' returns, for the part of the chart's
+range inside the sheet."
+  (let* ((range (grid-chart-svg-parse-range (plist-get chart :range)))
+         (rows (grid-get-row-count source))
+         (cols (grid-get-column-count source)))
+    (if (or (null range) (>= (nth 0 range) rows) (>= (nth 1 range) cols))
+        (list :categories nil :series nil)
+      (grid-chart-svg-data
+       (list (nth 0 range) (nth 1 range)
+             (min (nth 2 range) (1- rows)) (min (nth 3 range) (1- cols)))
+       (lambda (row col) (grid-get-computed-value-at source row col))
+       (lambda (row col)
+         (let ((value (grid-get-display-value-at source row col)))
+           (if (stringp value) (substring-no-properties value)
+             (format "%s" (or value "")))))
+       (plist-get chart :by) (plist-get chart :type)))))
 
 (defun grid-table-validations (source)
   "Return SOURCE's validation rules, (TOP LEFT BOTTOM RIGHT KIND SPEC) each."

@@ -85,8 +85,12 @@ value; LABEL-FN returns the text it shows.  BY is `columns', `rows' or
 nil to choose.  TYPE `scatter' takes the first column, or row, as the
 x values whatever it holds.
 
-Return (:categories LABELS :series ((NAME . VALUES) ...) :by BY), where
-VALUES holds a number or nil for each category."
+Return (:categories LABELS :series ((NAME . VALUES) ...) :by BY
+:ranges RANGES :category-range RANGE :names CELLS), where VALUES holds
+a number or nil for each category, RANGES the cells each series reads,
+RANGE the cells holding the labels, nil when they are numbered, and
+CELLS the cell naming each series, nil when they are numbered; ranges
+and cells are (TOP LEFT BOTTOM RIGHT)."
   (pcase-let* ((`(,top ,left ,bottom ,right) range)
                (rows (1+ (- bottom top)))
                (cols (1+ (- right left)))
@@ -115,6 +119,11 @@ VALUES holds a number or nil for each category."
                (by (or by (if (>= (- rows h) (- cols k)) 'columns 'rows))))
     (if (eq by 'columns)
         (list :by 'columns
+              :ranges (cl-loop for c from k below cols
+                               collect (list (+ top h) (+ left c) bottom (+ left c)))
+              :category-range (and side (list (+ top h) left bottom left))
+              :names (and header (cl-loop for c from k below cols
+                                          collect (list top (+ left c) top (+ left c))))
               :categories (cl-loop for r from h below rows
                                    collect (if side (funcall label r 0)
                                              (number-to-string (1+ (- r h)))))
@@ -125,6 +134,11 @@ VALUES holds a number or nil for each category."
                                                       collect (grid-chart-svg--number
                                                                (funcall value r c))))))
       (list :by 'rows
+            :ranges (cl-loop for r from h below rows
+                             collect (list (+ top r) (+ left k) (+ top r) right))
+            :category-range (and header (list top (+ left k) top right))
+            :names (and side (cl-loop for r from h below rows
+                                      collect (list (+ top r) left (+ top r) left)))
             :categories (cl-loop for c from k below cols
                                  collect (if header (funcall label 0 c)
                                            (number-to-string (1+ (- c k)))))
