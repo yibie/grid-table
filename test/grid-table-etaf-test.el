@@ -443,6 +443,8 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 
 (ert-deftest grid-table-etaf-undo-and-redo-restore-cells ()
   (grid-table-etaf-test--with-grid (6 5)
+    ;; Typing starts an edit here, as in Excel.
+    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (grid-table-etaf-goto 2 1)
     (execute-kbd-macro (kbd "9 9 RET"))
@@ -786,6 +788,8 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 
 (ert-deftest grid-table-etaf-typed-dates-and-number-formats ()
   (grid-table-etaf-test--with-grid (6 5)
+    ;; Typing starts an edit here, as in Excel.
+    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (let ((state grid-table-etaf--state))
       ;; A typed date is stored as a number and shown as typed.
@@ -1106,6 +1110,8 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 
 (ert-deftest grid-table-etaf-typing-replaces-the-cell-and-return-moves-down ()
   (grid-table-etaf-test--with-grid (6 5)
+    ;; Typing starts an edit here, as in Excel.
+    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (grid-table-etaf-goto 1 1)
     (execute-kbd-macro (kbd "4 2 RET"))
@@ -1125,7 +1131,15 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     ;; F2 keeps the existing text.
     (grid-table-etaf-goto 1 1)
     (execute-kbd-macro (kbd "<f2> 0 RET"))
-    (should (equal (grid-get-raw-value-at source 1 1) "420"))))
+    (should (equal (grid-get-raw-value-at source 1 1) "420"))
+    ;; By default a typed key changes nothing; RET starts the edit.
+    (setq-local grid-table-etaf-type-to-edit nil)
+    (grid-table-etaf-goto 1 1)
+    (execute-kbd-macro (kbd "7"))
+    (should (equal (grid-get-raw-value-at source 1 1) "420"))
+    (should-not (grid-table-etaf--state-session grid-table-etaf--state))
+    (execute-kbd-macro (kbd "RET 7 RET"))
+    (should (equal (grid-get-raw-value-at source 1 1) "4207"))))
 
 (ert-deftest grid-table-etaf-empty-cell-can-be-edited ()
   (grid-table-etaf-test--with-grid (6 5)
@@ -1389,6 +1403,8 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 
 (ert-deftest grid-table-etaf-validation-lists ()
   (grid-table-etaf-test--with-grid (8 4 100 12)
+    ;; Typing starts an edit here, as in Excel.
+    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (grid-table-etaf-goto 1 0)
     (grid-table-etaf-goto 3 0 t)
@@ -1499,6 +1515,16 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (let ((chart (car (grid-table-charts source))))
         (should (equal (plist-get chart :anchor) '(2 . 3)))
         (should (equal (plist-get chart :range) "B3:C7")))
+      ;; A pointer drag redraws the grid as it goes, so each move may
+      ;; reach a handler made after the drag started.
+      (funcall (grid-table-etaf--drag-chart (current-buffer) 0) '(:phase start))
+      (grid-table-etaf--bump grid-table-etaf--state)
+      (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
+               '(:phase move :delta (0 . 2)))
+      (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
+               '(:phase end :delta (0 . 2)))
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(4 . 3)))
+      (grid-table-etaf-undo)
       ;; A drag moves the chart by whole cells, as one undo step.
       (etaf-drag-step (grid-table-etaf--runtime) 'grid-table-etaf-chart-0 0 3)
       (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(5 . 3)))

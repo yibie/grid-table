@@ -765,8 +765,8 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c k x" grid-table-etaf-chart-deselect "Deselect chart")
     ("C-c k d" grid-table-etaf-chart-delete "Delete chart"))
   "Key bindings of the sheet, as ETAF `:keys' entries.
-Printing keys are not commands: they start editing the cursor cell, see
-`grid-table-etaf-typing-map'.")
+Printing keys are not commands: see `grid-table-etaf-typing-map' and
+`grid-table-etaf-type-to-edit'.")
 
 (defvar grid-table-etaf-traverse-map
   (let ((map (make-sparse-keymap)))
@@ -793,8 +793,9 @@ installed ahead of ETAF's own in `emulation-mode-map-alists'.")
              (define-key map (vector char) #'grid-table-etaf-self-insert))
     (define-key map [remap self-insert-command] #'grid-table-etaf-self-insert)
     map)
-  "Keymap making printing keys start an edit of the cursor cell.
-It is active while no cell is being edited.")
+  "Keymap catching printing keys while no cell is being edited.
+They start an edit of the cursor cell when `grid-table-etaf-type-to-edit'
+is on, and change nothing otherwise.")
 
 (defvar-local grid-table-etaf--typing-keys nil
   "Non-nil while `grid-table-etaf-typing-map' is active in the buffer.")
@@ -1508,46 +1509,50 @@ ROWS and COLS are the model rows and columns shown."
     (grid-table-etaf--record state (list 'charts old (copy-tree charts)))
     (grid-table-etaf--bump state)))
 
+(defvar-local grid-table-etaf--chart-drag nil
+  "The charts as they were when a chart drag started, or nil.
+It lives in the buffer, not in the handler: the grid redraws while the
+chart moves, and each redraw makes a new handler.")
+
 (defun grid-table-etaf--drag-chart (buffer index)
   "Return the pointer handler moving floating chart INDEX of BUFFER."
-  (let (start)
-    (lambda (gesture)
-      (when (buffer-live-p buffer)
-        (with-current-buffer buffer
-          (let* ((state grid-table-etaf--state)
-                 (source (grid-table-etaf--source state))
-                 (charts (grid-table-charts source)))
-            (pcase (plist-get gesture :phase)
-              ('start
-               (setq start (copy-tree charts))
-               (setq grid-table-etaf--chart index))
-              ((or 'move 'end)
-               (when start
-                 (let* ((delta (plist-get gesture :delta))
-                        (chart (copy-sequence (nth index start)))
-                        (anchor (plist-get chart :anchor)))
-                   (setq chart
-                         (plist-put chart :anchor
-                                    (cons (grid-table-etaf--walk-rows
-                                           state (car anchor)
-                                           (/ (cdr delta)
-                                              (float (grid-table-etaf--line-pixels))))
-                                          (grid-table-etaf--walk-cols
-                                           state (cdr anchor) (car delta)))))
-                   (let ((new (copy-tree start)))
-                     (setf (nth index new) chart)
-                     (grid-table-set-charts source new)
-                     (when (eq (plist-get gesture :phase) 'end)
-                       (unless (equal new start)
-                         (grid-table-etaf--record state (list 'charts start new)))
-                       (setq start nil)))
-                   (grid-table-etaf--bump state))))
-              ('cancel
-               (when start
-                 (grid-table-set-charts source start)
-                 (setq start nil)
-                 (grid-table-etaf--bump state))))))))))
-
+  (lambda (gesture)
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (let* ((state grid-table-etaf--state)
+               (source (grid-table-etaf--source state))
+               (start grid-table-etaf--chart-drag))
+          (pcase (plist-get gesture :phase)
+            ('start
+             (setq grid-table-etaf--chart-drag
+                   (copy-tree (grid-table-charts source)))
+             (setq grid-table-etaf--chart index))
+            ((or 'move 'end)
+             (when start
+               (let* ((delta (plist-get gesture :delta))
+                      (chart (copy-sequence (nth index start)))
+                      (anchor (plist-get chart :anchor)))
+                 (setq chart
+                       (plist-put chart :anchor
+                                  (cons (grid-table-etaf--walk-rows
+                                         state (car anchor)
+                                         (/ (cdr delta)
+                                            (float (grid-table-etaf--line-pixels))))
+                                        (grid-table-etaf--walk-cols
+                                         state (cdr anchor) (car delta)))))
+                 (let ((new (copy-tree start)))
+                   (setf (nth index new) chart)
+                   (grid-table-set-charts source new)
+                   (when (eq (plist-get gesture :phase) 'end)
+                     (unless (equal new start)
+                       (grid-table-etaf--record state (list 'charts start new)))
+                     (setq grid-table-etaf--chart-drag nil)))
+                 (grid-table-etaf--bump state))))
+            ('cancel
+             (when start
+               (grid-table-set-charts source start)
+               (setq grid-table-etaf--chart-drag nil)
+               (grid-table-etaf--bump state)))))))))
 (defun grid-table-etaf--walk-rows (state row lines)
   "Return the shown row LINES lines below model ROW of STATE; negative goes up."
   (let* ((position (grid-table-etaf--row-position state row))
@@ -2328,12 +2333,24 @@ The choice is read in the minibuffer; an empty one clears the cell."
     (grid-table-etaf--enter-cells
      state (list (list (car cursor) (cdr cursor) choice)))))
 
+(defcustom grid-table-etaf-type-to-edit nil
+  "Non-nil makes typing a character replace the cursor cell, as in Excel.
+nil leaves the cell alone until RET or F2 starts an edit, so a stray key
+changes nothing."
+  :type 'boolean
+  :group 'grid-table)
+
 (defun grid-table-etaf-self-insert ()
-  "Start editing the cursor cell with the typed character as its text."
+  "Handle a printing key typed while no cell is being edited.
+With `grid-table-etaf-type-to-edit' it starts editing the cursor cell
+with the typed character as its text; otherwise it only says how to
+edit."
   (interactive)
-  (if (characterp last-command-event)
-      (grid-table-etaf-edit-cell (string last-command-event))
-    (grid-table-etaf-edit-cell)))
+  (cond ((not grid-table-etaf-type-to-edit)
+         (message "Press RET or F2 to edit this cell"))
+        ((characterp last-command-event)
+         (grid-table-etaf-edit-cell (string last-command-event)))
+        (t (grid-table-etaf-edit-cell))))
 
 (defun grid-table-etaf-clear-cells ()
   "Empty every cell of the selected range."
