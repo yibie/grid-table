@@ -188,6 +188,27 @@ _This feature is turned off by default._ For more detailed guidance, please refe
 
 grid-table provides built-in chart functions that render ASCII/Unicode charts directly in cells. Charts use high-resolution Braille canvas for beautiful terminal-based visualizations.
 
+### Floating charts
+
+As in Excel, select a block of data (or put the cursor in it), press `C-c i` and pick a type: the chart floats right of the data and redraws whenever the cells change.
+
+- **Types**: column, stacked column, bar, stacked bar, line, area, pie, doughnut, scatter.
+- **Reading the data**: a first row of text names the series and a first column of text names the categories; the series run down the columns when the data is taller than wide, along the rows otherwise. `C-c k s` switches.
+- **Following the sheet**: inserting or deleting lines moves a chart and its data range with the cells; a sort leaves charts in place. Charts are saved in the `.grid` file and every change undoes.
+- **Scrolling**: a chart scrolls with its anchor cell and shows whatever part of it is still in the window; one anchored in frozen rows or columns stays put along that axis.
+- **Selecting**: click a chart to select it (blue frame) and drag it to move it. With none selected, chart commands act on the only chart or ask which.
+- **Terminal**: where images cannot be shown, a chart is a text sketch (title and bars of the first series).
+
+| Action | Keys |
+|---|---|
+| Insert chart | `C-c i` |
+| Type / switch rows and columns / title | `C-c k t` / `C-c k s` / `C-c k h` |
+| Draw the selected cells instead | `C-c k r` |
+| Move to the cursor / resize | `C-c k m` / `C-c k z` |
+| Select next chart / deselect / delete | `C-c k n` / `C-c k x` / `C-c k d` |
+
+Floating charts are not exported to xlsx yet. The chart formulas below still work in cells; insert them with `M-x grid-table-insert-chart`.
+
 ### Available Chart Functions
 
 | 📊 Chart Type | 📝 Function  | 💡 Description                   |

@@ -65,6 +65,8 @@ CONDITIONALS a list of conditional format rules."
           ;; Hidden rows and columns: (ROWS . COLS), sorted lists
           (cons nil nil)
           ;; Validation rules: (TOP LEFT BOTTOM RIGHT KIND SPEC)
+          nil
+          ;; Floating charts, plists; see grid-table-chart-svg.el
           nil))
 
 (defun grid-data-model-rows (model) (aref model 0))
@@ -290,6 +292,62 @@ SHEET, follows them too.  Sorting leaves the ranges in place."
                           rule))
                       (grid-model--shift-rules rules axis at delta))))
       (grid-model-set-validations new rules)))
+  new)
+
+;;;----------------------------------------------------------------------
+;;; Floating charts
+;;;----------------------------------------------------------------------
+
+(defun grid-data-model-charts (model)
+  "Return MODEL's floating charts, a list of chart plists.
+Each holds :anchor (ROW . COL), :size (COLUMNS . LINES), :type, :range
+\(text such as A1:D7), :by and :title."
+  (and (> (length model) 10) (aref model 10)))
+
+(defun grid-model-set-charts (model charts)
+  "Replace MODEL's floating charts with CHARTS and return them."
+  (when (> (length model) 10)
+    (aset model 10 (copy-tree charts)))
+  charts)
+
+(defun grid-model--shift-anchor (index at delta)
+  "Return line INDEX after the line AT was inserted (DELTA 1) or deleted.
+For a deletion AT may be a list of the lines deleted together.  A chart
+whose own line is deleted stays where the line was."
+  (if (> delta 0)
+      (if (<= at index) (1+ index) index)
+    (- index (cl-count-if (lambda (line) (< line index))
+                          (if (listp at) at (list at))))))
+
+(defun grid-model-carry-charts (old new &optional axis at delta sheet)
+  "Give model NEW the floating charts of model OLD and return NEW.
+AXIS, AT and DELTA are as for `grid-model-carry-frozen': a chart's
+anchor moves with its line and its range with the cells it reads in the
+sheet named SHEET.  A sort leaves the charts in place."
+  (unless (eq old new)
+    (grid-model-set-charts
+     new
+     (mapcar
+      (lambda (chart)
+        (let* ((chart (copy-sequence chart))
+               (anchor (plist-get chart :anchor))
+               (rows (grid-data-model-rows new))
+               (cols (grid-data-model-cols new)))
+          (when axis
+            (setq anchor
+                  (if (eq axis 'row)
+                      (cons (grid-model--shift-anchor (car anchor) at delta)
+                            (cdr anchor))
+                    (cons (car anchor)
+                          (grid-model--shift-anchor (cdr anchor) at delta))))
+            (let ((range (grid-calc-restructure-formula
+                          (concat "=" (plist-get chart :range))
+                          axis at delta sheet sheet)))
+              (setq chart (plist-put chart :range (substring range 1)))))
+          (plist-put chart :anchor
+                     (cons (max 0 (min (car anchor) (1- rows)))
+                           (max 0 (min (cdr anchor) (1- cols)))))))
+      (grid-data-model-charts old))))
   new)
 
 (defun grid-model-set-hidden (model rows cols)

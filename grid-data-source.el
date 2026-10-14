@@ -74,6 +74,12 @@ TITLE is an optional string for the grid title."
              (lambda (s rows cols)
                (grid-model-set-hidden (gethash :model s) rows cols))
              source)
+    (puthash :get-charts
+             (lambda (s) (grid-data-model-charts (gethash :model s)))
+             source)
+    (puthash :set-charts
+             (lambda (s charts) (grid-model-set-charts (gethash :model s) charts))
+             source)
     (puthash :get-validations
              (lambda (s)
                (grid-data-model-validations (gethash :model s)))
@@ -560,16 +566,21 @@ change rewrote in other sheets go back with it."
                   (grid-model-carry-frozen old-model model 'col at delta)
                   (grid-model-carry-hidden old-model model 'col at delta)
                   (grid-model-carry-validations
+                   old-model model 'col at delta (grid-workbook-sheet-name s))
+                  (grid-model-carry-charts
                    old-model model 'col at delta (grid-workbook-sheet-name s)))
                  (`(row ,at ,delta)
                   (grid-model-carry-widths old-model model)
                   (grid-model-carry-frozen old-model model 'row at delta)
                   (grid-model-carry-hidden old-model model 'row at delta)
                   (grid-model-carry-validations
+                   old-model model 'row at delta (grid-workbook-sheet-name s))
+                  (grid-model-carry-charts
                    old-model model 'row at delta (grid-workbook-sheet-name s)))
                  (_ (grid-model-carry-widths old-model model)
                     (grid-model-carry-frozen old-model model)
                     (grid-model-carry-validations old-model model)
+                    (grid-model-carry-charts old-model model)
                     ;; A sort moved the hidden rows along itself.
                     (unless (eq key :sort-by-column)
                       (grid-model-carry-hidden old-model model)))))))))

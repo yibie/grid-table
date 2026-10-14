@@ -1294,6 +1294,82 @@
                            (grid-table-hidden source)))))
       (delete-file file))))
 
+(ert-deftest grid-table-chart-data-reads-a-range-like-a-spreadsheet ()
+  "A first row and column of text name the series and the categories."
+  (let* ((cells [["" "Q1" "Q2" "Q3"] ["North" 1 2 3] ["South" 4 5 6]])
+         (value (lambda (r c) (aref (aref cells r) c)))
+         (label (lambda (r c) (format "%s" (aref (aref cells r) c)))))
+    ;; Wider than tall: the series run along the rows.
+    (should (equal (grid-chart-svg-data '(0 0 2 3) value label)
+                   '(:by rows :categories ("Q1" "Q2" "Q3")
+                         :series (("North" 1 2 3) ("South" 4 5 6)))))
+    ;; Switched, the columns are the series.
+    (should (equal (grid-chart-svg-data '(0 0 2 3) value label 'columns)
+                   '(:by columns :categories ("North" "South")
+                         :series (("Q1" 1 4) ("Q2" 2 5) ("Q3" 3 6)))))
+    ;; Numbers alone give numbered categories and series.
+    (should (equal (grid-chart-svg-data '(1 1 2 2) value label)
+                   '(:by columns :categories ("1" "2")
+                         :series (("Series 1" 1 4) ("Series 2" 2 5)))))
+    (should (equal (grid-chart-svg-parse-range "$B$2:A1") '(0 0 1 1)))
+    (should-not (grid-chart-svg-parse-range "Sheet2!A1:B2"))
+    ;; Every type draws, and a view shows only part of the drawing.
+    (dolist (type (mapcar #'car grid-chart-svg-types))
+      (should (string-prefix-p
+               "<svg" (grid-chart-svg-render
+                       (list :type type :title "T")
+                       (grid-chart-svg-data '(0 0 2 3) value label) 400 300))))
+    (should (string-match-p
+             "viewBox=\"10 20 100 50\""
+             (grid-chart-svg-render '(:type column) '(:series nil) 400 300
+                                    nil nil '(10 20 100 50))))))
+
+(ert-deftest grid-table-charts-follow-their-cells ()
+  "A chart's anchor and range move with the lines and stay in the file."
+  (let* ((source (make-default-data-source
+                  '("K" "V" "W")
+                  '(("K" "V" "W") ("a" "1" "2") ("b" "3" "4") ("c" "5" "6"))))
+         (file (make-temp-file "grid-chart" nil ".grid"))
+         (chart (lambda () (car (grid-table-charts source)))))
+    (unwind-protect
+        (progn
+          (grid-table-set-charts
+           source (list (list :anchor '(1 . 2) :size '(30 . 10) :type 'column
+                              :range "A1:C4" :by nil :title "T")))
+          ;; A row added above the anchor pushes it and the range down.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 2)))
+          (should (equal (plist-get (funcall chart) :range) "A1:C5"))
+          (funcall (gethash :add-column source) source 0)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
+          (should (equal (plist-get (funcall chart) :range) "B1:D5"))
+          ;; Deleting the anchor's row leaves the chart where it was.
+          (funcall (gethash :delete-row source) source 1)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
+          (should (equal (plist-get (funcall chart) :range) "B1:D4"))
+          ;; A sort leaves charts in place.
+          (funcall (gethash :sort-by-column source) source 1 'descending)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
+          (grid-table-persistence--save-to-file source file)
+          (should (equal (grid-table-charts
+                          (grid-table-persistence-create-data-source-from-file
+                           file))
+                         (grid-table-charts source)))
+          ;; A malformed chart in a file is left out.
+          (with-temp-file file
+            (prin1 '(grid-table-file :version 4 :headers ("A") :rows (("1"))
+                                     :charts ((:anchor (0 . 0) :size (9 . 9)
+                                               :type nonsense :range "A1")
+                                              (:anchor (0 . 0) :size (9 . 9)
+                                               :type pie :range "A1")))
+                   (current-buffer)))
+          (should (equal (mapcar (lambda (c) (plist-get c :type))
+                                 (grid-table-charts
+                                  (grid-table-persistence-create-data-source-from-file
+                                   file)))
+                         '(pie))))
+      (delete-file file))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

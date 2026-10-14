@@ -22,6 +22,7 @@
 (require 'color)
 (require 'etaf)
 (require 'grid-table)
+(require 'grid-table-chart-svg)
 
 (defface grid-table-etaf-header-face
   '((t :inherit mode-line-inactive))
@@ -753,7 +754,16 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c m" grid-table-etaf-merge "Merge")
     ("C-c u" grid-table-unmerge-cell "Unmerge")
     ("C-c v" grid-table-view-chart "View chart")
-    ("C-c i" grid-table-insert-chart "Insert chart"))
+    ("C-c i" grid-table-etaf-insert-chart "Insert chart")
+    ("C-c k t" grid-table-etaf-chart-type "Chart type")
+    ("C-c k s" grid-table-etaf-chart-switch "Switch chart rows and columns")
+    ("C-c k h" grid-table-etaf-chart-title "Chart title")
+    ("C-c k r" grid-table-etaf-chart-range "Chart data range")
+    ("C-c k m" grid-table-etaf-chart-move-here "Move chart to cursor")
+    ("C-c k z" grid-table-etaf-chart-resize "Chart size")
+    ("C-c k n" grid-table-etaf-chart-next "Select next chart")
+    ("C-c k x" grid-table-etaf-chart-deselect "Deselect chart")
+    ("C-c k d" grid-table-etaf-chart-delete "Delete chart"))
   "Key bindings of the sheet, as ETAF `:keys' entries.
 Printing keys are not commands: they start editing the cursor cell, see
 `grid-table-etaf-typing-map'.")
@@ -1007,6 +1017,11 @@ line border."
   "Return the status bar text for SOURCE as STATE shows it.
 RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell.
 Rows hidden by a filter are left out of the figures."
+  (if-let* ((chart (grid-table-etaf--selected-chart source)))
+      (format "Chart: %s (%s, %s)   C-c k t type, s switch rows/columns, h title, d delete"
+              (or (plist-get chart :title) "untitled")
+              (cdr (assq (plist-get chart :type) grid-chart-svg-types))
+              (plist-get chart :range))
   (if (null range)
       (let* ((cursor (etaf-value (grid-table-etaf--state-cursor state)))
              (style (grid-get-style-at source (car cursor) (cdr cursor)))
@@ -1036,7 +1051,7 @@ Rows hidden by a filter are left out of the figures."
         (format "Count: %d   Sum: %s   Average: %s"
                 count
                 (grid-table-etaf--format-number sum)
-                (grid-table-etaf--format-number (/ (float sum) numbers)))))))
+                (grid-table-etaf--format-number (/ (float sum) numbers))))))))
 
 (defun grid-table-etaf--tab-node (buffer sheet current line)
   "Return the tab of SHEET for the sheet bar of BUFFER.
@@ -1233,27 +1248,473 @@ LINE, the grid line border."
            :on-direction (grid-table-etaf--direction buffer)
            :keys grid-table-etaf--keys)
      (delq nil
-           (list
-            (grid-table-etaf--title-node state)
-            (grid-table-etaf--formula-bar-node
-             source cursor-row cursor-col
-             (and ranged (list sel-top sel-left sel-bottom sel-right))
-             line)
-            (etaf-node
-             'grid
-             (list :key 'sheet
-                   :grid-template-columns
-                   (cons (list 'ch (+ 2 (grid-table-etaf--row-header-width
-                                         source)))
-                         (mapcar (lambda (col)
-                                   `(calc (+ (ch ,(+ 2 (aref widths col)))
-                                             (px 1))))
-                                 cols)))
-             (nreverse children))
-            (grid-table-etaf--status-node
-             state source
-             (and ranged (list sel-top sel-left sel-bottom sel-right))
-             line))))))
+           (append
+            (list
+             (grid-table-etaf--title-node state)
+             (grid-table-etaf--formula-bar-node
+              source cursor-row cursor-col
+              (and ranged (list sel-top sel-left sel-bottom sel-right))
+              line)
+             (etaf-node
+              'grid
+              (list :key 'sheet
+                    :grid-template-columns
+                    (cons (list 'ch (+ 2 (grid-table-etaf--row-header-width
+                                          source)))
+                          (mapcar (lambda (col)
+                                    `(calc (+ (ch ,(+ 2 (aref widths col)))
+                                              (px 1))))
+                                  cols)))
+              (nreverse children)))
+            ;; Floating charts sit over the grid.
+            (grid-table-etaf--chart-nodes state source rows cols)
+            (list
+             (grid-table-etaf--status-node
+              state source
+              (and ranged (list sel-top sel-left sel-bottom sel-right))
+              line)))))))
+
+;;;----------------------------------------------------------------------
+;;; Floating charts
+;;;----------------------------------------------------------------------
+
+(defvar-local grid-table-etaf--chart nil
+  "Index of the selected floating chart of the sheet shown, or nil.")
+
+(defcustom grid-table-etaf-chart-size '(56 . 16)
+  "Size of a new floating chart, as (CHARACTERS . LINES)."
+  :type '(cons natnum natnum)
+  :group 'grid-table)
+
+(defvar grid-table-etaf--chart-images (make-hash-table :test #'equal)
+  "Images of floating charts, keyed by everything their drawing depends on.")
+
+(defun grid-table-etaf--selected-chart (source)
+  "Return the selected floating chart of SOURCE, or nil."
+  (and grid-table-etaf--chart
+       (nth grid-table-etaf--chart (grid-table-charts source))))
+
+(defun grid-table-etaf--chart-colors ()
+  "Return (FOREGROUND . BACKGROUND) for drawing charts, or nils."
+  (cl-flet ((color (attribute)
+              (let ((color (grid-table-etaf--face-color 'default attribute)))
+                (and color (not (string-prefix-p "unspecified" color))
+                     (color-defined-p color)
+                     (apply #'format "#%02x%02x%02x"
+                            (mapcar (lambda (c) (/ c 256))
+                                    (color-values color)))))))
+    (cons (color :foreground) (color :background))))
+
+(defun grid-table-etaf--line-pixels ()
+  "Return the pixel height of one line."
+  (max 1 (or (and (display-graphic-p) (default-line-height)) 1)))
+
+(defun grid-table-etaf--chart-data (source chart)
+  "Return the data CHART reads from SOURCE, as `grid-chart-svg-data' does."
+  (let* ((range (grid-chart-svg-parse-range (plist-get chart :range)))
+         (rows (grid-get-row-count source))
+         (cols (grid-get-column-count source)))
+    (if (or (null range) (>= (nth 0 range) rows) (>= (nth 1 range) cols))
+        (list :categories nil :series nil)
+      (grid-chart-svg-data
+       (list (nth 0 range) (nth 1 range)
+             (min (nth 2 range) (1- rows)) (min (nth 3 range) (1- cols)))
+       (lambda (row col) (grid-get-computed-value-at source row col))
+       (lambda (row col)
+         (let ((value (grid-get-display-value-at source row col)))
+           (if (stringp value) (substring-no-properties value)
+             (format "%s" (or value "")))))
+       (plist-get chart :by) (plist-get chart :type)))))
+
+(defun grid-table-etaf--chart-image (chart data columns lines view)
+  "Return the image of CHART with DATA, COLUMNS by LINES, showing VIEW.
+VIEW is (LEFT TOP SHOWN-COLUMNS SHOWN-LINES) in characters and lines."
+  (let* ((cw 8) (lh 18)
+         (colors (grid-table-etaf--chart-colors))
+         (key (list chart data columns lines view colors)))
+    (or (gethash key grid-table-etaf--chart-images)
+        (progn
+          (when (> (hash-table-count grid-table-etaf--chart-images) 200)
+            (clrhash grid-table-etaf--chart-images))
+          (puthash key
+                   (list 'image :type 'svg
+                         :data (grid-chart-svg-render
+                                chart data (* cw columns) (* lh lines)
+                                (car colors) (cdr colors)
+                                (list (* cw (nth 0 view)) (* lh (nth 1 view))
+                                      (* cw (nth 2 view)) (* lh (nth 3 view)))))
+                   grid-table-etaf--chart-images)))))
+
+(defun grid-table-etaf--col-pixels (state col)
+  "Return the pixel width column COL takes in STATE's grid."
+  (1+ (* (grid-table-etaf--char-width)
+         (+ 2 (aref (grid-table-etaf--state-widths state) col)))))
+
+(defun grid-table-etaf--span (state from to axis cols merges)
+  "Return how far shown line FROM is from shown line TO along AXIS of STATE.
+AXIS `row' counts lines over row positions, `col' pixels over columns.
+The result is negative when TO comes before FROM.  COLS and MERGES are
+what row heights are measured over."
+  (let ((sign (if (< to from) -1 1))
+        (low (min from to)) (high (max from to))
+        (total 0))
+    (if (eq axis 'row)
+        (cl-loop for position from low below high do
+                 (cl-incf total (grid-table-etaf--row-lines
+                                 state (grid-table-etaf--row-at state position)
+                                 cols merges)))
+      (cl-loop for col from low below high
+               when (grid-table-etaf--col-shown-p state col) do
+               (cl-incf total (grid-table-etaf--col-pixels state col))))
+    (* sign total)))
+
+(defun grid-table-etaf--chart-place (state source chart rows cols)
+  "Return where CHART shows in STATE's window, or nil when it does not.
+ROWS and COLS are the model rows and columns shown.  The result is
+\(LEFT-PIXELS TOP-LINE COLUMNS LINES CUT-COLUMNS CUT-LINES): the part of
+the chart shown, and how much of it is cut off at the left and top."
+  (let* ((merges (grid-get-merges source))
+         (frozen (grid-table-frozen source))
+         (char (grid-table-etaf--char-width))
+         (size (plist-get chart :size))
+         (anchor (plist-get chart :anchor))
+         (row (car anchor)) (col (cdr anchor))
+         ;; Lines and pixels where the cells of the grid begin
+         (y0 (+ 2 (grid-table-etaf--title-lines state)))
+         (x0 (* char (+ 2 (grid-table-etaf--row-header-width source))))
+         (frozen-rows (cl-remove-if-not (lambda (r) (< r (car frozen))) rows))
+         (scrolled-rows (cl-remove-if (lambda (r) (< r (car frozen))) rows))
+         (frozen-cols (cl-remove-if-not (lambda (c) (< c (cdr frozen))) cols))
+         (scrolled-cols (cl-remove-if (lambda (c) (< c (cdr frozen))) cols))
+         (sy0 (+ y0 (cl-loop for r in frozen-rows
+                             sum (grid-table-etaf--row-lines state r cols merges))))
+         (sy1 (+ sy0 (cl-loop for r in scrolled-rows
+                              sum (grid-table-etaf--row-lines state r cols merges))))
+         (sx0 (+ x0 (cl-loop for c in frozen-cols
+                             sum (grid-table-etaf--col-pixels state c))))
+         ;; A chart may run past the last column, to the window's edge.
+         (sx1 (max (+ sx0 (cl-loop for c in scrolled-cols
+                                   sum (grid-table-etaf--col-pixels state c)))
+                   (car (grid-table-etaf--viewport state))))
+         ;; A chart anchored in the frozen rows or columns stays put along
+         ;; that axis; any other scrolls with the cells.
+         (y (if (< row (car frozen))
+                (+ y0 (cl-loop for r in frozen-rows while (< r row)
+                               sum (grid-table-etaf--row-lines state r cols merges)))
+              (and scrolled-rows
+                   (+ sy0 (grid-table-etaf--span
+                           state (grid-table-etaf--row-position state (car scrolled-rows))
+                           (grid-table-etaf--row-position state row)
+                           'row cols merges)))))
+         (x (if (< col (cdr frozen))
+                (+ x0 (cl-loop for c in frozen-cols while (< c col)
+                               sum (grid-table-etaf--col-pixels state c)))
+              (and scrolled-cols
+                   (+ sx0 (grid-table-etaf--span
+                           state (car scrolled-cols) col 'col nil nil)))))
+         (clip-top (if (< row (car frozen)) y0 sy0))
+         (clip-left (if (< col (cdr frozen)) x0 sx0)))
+    (when (and x y)
+      (let* ((vy0 (max y clip-top)) (vy1 (min (+ y (cdr size)) sy1))
+             (cut-cols (if (< x clip-left) (ceiling (- clip-left x) char) 0))
+             (left (+ x (* char cut-cols)))
+             (shown-cols (min (- (car size) cut-cols)
+                              (floor (- sx1 left) char))))
+        (when (and (> shown-cols 0) (> vy1 vy0))
+          (list left vy0 shown-cols (- vy1 vy0) cut-cols (- vy0 y)))))))
+
+(defun grid-table-etaf--chart-nodes (state source rows cols)
+  "Return the View nodes of SOURCE's floating charts for STATE's window.
+ROWS and COLS are the model rows and columns shown."
+  (let ((buffer (grid-table-etaf--state-buffer state)))
+    (cl-loop
+     for chart in (grid-table-charts source) for index from 0
+     for place = (grid-table-etaf--chart-place state source chart rows cols)
+     when place collect
+     (pcase-let* ((`(,left ,top ,columns ,lines ,cut-cols ,cut-lines) place)
+                  (size (plist-get chart :size))
+                  (data (grid-table-etaf--chart-data source chart))
+                  (drawn (if (eql index grid-table-etaf--chart)
+                             (plist-put (copy-sequence chart) :selected t)
+                           chart)))
+       (etaf-node
+        'box
+        (list :key (format "chart%d" index)
+              :ref (intern (format "grid-table-etaf-chart-%d" index))
+              :position 'absolute
+              :left (list 'px left) :top (list 'lh top)
+              :width (list 'ch columns) :height (list 'lh lines)
+              :z-index 5
+              :on-press (lambda ()
+                          (when (buffer-live-p buffer)
+                            (with-current-buffer buffer
+                              (grid-table-etaf--select-chart state index))))
+              :on-drag (grid-table-etaf--drag-chart buffer index))
+        (list
+         (if (display-graphic-p)
+             (etaf-node 'image
+                        (list :src (grid-table-etaf--chart-image
+                                    drawn data (car size) (cdr size)
+                                    (list cut-cols cut-lines columns lines))
+                              :columns columns :rows lines)
+                        nil)
+           (etaf-node 'text (list :key 'chart-text)
+                      (list (grid-chart-svg-text drawn data columns lines))))))))))
+
+(defun grid-table-etaf--select-chart (state index)
+  "Select floating chart INDEX of STATE's sheet; nil selects none."
+  (setq grid-table-etaf--chart index)
+  (grid-table-etaf--bump state))
+
+(defun grid-table-etaf--set-charts (state charts)
+  "Give STATE's sheet the floating CHARTS, as one undo step."
+  (let* ((source (grid-table-etaf--source state))
+         (old (copy-tree (grid-table-charts source))))
+    (unless (grid-table-set-charts source charts)
+      (user-error "This sheet cannot hold charts"))
+    (grid-table-etaf--record state (list 'charts old (copy-tree charts)))
+    (grid-table-etaf--bump state)))
+
+(defun grid-table-etaf--drag-chart (buffer index)
+  "Return the pointer handler moving floating chart INDEX of BUFFER."
+  (let (start)
+    (lambda (gesture)
+      (when (buffer-live-p buffer)
+        (with-current-buffer buffer
+          (let* ((state grid-table-etaf--state)
+                 (source (grid-table-etaf--source state))
+                 (charts (grid-table-charts source)))
+            (pcase (plist-get gesture :phase)
+              ('start
+               (setq start (copy-tree charts))
+               (setq grid-table-etaf--chart index))
+              ((or 'move 'end)
+               (when start
+                 (let* ((delta (plist-get gesture :delta))
+                        (chart (copy-sequence (nth index start)))
+                        (anchor (plist-get chart :anchor)))
+                   (setq chart
+                         (plist-put chart :anchor
+                                    (cons (grid-table-etaf--walk-rows
+                                           state (car anchor)
+                                           (/ (cdr delta)
+                                              (float (grid-table-etaf--line-pixels))))
+                                          (grid-table-etaf--walk-cols
+                                           state (cdr anchor) (car delta)))))
+                   (let ((new (copy-tree start)))
+                     (setf (nth index new) chart)
+                     (grid-table-set-charts source new)
+                     (when (eq (plist-get gesture :phase) 'end)
+                       (unless (equal new start)
+                         (grid-table-etaf--record state (list 'charts start new)))
+                       (setq start nil)))
+                   (grid-table-etaf--bump state))))
+              ('cancel
+               (when start
+                 (grid-table-set-charts source start)
+                 (setq start nil)
+                 (grid-table-etaf--bump state))))))))))
+
+(defun grid-table-etaf--walk-rows (state row lines)
+  "Return the shown row LINES lines below model ROW of STATE; negative goes up."
+  (let* ((position (grid-table-etaf--row-position state row))
+         (count (grid-table-etaf--row-count state))
+         (step (if (< lines 0) -1 1))
+         (left (abs lines)))
+    (while (and (> left 0.5)
+                (< -1 (+ position step) count))
+      (setq position (+ position step)
+            left (- left (grid-table-etaf--row-lines
+                          state (grid-table-etaf--row-at state position)
+                          nil nil))))
+    (grid-table-etaf--row-at state position)))
+
+(defun grid-table-etaf--walk-cols (state col pixels)
+  "Return the shown column PIXELS right of model column COL of STATE."
+  (let ((cols (grid-get-column-count (grid-table-etaf--source state)))
+        (left (abs pixels))
+        (step (if (< pixels 0) -1 1)))
+    (while (and (> left (/ (grid-table-etaf--col-pixels state col) 2.0))
+                (< -1 (+ col step) cols))
+      (setq left (- left (grid-table-etaf--col-pixels state col))
+            col (grid-table-etaf--step-col state col step)))
+    col))
+
+(defun grid-table-etaf--current-region (state)
+  "Return the block of filled cells around STATE's cursor, as a range.
+It grows from the cursor while a row or column next to it holds
+something, as a spreadsheet picks the data for a chart."
+  (let* ((source (grid-table-etaf--source state))
+         (rows (grid-get-row-count source))
+         (cols (grid-get-column-count source))
+         (cursor (etaf-value (grid-table-etaf--state-cursor state)))
+         (top (car cursor)) (bottom (car cursor))
+         (left (cdr cursor)) (right (cdr cursor))
+         (filled (lambda (r1 c1 r2 c2)
+                   (and (<= 0 r1) (< r2 rows) (<= 0 c1) (< c2 cols)
+                        (cl-loop for r from r1 to r2 thereis
+                                 (cl-loop for c from c1 to c2 thereis
+                                          (not (member (grid-get-raw-value-at source r c)
+                                                       '(nil ""))))))))
+         (grown t))
+    (while grown
+      (setq grown nil)
+      (when (funcall filled (1- top) left (1- top) right) (cl-decf top) (setq grown t))
+      (when (funcall filled (1+ bottom) left (1+ bottom) right) (cl-incf bottom) (setq grown t))
+      (when (funcall filled top (1- left) bottom (1- left)) (cl-decf left) (setq grown t))
+      (when (funcall filled top (1+ right) bottom (1+ right)) (cl-incf right) (setq grown t)))
+    (list top left bottom right)))
+
+(defun grid-table-etaf--read-chart-type (&optional default)
+  "Read a chart type, offering DEFAULT first."
+  (let* ((names (mapcar #'cdr grid-chart-svg-types))
+         (default (cdr (assq (or default 'column) grid-chart-svg-types)))
+         (name (completing-read (format "Chart type (default %s): " default)
+                                names nil t nil nil default)))
+    (car (rassoc name grid-chart-svg-types))))
+
+(defun grid-table-etaf-insert-chart (type)
+  "Put a floating chart of TYPE over the sheet, drawing the selected cells.
+With no cells selected it draws the block of filled cells around the
+cursor.  The chart sits right of its data, and keeps drawing whatever
+the cells hold."
+  (interactive (list (grid-table-etaf--read-chart-type)))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (cursor (etaf-value (grid-table-etaf--state-cursor state)))
+         (anchor (etaf-value (grid-table-etaf--state-anchor state)))
+         (range (if (equal cursor anchor)
+                    (grid-table-etaf--current-region state)
+                  (grid-table-etaf-selection)))
+         (cols (grid-get-column-count source))
+         (chart (list :anchor (cons (nth 0 range)
+                                    (if (< (1+ (nth 3 range)) cols)
+                                        (1+ (nth 3 range))
+                                      (nth 1 range)))
+                      :size grid-table-etaf-chart-size
+                      :type type
+                      :range (apply #'grid-chart-svg-range-text range)
+                      :by nil :title nil))
+         (charts (append (grid-table-charts source) (list chart))))
+    (setq grid-table-etaf--chart (1- (length charts)))
+    (grid-table-etaf--set-charts state charts)
+    (message "Chart of %s added" (plist-get chart :range))))
+
+(defun grid-table-etaf--chart-index (state)
+  "Return the index of the chart a chart command works on in STATE's sheet.
+That is the selected chart, the only chart, or one read from the user."
+  (let* ((source (grid-table-etaf--source state))
+         (charts (grid-table-charts source)))
+    (cond ((null charts) (user-error "No chart on this sheet; C-c i adds one"))
+          ((and grid-table-etaf--chart (nth grid-table-etaf--chart charts))
+           grid-table-etaf--chart)
+          ((null (cdr charts)) 0)
+          (t (let* ((names (cl-loop for chart in charts for i from 0
+                                    collect (cons (format "%d: %s %s (%s)" (1+ i)
+                                                          (cdr (assq (plist-get chart :type)
+                                                                     grid-chart-svg-types))
+                                                          (or (plist-get chart :title) "")
+                                                          (plist-get chart :range))
+                                                  i)))
+                    (name (completing-read "Chart: " names nil t)))
+               (cdr (assoc name names)))))))
+
+(defun grid-table-etaf--change-chart (function)
+  "Replace the chart a chart command works on with FUNCTION's result.
+FUNCTION gets a copy of the chart; nil from it deletes the chart."
+  (let* ((state (grid-table-etaf--state-or-error))
+         (index (grid-table-etaf--chart-index state))
+         (charts (copy-tree (grid-table-charts (grid-table-etaf--source state))))
+         (chart (funcall function (nth index charts))))
+    (setq grid-table-etaf--chart (and chart index))
+    (grid-table-etaf--set-charts
+     state (if chart
+               (progn (setf (nth index charts) chart) charts)
+             (append (cl-subseq charts 0 index) (nthcdr (1+ index) charts))))))
+
+(defun grid-table-etaf-chart-type (type)
+  "Draw the selected chart as TYPE."
+  (interactive
+   (let* ((state (grid-table-etaf--state-or-error))
+          (chart (nth (grid-table-etaf--chart-index state)
+                      (grid-table-charts (grid-table-etaf--source state)))))
+     (list (grid-table-etaf--read-chart-type (plist-get chart :type)))))
+  (grid-table-etaf--change-chart (lambda (chart) (plist-put chart :type type))))
+
+(defun grid-table-etaf-chart-switch ()
+  "Make the selected chart's series run the other way, rows for columns."
+  (interactive)
+  (let ((state (grid-table-etaf--state-or-error)))
+    (grid-table-etaf--change-chart
+     (lambda (chart)
+       (let ((by (plist-get (grid-table-etaf--chart-data
+                             (grid-table-etaf--source state) chart)
+                            :by)))
+         (plist-put chart :by (if (eq by 'rows) 'columns 'rows)))))))
+
+(defun grid-table-etaf-chart-title (title)
+  "Give the selected chart the TITLE; an empty one removes it."
+  (interactive
+   (let* ((state (grid-table-etaf--state-or-error))
+          (chart (nth (grid-table-etaf--chart-index state)
+                      (grid-table-charts (grid-table-etaf--source state)))))
+     (list (read-string "Chart title: " (plist-get chart :title)))))
+  (grid-table-etaf--change-chart
+   (lambda (chart)
+     (plist-put chart :title (and (not (string-empty-p title)) title)))))
+
+(defun grid-table-etaf-chart-range ()
+  "Make the selected chart draw the selected cells."
+  (interactive)
+  (let ((range (grid-table-etaf-selection)))
+    (grid-table-etaf--change-chart
+     (lambda (chart)
+       (plist-put chart :range (apply #'grid-chart-svg-range-text range))))))
+
+(defun grid-table-etaf-chart-move-here ()
+  "Put the top left corner of the selected chart on the cursor cell."
+  (interactive)
+  (let ((cursor (grid-table-etaf--cursor)))
+    (grid-table-etaf--change-chart
+     (lambda (chart) (plist-put chart :anchor (cons (car cursor) (cdr cursor)))))))
+
+(defun grid-table-etaf-chart-resize (columns lines)
+  "Make the selected chart COLUMNS characters wide and LINES lines high."
+  (interactive
+   (let* ((state (grid-table-etaf--state-or-error))
+          (chart (nth (grid-table-etaf--chart-index state)
+                      (grid-table-charts (grid-table-etaf--source state))))
+          (size (plist-get chart :size)))
+     (list (read-number "Width in characters: " (car size))
+           (read-number "Height in lines: " (cdr size)))))
+  (unless (and (integerp columns) (integerp lines)
+               (< 7 columns 1000) (< 3 lines 1000))
+    (user-error "A chart is 8 to 999 characters wide and 4 to 999 lines high"))
+  (grid-table-etaf--change-chart
+   (lambda (chart) (plist-put chart :size (cons columns lines)))))
+
+(defun grid-table-etaf-chart-delete ()
+  "Delete the selected chart."
+  (interactive)
+  (grid-table-etaf--change-chart #'ignore))
+
+(defun grid-table-etaf-chart-next ()
+  "Select the next chart of the sheet and show where it is."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (charts (grid-table-charts (grid-table-etaf--source state))))
+    (unless charts (user-error "No chart on this sheet; C-c i adds one"))
+    (let* ((index (if grid-table-etaf--chart
+                      (mod (1+ grid-table-etaf--chart) (length charts))
+                    0))
+           (anchor (plist-get (nth index charts) :anchor)))
+      (grid-table-etaf-goto (car anchor) (cdr anchor))
+      (grid-table-etaf--select-chart state index))))
+
+(defun grid-table-etaf-chart-deselect ()
+  "Select no chart."
+  (interactive)
+  (grid-table-etaf--select-chart (grid-table-etaf--state-or-error) nil))
 
 (etaf-define-component grid-table-etaf-sheet (&key state)
   :render (grid-table-etaf--render (etaf-current-prop 'state)))
@@ -2071,6 +2532,10 @@ shifts."
        (grid-table-etaf--bump state))
       (`(validations ,old ,new)
        (grid-table-set-validations source (if forward new old))
+       (grid-table-etaf--bump state))
+      (`(charts ,old ,new)
+       (grid-table-set-charts source (if forward new old))
+       (setq grid-table-etaf--chart nil)
        (grid-table-etaf--bump state))
       (`(hidden ,old ,new)
        (let ((hidden (if forward new old)))
@@ -3456,6 +3921,8 @@ cursor moves to: display column is model column plus one."
 
 (defun grid-table-etaf-show-in-current-buffer (data-source &optional title)
   "Mount DATA-SOURCE in the current buffer.  TITLE replaces the grid title."
+  ;; A chart selected on another sheet is not one of this sheet's.
+  (setq grid-table-etaf--chart nil)
   (let ((file-path grid-table--file-path)
         (old-title grid-table--title)
         (allow-elisp grid-table-allow-elisp)

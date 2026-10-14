@@ -2,6 +2,7 @@
 
 (require 'grid-data-source)
 (require 'cl-lib)
+(require 'grid-table-chart-svg)
 
 ;;;----------------------------------------------------------------------
 ;;; Public API
@@ -84,7 +85,9 @@ Its keys are :title, :headers, :rows, :merges, :styles and
        (and (or (car hidden) (cdr hidden))
             (list :hidden (list (car hidden) (cdr hidden)))))
      (and (grid-table-validations data-source)
-          (list :validations (grid-table-validations data-source))))))
+          (list :validations (grid-table-validations data-source)))
+     (and (grid-table-charts data-source)
+          (list :charts (grid-table-charts data-source))))))
 
 (defun grid-table-persistence--file-data (data-source)
   "Return the form a file holds for DATA-SOURCE and the sheets beside it.
@@ -153,6 +156,8 @@ Older releases pass over them, so they do not raise the file version."
                (list :hidden (plist-get data :hidden)))
           (and (plist-get data :validations)
                (list :validations (plist-get data :validations)))
+          (and (plist-get data :charts)
+               (list :charts (plist-get data :charts)))
           (and (plist-get data :names)
                (list :names (plist-get data :names)
                      :sheet-name (plist-get data :sheet-name)))))
@@ -195,13 +200,15 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
 (defun grid-table-persistence--make-source (file-path headers rows title
                                                    merges styles conditionals
                                                    &optional widths no-header
-                                                   frozen hidden validations)
+                                                   frozen hidden validations
+                                                   charts)
   "Return a data source for the fields a file at FILE-PATH holds for a sheet.
 WIDTHS is a list of (COLUMN . WIDTH) for the columns sized by hand.
 NO-HEADER says the first row of the sheet is a row like any other.
 FROZEN is (ROWS COLS), the leading rows and columns kept in place.
 HIDDEN is (ROWS COLS), lists of the rows and columns hidden.
-VALIDATIONS are the sheet's validation rules."
+VALIDATIONS are the sheet's validation rules and CHARTS its floating
+charts."
   (unless (grid-table-persistence--table-data-p headers rows)
     (error "Invalid grid file format in %s" file-path))
   (let ((source (make-default-data-source
@@ -244,7 +251,23 @@ VALIDATIONS are the sheet's validation rules."
                (or (stringp (nth 5 rule))
                    (and (listp (nth 5 rule)) (cl-every #'stringp (nth 5 rule))))))
         validations)))
+    (when (listp charts)
+      (grid-table-set-charts
+       source (cl-remove-if-not #'grid-table-persistence--chart-p charts)))
     source))
+
+(defun grid-table-persistence--chart-p (chart)
+  "Return non-nil when CHART, read from a file, is a well-formed chart."
+  (and (grid-table-persistence--plist-p chart)
+       (let ((anchor (plist-get chart :anchor))
+             (size (plist-get chart :size)))
+         (and (consp anchor) (natnump (car anchor)) (natnump (cdr anchor))
+              (consp size) (integerp (car size)) (integerp (cdr size))
+              (< 0 (car size) 1000) (< 0 (cdr size) 1000)))
+       (assq (plist-get chart :type) grid-chart-svg-types)
+       (grid-chart-svg-parse-range (plist-get chart :range))
+       (memq (plist-get chart :by) '(nil rows columns))
+       (or (null (plist-get chart :title)) (stringp (plist-get chart :title)))))
 
 (defun grid-table-persistence--make-workbook (file-path plist)
   "Return the active sheet of the workbook that PLIST, read from FILE-PATH, holds."
@@ -264,7 +287,7 @@ VALIDATIONS are the sheet's validation rules."
         (plist-get sheet :styles) (plist-get sheet :conditional-formats)
         (plist-get sheet :column-widths) (plist-get sheet :no-header-row)
         (plist-get sheet :frozen) (plist-get sheet :hidden)
-        (plist-get sheet :validations))
+        (plist-get sheet :validations) (plist-get sheet :charts))
        ;; A name another sheet has, or none, would lose the sheet.
        (grid-workbook-fresh-name workbook (plist-get sheet :name))))
     (setf (grid-workbook-names workbook)
@@ -289,7 +312,7 @@ saved; the others are in its workbook."
                  (eql (plist-get (cdr data) :version) 5))
             (grid-table-persistence--make-workbook file-path (cdr data))
         (let (headers rows title merges styles conditionals widths no-header
-                      frozen hidden validations)
+                      frozen hidden validations charts)
           (cond
            ;; Case 1: Tagged v2 format with merge metadata
            ((eq (car-safe data) 'grid-table-file)
@@ -307,6 +330,7 @@ saved; the others are in its workbook."
                     frozen (plist-get plist :frozen)
                     hidden (plist-get plist :hidden)
                     validations (plist-get plist :validations)
+                    charts (plist-get plist :charts)
                     merges (let ((raw-merges (plist-get plist :merges)))
                              (if (and (eq (plist-get plist :version) 2)
                                       (listp raw-merges))
@@ -333,7 +357,8 @@ saved; the others are in its workbook."
                   no-header (plist-get data :no-header-row)
                   frozen (plist-get data :frozen)
                   hidden (plist-get data :hidden)
-                  validations (plist-get data :validations)))
+                  validations (plist-get data :validations)
+                  charts (plist-get data :charts)))
 
            ;; Case 2: Alist format (legacy/example files)
            ((listp (car data))
@@ -353,7 +378,8 @@ saved; the others are in its workbook."
 
           (let* ((source (grid-table-persistence--make-source
                           file-path headers rows title merges styles conditionals
-                          widths no-header frozen hidden validations))
+                          widths no-header frozen hidden validations
+                          charts))
                  (plist (cond ((eq (car-safe data) 'grid-table-file) (cdr data))
                               ((keywordp (car-safe data)) data)))
                  (names (grid-table-persistence--names

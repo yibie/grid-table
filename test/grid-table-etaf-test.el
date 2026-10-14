@@ -1443,6 +1443,69 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should (equal (grid-table-etaf-remove-duplicates)
                    "No duplicate rows"))))
 
+(defun grid-table-etaf-test--geometry (ref)
+  "Return the painted geometry of Host REF, or nil when it is not painted."
+  (when-let* ((node (etaf-runtime-host-node (grid-table-etaf--runtime) ref)))
+    (ebox-node-geometry node)))
+
+(ert-deftest grid-table-etaf-floating-charts ()
+  "A chart floats over its anchor cell, scrolls with it and undoes."
+  (grid-table-etaf-test--with-grid (40 8 120 24)
+    (let ((source grid-table--data-source)
+          (top (grid-table-etaf--state-top grid-table-etaf--state)))
+      ;; With no cells selected the chart draws the filled block around
+      ;; the cursor, here the whole sheet.
+      (grid-table-etaf-goto 2 1)
+      (grid-table-etaf-insert-chart 'column)
+      (should (equal (plist-get (car (grid-table-charts source)) :range) "A1:H40"))
+      (grid-table-etaf-undo)
+      (should-not (grid-table-charts source))
+      ;; From the selection, sitting right of it.
+      (grid-table-etaf-goto 1 1)
+      (grid-table-etaf-goto 5 2 t)
+      (grid-table-etaf-insert-chart 'column)
+      (let ((chart (car (grid-table-charts source))))
+        (should (equal (plist-get chart :range) "B2:C6"))
+        (should (equal (plist-get chart :anchor) '(1 . 3))))
+      (let ((geometry (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
+        (should (equal (plist-get geometry :y) 3))
+        (should (equal (plist-get geometry :height) 16)))
+      (should (string-match-p "Chart: untitled (Column, B2:C6)"
+                              (grid-table-etaf-test--text)))
+      ;; Scrolled two rows past the anchor, the top of the chart is cut.
+      (etaf-set-value top 3)
+      (let ((geometry (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
+        (should (equal (plist-get geometry :y) 2))
+        (should (equal (plist-get geometry :height) 14)))
+      ;; Scrolled past it entirely, it is gone.
+      (etaf-set-value top 30)
+      (should-not (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0))
+      (etaf-set-value top 0)
+      ;; Type, title and switching are each a step to undo.
+      (grid-table-etaf-chart-type 'pie)
+      (grid-table-etaf-chart-title "Sales")
+      (grid-table-etaf-chart-switch)
+      (let ((chart (car (grid-table-charts source))))
+        (should (eq (plist-get chart :type) 'pie))
+        (should (equal (plist-get chart :title) "Sales"))
+        (should (eq (plist-get chart :by) 'rows)))
+      (grid-table-etaf-undo)
+      (grid-table-etaf-undo)
+      (should (eq (plist-get (car (grid-table-charts source)) :type) 'pie))
+      (should-not (plist-get (car (grid-table-charts source)) :title))
+      ;; A row inserted above moves the chart and its range.
+      (grid-table-etaf-goto 1 0)
+      (grid-table-insert-row-above)
+      (let ((chart (car (grid-table-charts source))))
+        (should (equal (plist-get chart :anchor) '(2 . 3)))
+        (should (equal (plist-get chart :range) "B3:C7")))
+      (grid-table-etaf-chart-move-here)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(1 . 0)))
+      (grid-table-etaf-chart-delete)
+      (should-not (grid-table-charts source))
+      (grid-table-etaf-undo)
+      (should (grid-table-charts source)))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

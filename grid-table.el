@@ -226,6 +226,18 @@ Return non-nil when SOURCE can hide rows and columns."
     (funcall function source rows cols)
     t))
 
+(defun grid-table-charts (source)
+  "Return the floating charts of SOURCE, chart plists."
+  (when-let* ((function (gethash :get-charts source)))
+    (funcall function source)))
+
+(defun grid-table-set-charts (source charts)
+  "Replace the floating charts of SOURCE with CHARTS.
+Return nil when SOURCE keeps no charts."
+  (when-let* ((function (gethash :set-charts source)))
+    (funcall function source charts)
+    t))
+
 (defun grid-table-validations (source)
   "Return SOURCE's validation rules, (TOP LEFT BOTTOM RIGHT KIND SPEC) each."
   (when-let* ((function (gethash :get-validations source)))
