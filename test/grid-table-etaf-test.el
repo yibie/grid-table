@@ -1090,6 +1090,35 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-undo)
     (should (equal (grid-table-frozen source) '(0 . 0)))))
 
+(ert-deftest grid-table-etaf-goto-address-moves-and-selects ()
+  (grid-table-etaf-test--with-grid (40 6 100 12)
+    (should (equal (grid-table-etaf--parse-address "d12") '(nil 11 3 11 3)))
+    (should (equal (grid-table-etaf--parse-address "'My Sheet'!B2:A1")
+                   '("My Sheet" 0 0 1 1)))
+    (should (equal (grid-table-etaf--parse-address "C:B") '(nil nil 1 nil 2)))
+    (should-not (grid-table-etaf--parse-address "A1:B"))
+    (should-not (grid-table-etaf--parse-address "hello"))
+    (grid-table-etaf-goto-address "D30")
+    (should (equal (grid-table-etaf--cursor) '(29 . 3)))
+    (should (memq 29 (car (grid-table-etaf-test--window))))
+    (grid-table-etaf-goto-address "B2:C4")
+    (should (equal (grid-table-etaf-selection) '(1 1 3 2)))
+    (grid-table-etaf-goto-address "5:6")
+    (should (equal (grid-table-etaf-selection) '(4 0 5 5)))
+    (should-error (grid-table-etaf-goto-address "A99") :type 'user-error)
+    (should-error (grid-table-etaf-goto-address "nonsense") :type 'user-error)
+    ;; Another sheet is shown first.
+    (grid-table-sheet-new "Totals")
+    (grid-table-etaf-goto-address "Sheet1!C3")
+    (should (equal (grid-workbook-sheet-name grid-table--data-source) "Sheet1"))
+    (should (equal (grid-table-etaf--cursor) '(2 . 2)))
+    ;; The keys reach the command through the view.
+    (switch-to-buffer (current-buffer))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) "E7")))
+      (execute-kbd-macro (kbd "C-c g")))
+    (should (equal (grid-table-etaf--cursor) '(6 . 4)))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

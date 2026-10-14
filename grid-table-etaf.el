@@ -608,6 +608,7 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-M-_" grid-table-etaf-redo "Redo")
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
+    ("C-c g" grid-table-etaf-goto-address "Go to cell or range")
     ("C-<next>" grid-table-sheet-next "Next sheet")
     ("C-<prior>" grid-table-sheet-previous "Previous sheet")
     ("C-c w n" grid-table-sheet-new "New sheet")
@@ -1231,6 +1232,66 @@ With EXTEND non-nil keep the selection anchor, extending the range."
           grid-table--nav-col (1+ col))
     (grid-table-etaf--settle state)
     t))
+
+(defvar grid-table-etaf--goto-history nil
+  "Addresses typed to `grid-table-etaf-goto-address'.")
+
+(defun grid-table-etaf--parse-address (text)
+  "Return (SHEET TOP LEFT BOTTOM RIGHT) for the address TEXT, or nil.
+TEXT is a cell (D120), a range (A1:B3), whole columns (B:D) or whole
+rows (5:9), after an optional sheet prefix (Sheet2!A1, \='My Sheet\='!A1).
+SHEET is nil without a prefix.  Ends left open, as the rows of a whole
+column, are nil."
+  (let* ((text (string-trim text))
+         (prefix (and (> (length text) 0)
+                      (grid-parser-sheet-prefix-at text 0)))
+         (rest (if prefix (substring text (car prefix)) text))
+         (ends (split-string rest ":"))
+         (start (grid-calc--reference-coords (car ends)))
+         (end (if (cdr ends) (grid-calc--reference-coords (cadr ends)) start)))
+    (when (and start end (null (cddr ends))
+               ;; Both ends are cells, both columns, or both rows.
+               (eq (null (car start)) (null (car end)))
+               (eq (null (cdr start)) (null (cdr end)))
+               ;; Past column XFD a word is a word, not a column.
+               (< (or (cdr start) 0) 16384) (< (or (cdr end) 0) 16384))
+      (list (cdr prefix)
+            (and (car start) (min (car start) (car end)))
+            (and (cdr start) (min (cdr start) (cdr end)))
+            (and (car start) (max (car start) (car end)))
+            (and (cdr start) (max (cdr start) (cdr end)))))))
+
+(defun grid-table-etaf-goto-address (address)
+  "Go to ADDRESS, a cell, range, whole column or row, maybe on another sheet.
+D120 moves the cursor there; A1:B3 selects that range, B:B a column and
+5:5 a row; Sheet2!A1 shows Sheet2 first, as the name box of a
+spreadsheet does."
+  (interactive
+   (list (completing-read
+          "Go to (e.g. D120, A1:B3, Sheet2!A1): "
+          (mapcar (lambda (sheet)
+                    (concat (grid-calc-sheet-prefix
+                             (grid-workbook-sheet-name sheet))
+                            "!"))
+                  (cdr (grid-table-sheets)))
+          nil nil nil 'grid-table-etaf--goto-history)))
+  (pcase-let ((`(,sheet ,top ,left ,bottom ,right)
+               (or (grid-table-etaf--parse-address address)
+                   (user-error "Not a cell or range: %s" address))))
+    (when sheet
+      (grid-table-switch-to-sheet
+       (or (grid-workbook-sheet (grid-table--workbook) sheet)
+           (user-error "No sheet called %s" sheet))))
+    (let* ((source grid-table--data-source)
+           (rows (grid-get-row-count source))
+           (cols (grid-get-column-count source)))
+      (when (or (and top (>= top rows)) (and left (>= left cols)))
+        (user-error "%s is outside the sheet, which has %d rows and %d columns"
+                    address rows cols))
+      (grid-table-etaf-goto (or bottom (1- rows)) (or right (1- cols)))
+      (grid-table-etaf-goto (or top 0) (or left 0)
+                            (or (not (eql top bottom)) (not (eql left right))
+                                (null top) (null left))))))
 
 (defun grid-table-etaf--cell-extent (row col)
   "Return (TOP LEFT BOTTOM RIGHT) of the cell covering ROW and COL."
