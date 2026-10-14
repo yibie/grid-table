@@ -76,11 +76,9 @@
 (require 'grid-table-markdown) ;; Markdown集成
 ```
 
-#### 🖼️ 渲染器
+#### 🖼️ 视图
 
-`grid-table-renderer` 决定表格的绘制方式：
-
-- `etaf`（默认）通过 [ETAF](https://github.com/emacs-taf) 挂载表格。只渲染窗口内可见的行列，单元格原位编辑，`S-<方向键>` 选择范围。需要把 `ecss`、`ebox`、`etaf` 三个仓库加入 `load-path`：
+- 表格通过 [ETAF](https://github.com/emacs-taf) 显示。只渲染窗口内可见的行列，单元格原位编辑，`S-<方向键>` 选择范围。需要把 `ecss`、`ebox`、`etaf` 三个仓库加入 `load-path`；缺少它们时，打开表格会直接提示：
 
   ```elisp
   (add-to-list 'load-path "/path/to/ecss")
@@ -92,7 +90,7 @@
 
   格式作用于选区：`C-c f b` 加粗，`C-c f i` 斜体，`C-c f c` 文字颜色，`C-c f g` 填充色，`C-c f l`/`e`/`r` 左对齐、居中、右对齐，`C-c f x` 清除。数字格式：`C-c f ,` 带千位分隔的数字，`C-c f p` 百分比，`C-c f $` 货币，`C-c f d` 日期，`C-c f t` 文本，`C-c f G` 常规，`C-c f +`/`-` 增减小数位。`C-c f n` 添加条件格式（例如「大于 100」标红），之后随数值变化自动生效，`C-c f N` 移除与选区相交的条件格式。增删行列和排序时格式跟随单元格移动，并保存在 `.grid` 文件里。带格式的文件以版本 4 写出，旧版本打不开；不带格式的文件仍按原来的旧版本保存。
 
-  选中多个单元格后按 `C-c m` 合并为一格；范围可以是矩形，不限于单行或单列（classic 渲染器把矩形合并显示为分开的单元格）。图表公式直接画在所在单元格里，按图表自身的尺寸撑开行高和列宽；`C-c v` 仍可在独立 buffer 里查看。
+  选中多个单元格后按 `C-c m` 合并为一格；范围可以是矩形，不限于单行或单列。图表公式直接画在所在单元格里，按图表自身的尺寸撑开行高和列宽；`C-c v` 仍可在独立 buffer 里查看。
 
   `C-c s` 按列的显示值排序：数字按数值排在文本之前，文本不区分大小写，空白单元格无论升降序都排最后。`C-c / f` 按条件筛选光标所在列，`C-c / v` 只保留与光标单元格值相同的行，`C-c / c` 清除该列的筛选，`C-c / a` 清除全部。多列筛选同时生效，被筛选的列在字母后显示 `▼`，移动、复制、清空、设置格式以及状态栏统计都会跳过隐藏行。筛选在设置时和刷新（`C-c C-r`）时计算，不会在每次编辑后重新计算。
 
@@ -102,9 +100,9 @@
 
   一个表格可以有多张工作表。`C-c w n` 新建，`C-c w r` 给当前工作表改名，`C-c w d` 删除，`C-c w <` 和 `C-c w >` 移动，`C-<next>` 和 `C-<prior>` 切到后一张和前一张，`C-c w s` 按名称选择；用 ETAF 时底部一行有可点击的工作表标签。公式用 `Sheet2!A1`、`SUM(Sheet2!A1:B5)`、`'My Sheet'!A1` 读取其他工作表；工作表改名、那张表增删行列时引用会跟着改，工作表删除后显示 `#REF!`。每张工作表有各自的光标、筛选和撤销历史。只有一张工作表时文件格式不变；有多张时保存为版本 5，旧版本读不了。
 
-- `classic` 用边框字符直接画进 buffer，通过 minibuffer 编辑。它是迁移到 ETAF 期间的兜底选择：ETAF 无法加载时自动使用，迁移完成后移除。它不再增加新功能：选区、原位编辑、格式、筛选、填充、查找替换、冻结窗格、矩形合并和工作表标签只在 ETAF 视图里有。Markdown 预览和各导出器用的纯文本表格在 `grid-table-text.el` 里，不依赖任何一种视图。
+以前那个把边框字符画进 buffer、通过 minibuffer 编辑的视图已经移除，`grid-table-renderer` 选项也随之取消。它画的纯文本表格仍然用于 Markdown 预览和各导出器，在 `grid-table-text.el` 里（`grid-table-text-render`），不需要任何视图。`grid-table-mode` 保留为 `grid-table-etaf-mode` 的父模式，挂在它上面的 hook 照常运行。
 
-运行测试：`make test-classic` 与 `make test-etaf ETAF_SRC=/path/to/checkouts`。
+运行测试：`make test-model`（模型、公式和纯文本表格，不需要 ETAF）与 `make test-etaf ETAF_SRC=/path/to/checkouts`。
 
 ## 📋 操作速查表
 

@@ -6,7 +6,6 @@
 (require 'grid-table)
 
 ;; These tests characterize the classic renderer.
-(setq grid-table-renderer 'classic)
 
 (defun grid-table-vertical-test--source (headers rows merges)
   "Return a source for vertical merge rendering tests."
@@ -15,8 +14,7 @@
 (defun grid-table-vertical-test--render (source)
   "Return SOURCE rendered as plain buffer text."
   (with-temp-buffer
-    (grid-table-mode)
-    (grid-table--show-grid-in-current-buffer source)
+    (insert (grid-table-text-render source))
     (buffer-substring-no-properties (point-min) (point-max))))
 
 (defun grid-table-vertical-test--computed-source (headers rows merges)
@@ -103,8 +101,7 @@
                  '((1 1 3 1))))
         matches)
     (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
+      (insert (grid-table-text-render source))
       (let ((pos (point-min)))
         (while (< pos (point-max))
           (when (and (get-text-property pos 'grid-cell)

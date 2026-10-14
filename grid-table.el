@@ -16,7 +16,6 @@
 (require 'grid-table-format)
 (require 'grid-table-persistence)
 (require 'grid-table-text)
-(require 'grid-table-nav)
 (require 'grid-table-chart)
 (require 'grid-table-plugins)
 
@@ -307,22 +306,6 @@ If nil, uses the `default-directory` of the current buffer."
                  (directory :tag "Specify directory"))
   :group 'grid-table)
 
-(defcustom grid-table-renderer 'etaf
-  "Renderer used to show a grid.
-`etaf' mounts the grid through ETAF and needs the ecss, ebox and etaf
-packages on `load-path'.  `classic' draws box characters into the
-buffer; it is the fallback while grids migrate to ETAF and is used
-whenever ETAF cannot be loaded.  The classic renderer will be removed
-once the migration is complete."
-  :type '(choice (const :tag "ETAF" etaf)
-                 (const :tag "Classic (migration fallback)" classic))
-  :group 'grid-table)
-
-(defvar-local grid-table--renderer nil
-  "Renderer showing the current buffer: `etaf', or nil for classic.")
-
-(defvar grid-table--etaf-warned nil
-  "Non-nil once the ETAF renderer has failed to load or mount this session.")
 
 (defvar-local grid-table--data-source nil
   "Buffer-local variable to hold the current data source instance.")
@@ -334,197 +317,109 @@ once the migration is complete."
   "Buffer-local variable to hold the title of the current grid.")
 
 
-(defface grid-table-highlight-face
-  '((t :background "gray10"))
-  "Face for highlighting the current grid cell."
-  :group 'grid-table)
-
-(defface grid-table-markup-face
-  '((t :foreground "dim gray"))
-  "Face for Org-like markup characters in grid cells."
-  :group 'grid-table)
-
-(defvar-local grid-table--highlight-overlay nil)
-
 (declare-function grid-table-etaf-show-in-current-buffer "grid-table-etaf")
 (declare-function grid-table-etaf-refresh "grid-table-etaf")
 (declare-function grid-table-etaf-cell-at-point "grid-table-etaf")
 (declare-function grid-table-etaf-edit-cell "grid-table-etaf")
 (declare-function grid-table-etaf-set-cell "grid-table-etaf")
 
-(defun grid-table--etaf-p ()
-  "Return non-nil when the current buffer is shown through ETAF."
-  (eq grid-table--renderer 'etaf))
-
-(defun grid-table--enter-classic-mode ()
-  "Enable `grid-table-mode' unless the grid will be shown through ETAF.
-The ETAF renderer sets its own major mode when it mounts."
-  (unless (eq (grid-table--resolve-renderer) 'etaf)
-    (grid-table-mode)))
-
-(defun grid-table--resolve-renderer ()
-  "Return the renderer to show a grid with: `etaf' or `classic'.
-Falls back to `classic' when `grid-table-renderer' asks for ETAF and it
-cannot be loaded."
-  (cond ((not (eq grid-table-renderer 'etaf)) 'classic)
-        (grid-table--etaf-warned 'classic)
-        ((featurep 'grid-table-etaf) 'etaf)
-        ;; `require' with NOERROR still signals when ETAF itself is missing.
-        (t (condition-case err
-               (progn (require 'grid-table-etaf) 'etaf)
-             (error (grid-table--etaf-failed err) 'classic)))))
-
-(defun grid-table--etaf-failed (err)
-  "Report ERR from the ETAF renderer and stay on classic for this session."
-  (setq grid-table--etaf-warned t)
-  (message "grid-table: ETAF renderer unavailable (%s), using the classic renderer"
-           (error-message-string err)))
-
-(defvar grid-table-cell-edit-map
-  (let ((map (copy-keymap minibuffer-local-map)))
-    (define-key map (kbd "M-RET") #'newline)
-    map)
-  "Minibuffer keymap used while editing a grid cell.")
 
 ;;;----------------------------------------------------------------------
 ;;; Rendering
 ;;;----------------------------------------------------------------------
 
+(defun grid-table--require-view ()
+  "Load the view that shows grids, or say what it needs."
+  (unless (featurep 'grid-table-etaf)
+    (condition-case err
+        (require 'grid-table-etaf)
+      (error
+       (user-error "Showing a grid needs ETAF: put the ecss, ebox and etaf \
+checkouts from https://github.com/emacs-taf on `load-path' (%s)"
+                   (error-message-string err))))))
+
+(define-derived-mode grid-table-mode special-mode "Grid Table"
+  "Parent of the major mode that shows a grid.
+Grids are shown in `grid-table-etaf-mode', which derives from this mode,
+so hooks and checks written for `grid-table-mode' keep working."
+  :group 'grid-table)
+
+(defvar-local grid-table--nav-row nil
+  "Row of the cursor in the current grid, as a display row.")
+
+(defvar-local grid-table--nav-col nil
+  "Column of the cursor in the current grid, as a display column.
+Display column 0 is the row numbers; the first column of the grid is 1.")
+
+(declare-function grid-table-etaf-goto "grid-table-etaf")
+(declare-function grid-table-etaf-move "grid-table-etaf")
+(declare-function grid-table-etaf-move-tab "grid-table-etaf")
+(declare-function grid-table-etaf-row-start "grid-table-etaf")
+(declare-function grid-table-etaf-row-end "grid-table-etaf")
+
 (defun grid-table-get-cell-at-point ()
   "Return the complete logical descriptor for the cell at point."
   (interactive)
-  (if (grid-table--etaf-p)
-      (grid-table-etaf-cell-at-point)
-    (grid-table--classic-cell-at-point)))
+  (grid-table-etaf-cell-at-point))
 
-(defun grid-table--classic-cell-at-point ()
-  "Return the cell descriptor read from the classic renderer's text."
-  (let ((position
-         (if (get-text-property (point) 'grid-cell)
-             (point)
-           (save-excursion
-             (goto-char (line-beginning-position))
-             (catch 'cell
-               (while (< (point) (line-end-position))
-                 (when (get-text-property (point) 'grid-cell)
-                   (throw 'cell (point)))
-                 (forward-char 1))
-               nil)))))
-    (when position
-      (let* ((old-row
-              (get-text-property position 'grid-display-row-idx))
-             (old-col
-              (get-text-property position 'grid-display-col-idx))
-             (row-start
-              (or (get-text-property position 'grid-display-row-start)
-                  old-row))
-             (row-end
-              (or (get-text-property position 'grid-display-row-end)
-                  row-start))
-             (col-start
-              (or (get-text-property position 'grid-display-col-start)
-                  old-col))
-             (col-end
-              (or (get-text-property position 'grid-display-col-end)
-                  (get-text-property position 'grid-display-col-end-idx)
-                  col-start))
-             (slice-row
-              (or (get-text-property position 'grid-display-slice-row)
-                  row-start))
-             (property-slice-col
-              (or (get-text-property position 'grid-display-slice-col)
-                  col-start))
-             (slice-col
-              (if (and (boundp 'grid-table--nav-row)
-                       (boundp 'grid-table--nav-col)
-                       (equal grid-table--nav-row slice-row)
-                       (integerp grid-table--nav-col)
-                       (<= col-start grid-table--nav-col)
-                       (<= grid-table--nav-col col-end))
-                  grid-table--nav-col
-                property-slice-col)))
-        (list :row-start row-start :row-end row-end
-              :col-start col-start :col-end col-end
-              :anchor-row
-              (or (get-text-property position 'grid-display-anchor-row)
-                  row-start)
-              :anchor-col
-              (or (get-text-property position 'grid-display-anchor-col)
-                  col-start)
-              :slice-row slice-row :slice-col slice-col
-              ;; Compatibility keys for third-party callers.
-              :display-row-idx row-start
-              :display-col-idx col-start
-              :display-col-end-idx col-end)))))
+(defun grid-table--move-to-cell (display-row col)
+  "Move the cursor to DISPLAY-ROW and display column COL."
+  (grid-table-etaf-goto (max 0 display-row) (max 0 (1- col))))
+
+(defun grid-table-next-line ()
+  "Move to the cell in the next row, same column."
+  (interactive)
+  (grid-table-etaf-move 1 0))
+
+(defun grid-table-previous-line ()
+  "Move to the cell in the previous row, same column."
+  (interactive)
+  (grid-table-etaf-move -1 0))
+
+(defun grid-table-next-cell ()
+  "Move to the next cell in reading order."
+  (interactive)
+  (grid-table-etaf-move-tab 1))
+
+(defun grid-table-previous-cell ()
+  "Move to the previous cell in reading order."
+  (interactive)
+  (grid-table-etaf-move-tab -1))
+
+(defun grid-table-cell-right ()
+  "Move to the cell on the right."
+  (interactive)
+  (grid-table-etaf-move 0 1))
+
+(defun grid-table-cell-left ()
+  "Move to the cell on the left."
+  (interactive)
+  (grid-table-etaf-move 0 -1))
+
+(defun grid-table-move-beginning-of-line ()
+  "Move to the first cell of the row."
+  (interactive)
+  (grid-table-etaf-row-start))
+
+(defun grid-table-move-end-of-line ()
+  "Move to the last cell of the row."
+  (interactive)
+  (grid-table-etaf-row-end))
 
 
 ;;----------------------------------------------------------------------
 ;; Column Width Calculation
 ;;----------------------------------------------------------------------
 
-(defconst grid-table--font-lock-keywords
-  (list
-   ;; *bold*
-   '("\\(\\*\\)\\([^\n*]+\\)\\(\\*\\)"
-     (1 'grid-table-markup-face) (2 'bold) (3 'grid-table-markup-face))
-   ;; /italic/
-   '("\\(/\\)\\([^\n/]+\\)\\(/\\)"
-     (1 'grid-table-markup-face) (2 'italic) (3 'grid-table-markup-face))
-   ;; _underline_
-   '("\\(_\\)\\([^\n_]+\\)\\(_\\)"
-     (1 'grid-table-markup-face) (2 'underline) (3 'grid-table-markup-face))
-   ;; +strike-through+
-   '("\\(\\+\\)\\([^\n+]+\\)\\(\\+\\)"
-     (1 'grid-table-markup-face) (2 'strike-through) (3 'grid-table-markup-face))
-   ;; ~code~
-   '("\\(~\\)\\([^\n~]+\\)\\(~\\)"
-     (1 'grid-table-markup-face) (2 'fixed-pitch) (3 'grid-table-markup-face)))
-  "Font-lock keywords for grid-table-mode.")
-
-
-(defun grid-table--setup-perfect-display-environment ()
-  "Setup perfect display environment, ensure consistent line height."
-  ;; Force line spacing to 0 - this is the key setting
-  (setq-local line-spacing 0)
-  
-  ;; Ensure no extra line height factor
-  (setq-local line-height-factor 1.0)
-  
-  ;; Disable features that might affect line height
-  (setq-local truncate-lines t)
-  (setq-local word-wrap nil)
-  
-  (message "Display environment optimized for perfect height matching"))
 
 ;;----------------------------------------------------------------------
 ;; Title rendering helpers
 ;;----------------------------------------------------------------------
 
 
-(defun grid-table--render-title-line (data-source)
-  "Render title line above the table according to alignment/decoration settings."
-  (when grid-table--title
-    (let* ((table-width (grid-table--compute-table-width data-source))
-           (title-text (format "Title: %s" grid-table--title))
-           (title-width (string-width title-text))
-           (left-pad (pcase grid-table-title-align
-                       ('left 0)
-                       ('center (max 0 (floor (/ (max 0 (- table-width title-width)) 2))))
-                       ('right (max 0 (- table-width title-width)))
-                       (_ 0)))
-           (padding (make-string left-pad ?\s))
-           (result (concat padding title-text "\n")))
-      (when (eq grid-table-title-decoration 'rule)
-        (setq result (concat result (make-string table-width ?─) "\n")))
-      (concat result "\n"))))
-
 ;;----------------------------------------------------------------------
 ;; Draw Row
 ;;----------------------------------------------------------------------
-
-(defun grid-table--enforce-line-height (string)
-  "Enforce a fixed 'line-height' text property for each line in STRING."
-  (propertize string 'line-height (grid-table--get-exact-line-height)))
 
 
 (defun grid-table--parse-cell-address (address)
@@ -535,8 +430,7 @@ cannot be loaded."
 
 ;;;###autoload
 (defun grid-table-merge-cells (range)
-  "Merge the cells of A1-style RANGE.
-The classic renderer only takes a range along one row or one column."
+  "Merge the cells of A1-style RANGE, a row, a column or a rectangle."
   (interactive (list (read-string "Merge range (e.g. B1:D1 or B2:B9): ")))
   (let* ((parts (split-string range ":" t "[[:space:]]*"))
          (start (and (= (length parts) 2)
@@ -545,10 +439,6 @@ The classic renderer only takes a range along one row or one column."
                    (grid-table--parse-cell-address (cadr parts)))))
     (unless (and start end)
       (user-error "Merge range must look like B1:D1"))
-    (unless (or (grid-table--etaf-p)
-                (xor (= (car start) (car end))
-                     (= (cadr start) (cadr end))))
-      (user-error "Merge range must span exactly one row or one column"))
     (let* ((top (min (car start) (car end)))
            (left (min (cadr start) (cadr end)))
            (bottom (max (car start) (car end)))
@@ -583,39 +473,8 @@ The classic renderer only takes a range along one row or one column."
 (defun grid-table-edit-cell ()
   "Edit the value of the current cell."
   (interactive)
-  (if (grid-table--etaf-p)
-      (grid-table-etaf-edit-cell)
-    (grid-table--classic-edit-cell)))
+  (grid-table-etaf-edit-cell))
 
-(defun grid-table--classic-edit-cell ()
-  "Edit the current cell of a classic grid through the minibuffer."
-  (let ((inhibit-read-only t))
-    (when-let* ((coords (grid-table-get-cell-at-point))
-                (display-row-idx (plist-get coords :anchor-row))
-                (display-col-idx (plist-get coords :anchor-col)))
-      (cond
-       ((= display-col-idx grid-table--row-header-col-idx) ; Editing row header (1, 2, 3...)
-        (message "Cannot edit row header (1, 2, 3...) column."))
-       ((= display-row-idx grid-table--col-header-row-idx) ; Editing A, B, C... header row
-        (message "Cannot edit column header (A, B, C...) row."))
-
-       (t ; Editing data cell
-        (let* (;; Data model row index is the same as display row index for data rows.
-               ;; Data model col index is display col index - 1 (for row header).
-               (current-value (grid-table-edit-text grid-table--data-source display-row-idx (1- display-col-idx)))
-               (new-value
-                (read-from-minibuffer
-                 (format "New value for %s%s (M-RET inserts newline): "
-                         (grid-table--col-number-to-letter
-                          (1- display-col-idx))
-                         (1+ display-row-idx))
-                 current-value grid-table-cell-edit-map))
-               (modified-cell (grid-table-enter-value grid-table--data-source display-row-idx (1- display-col-idx) new-value)))
-          (when modified-cell ; Only redraw if a cell was actually modified
-            (grid-table-refresh) ; Full refresh is simpler and safer for now
-            (grid-table--move-to-cell display-row-idx display-col-idx)
-            (grid-table--highlight-cell display-row-idx display-col-idx)
-            (message "Cell updated."))))))))
 
 (defun grid-table-edit-title ()
   "Edit the title of the current grid with alignment and decoration options."
@@ -850,7 +709,6 @@ In a sheet with a header row, nothing goes above that row."
     (if data-source
         (let ((buffer (get-buffer-create buffer-name)))
           (with-current-buffer buffer
-            (grid-table--enter-classic-mode)
             (setq-local grid-table--file-path file-path)
             ;; Get title from data source
             (setq-local grid-table--title (gethash :title data-source))
@@ -869,31 +727,14 @@ In a sheet with a header row, nothing goes above that row."
 ;; Main Functions & Mode Definition
 ;;----------------------------------------------------------------------
 
-(defun grid-table--insert-table-from-data-source ()
-  "Insert a grid table into the current buffer from `grid-table--data-source`."
-  (insert (grid-table-text-render grid-table--data-source)))
 
 (defun grid-table--show-grid-in-current-buffer (data-source &optional title)
   "Display the grid table in the current buffer.
 
 DATA-SOURCE is a hash table containing the data source functions.
 TITLE is an optional title for the grid."
-  (interactive)
-  (unless (and (eq (grid-table--resolve-renderer) 'etaf)
-               (condition-case err
-                   (progn
-                     (grid-table-etaf-show-in-current-buffer data-source title)
-                     t)
-                 ;; A stale ETAF checkout can load and still fail to mount.
-                 (error
-                  (grid-table--etaf-failed err)
-                  (let ((file-path grid-table--file-path)
-                        (old-title grid-table--title))
-                    (grid-table-mode)
-                    (setq grid-table--file-path file-path
-                          grid-table--title old-title))
-                  nil)))
-    (grid-table--classic-show-in-current-buffer data-source title)))
+  (grid-table--require-view)
+  (grid-table-etaf-show-in-current-buffer data-source title))
 
 ;;----------------------------------------------------------------------
 ;; Sheets
@@ -1056,40 +897,18 @@ Formulas that read the sheet show #REF! afterwards."
   (interactive)
   (grid-table-sheet-move 1))
 
-(defun grid-table--classic-show-in-current-buffer (data-source &optional title)
-  "Draw DATA-SOURCE into the current buffer with the classic renderer.
-TITLE is an optional title for the grid."
-  (let ((inhibit-read-only t))
-    (erase-buffer)
-    (setq grid-table--data-source data-source)
-    (when title
-      (setq grid-table--title title))
-    (when-let ((title-content (grid-table--render-title-line data-source)))
-      (insert title-content))
-    (grid-table--insert-table-from-data-source)
-    (grid-table--fontify-text)
-    (redisplay) ; Force redisplay to ensure text properties are applied
-    (goto-char (point-min))
-    (when (> (grid-get-row-count data-source) 0)
-      (grid-table--move-to-cell 0 1) ; Move to first user-defined header cell (row header is 0, first data column is 1)
-      (grid-table--highlight-cell 0 1)))
-  (set-buffer-modified-p nil)
-  (setq buffer-read-only t))
 
 (defun grid-table--show-grid (data-source &optional buffer-name)
   "Show a grid view in a dedicated buffer using DATA-SOURCE."
   (let ((buffer (get-buffer-create (or buffer-name "*Grid Table*"))))
     (with-current-buffer buffer
-      (grid-table--enter-classic-mode)
       (grid-table--show-grid-in-current-buffer data-source))
     (switch-to-buffer buffer)))
 
 (defun grid-table-refresh (&optional restore-row-idx restore-col-idx)
   "Refresh the table, restoring point to RESTORE-ROW-IDX and RESTORE-COL-IDX."
   (interactive)
-  (if (grid-table--etaf-p)
-      (grid-table-etaf-refresh restore-row-idx restore-col-idx)
-    (grid-table--classic-refresh restore-row-idx restore-col-idx)))
+  (grid-table-etaf-refresh restore-row-idx restore-col-idx))
 
 (defun grid-table-recalculate-all ()
   "Compute every formula of the grid anew and show the result.
@@ -1102,110 +921,6 @@ cannot see, such as a formula function defined since."
       (grid-table-recalculate source t))
     (grid-table-refresh)))
 
-(defun grid-table--classic-refresh (&optional restore-row-idx restore-col-idx)
-  "Redraw a classic grid, restoring point to RESTORE-ROW-IDX and RESTORE-COL-IDX."
-  (let* ((inhibit-read-only t)
-         (restore-coords (grid-table-get-cell-at-point))
-         (restore-row-idx (or restore-row-idx
-                              (plist-get restore-coords :slice-row)
-                              grid-table--nav-row))
-         (restore-col-idx (or restore-col-idx
-                              (plist-get restore-coords :slice-col)
-                              grid-table--nav-col)))
-    (when (and grid-table--data-source (current-buffer))
-      (let ((num-rows (grid-get-row-count grid-table--data-source))
-            (num-cols (grid-get-column-count grid-table--data-source)))
-        (when restore-row-idx
-          (setq restore-row-idx
-                (if (= restore-row-idx grid-table--col-header-row-idx)
-                    restore-row-idx
-                  (max 0 (min restore-row-idx (1- num-rows))))))
-        (when restore-col-idx
-          (setq restore-col-idx (max 0 (min restore-col-idx num-cols))))
-        (when grid-table--nav-row
-          (setq grid-table--nav-row restore-row-idx))
-        (when grid-table--nav-col
-          (setq grid-table--nav-col restore-col-idx)))
-      (erase-buffer)
-      (when-let ((title-content (grid-table--render-title-line grid-table--data-source)))
-        (insert title-content))
-      (grid-table--insert-table-from-data-source)
-      (grid-table--fontify-text)
-      (when (and restore-row-idx restore-col-idx)
-        (grid-table--move-to-cell restore-row-idx restore-col-idx)
-        (grid-table--highlight-cell restore-row-idx restore-col-idx)))))
-
-(defun grid-table--fontify-text ()
-  "Apply `fixed-pitch' face to all text in the buffer,
-skipping regions with a `display' property (like images)."
-  (interactive)
-  (let ((inhibit-read-only t)
-        (pos (point-min)))
-    (while (< pos (point-max))
-      (let ((next-change (next-single-property-change pos 'display nil (point-max))))
-        (unless (get-text-property pos 'display)
-          (add-face-text-property pos next-change 'fixed-pitch 'append))
-        (setq pos next-change)))))
-
-(define-derived-mode grid-table-mode special-mode "Grid Table"
-  "Major mode for displaying and editing grid data."
-  :group 'grid-table
-  ;; Setup perfect display environment to eliminate image gaps
-  (grid-table--setup-perfect-display-environment)
-  (setq truncate-lines t)  ; Changed from nil to t to prevent line wrapping
-  (setq auto-hscroll-mode t)  ; Enable automatic horizontal scrolling
-  (setq hscroll-margin 0)  ; Allow cursor to reach window edge before scrolling
-  (setq hscroll-step 1)  ; Smooth horizontal scrolling
-  (setq buffer-read-only t)
-  (setq header-line-format
-        (propertize " Grid Table" 'face '(:weight bold)))
-  (setq-local font-lock-defaults '(grid-table--font-lock-keywords))
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "q") 'quit-window)
-    (define-key map (kbd "g") 'grid-table-recalculate-all)
-    (define-key map (kbd "e") 'grid-table-edit-cell)
-    (define-key map (kbd "<tab>") 'grid-table-next-cell)
-    (define-key map (kbd "<backtab>") 'grid-table-previous-cell)
-    (define-key map (kbd "n") 'grid-table-next-line)
-    (define-key map (kbd "p") 'grid-table-previous-line)
-    (define-key map (kbd "C-c t") 'grid-table-edit-title) ; New keybinding for editing title
-    (define-key map (kbd "C-c r a") 'grid-table-add-row)
-    (define-key map (kbd "C-c r d") 'grid-table-delete-row)
-    (define-key map (kbd "C-c c a") 'grid-table-add-column)
-    (define-key map (kbd "C-c c d") 'grid-table-delete-column)
-    (define-key map (kbd "C-c C-w") 'grid-table-write-file)
-    (define-key map (kbd "C-c C-f") 'grid-table-find-file)
-    (define-key map (kbd "C-c s") 'grid-table-sort-column) ; New keybinding for sorting
-    (define-key map (kbd "C-<next>") 'grid-table-sheet-next)
-    (define-key map (kbd "C-<prior>") 'grid-table-sheet-previous)
-    (define-key map (kbd "C-c w n") 'grid-table-sheet-new)
-    (define-key map (kbd "C-c w r") 'grid-table-sheet-rename)
-    (define-key map (kbd "C-c w d") 'grid-table-sheet-delete)
-    (define-key map (kbd "C-c w s") 'grid-table-sheet-select)
-    (define-key map (kbd "C-c w <") 'grid-table-sheet-move-left)
-    (define-key map (kbd "C-c w >") 'grid-table-sheet-move-right)
-    (define-key map (kbd "C-c w h") 'grid-table-toggle-header-row)
-    (define-key map (kbd "C-c w u") 'grid-table-unfreeze-panes)
-    (define-key map (kbd "C-c r i") 'grid-table-insert-row-above)
-    (define-key map (kbd "C-c m") 'grid-table-merge-cells)
-    (define-key map (kbd "C-c u") 'grid-table-unmerge-cell)
-     (define-key map (kbd "C-c v") 'grid-table-view-chart)
-     (define-key map (kbd "C-c i") 'grid-table-insert-chart)
-     ;; Horizontal scrolling and navigation
-     (define-key map (kbd "C-x <") 'scroll-left)
-     (define-key map (kbd "C-x >") 'scroll-right)
-     (define-key map (kbd "<right>") 'grid-table-cell-right)
-     (define-key map (kbd "<left>") 'grid-table-cell-left)
-     (define-key map (kbd "<down>") 'grid-table-next-line)
-     (define-key map (kbd "<up>") 'grid-table-previous-line)
-     (define-key map (kbd "C-f") 'forward-char)
-     (define-key map (kbd "C-b") 'backward-char)
-     (define-key map (kbd "C-a") 'grid-table-move-beginning-of-line)
-     (define-key map (kbd "C-e") 'grid-table-move-end-of-line)
-     (define-key map (kbd "M-<") 'beginning-of-buffer)
-     (define-key map (kbd "M->") 'end-of-buffer)
-
-     (use-local-map map)))
 
 (defun grid-table--chart-type-defaults (type)
   "Return default parameters for chart TYPE."
@@ -1310,14 +1025,8 @@ skipping regions with a `display' property (like images)."
   (when-let* ((coords (grid-table-get-cell-at-point))
               (display-row-idx (plist-get coords :anchor-row))
               (display-col-idx (plist-get coords :anchor-col)))
-    (if (grid-table--etaf-p)
-        ;; The ETAF renderer records the change for undo.
-        (grid-table-etaf-set-cell display-row-idx (1- display-col-idx) value)
-      (let ((set-raw-fn (gethash :set-raw-value-at grid-table--data-source)))
-        (funcall set-raw-fn grid-table--data-source display-row-idx (1- display-col-idx) value)
-        (grid-table-refresh)
-        (grid-table--move-to-cell display-row-idx display-col-idx)
-        (grid-table--highlight-cell display-row-idx display-col-idx)))))
+    ;; The view records the change for undo.
+    (grid-table-etaf-set-cell display-row-idx (1- display-col-idx) value)))
 
 (defun grid-table--open-demo ()
   "Open a grid-table buffer with a demonstration table for internal testing."
@@ -1352,24 +1061,6 @@ ROWS is a list of lists of strings."
     (setq-local grid-table--title "New Grid Table") ; Set default title for new grids
     (grid-table--show-grid data-source (generate-new-buffer-name "*grid*"))))
 
-
-(defun grid-table--test-newline-wrapping ()
-  "Test function to verify newline-aware text wrapping."
-  (interactive)
-  (let ((test-cases
-         '(("Short text" 20)
-           ("This is a very long line that should be wrapped" 15)
-           ("Line 1\nLine 2\nLine 3" 20)
-           ("Short\nVery long line that needs to be wrapped at spaces" 15)
-           ("First\nSecond line that is way too long and should wrap\nThird" 20))))
-    (dolist (test-case test-cases)
-      (let* ((text (car test-case))
-             (width (cadr test-case))
-             (result (grid-table--wrap-text text width)))
-        (message "Text: %S, Width: %d" text width)
-        (message "Result: %S" result)
-        (message "Max line width: %d" (apply #'max (mapcar #'string-width result)))
-        (message "")))))
 
 (provide 'grid-table)
 

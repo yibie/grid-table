@@ -4,8 +4,7 @@
 
 ;; What turns a grid into text without a buffer to show it in: wrapping,
 ;; column widths, and a table with box-drawing borders.  The exporters
-;; and previews build on it, as does the classic view, which adds a
-;; buffer, a cursor and commands on top.  The ETAF view shares the
+;; and previews build on it.  The view that shows grids shares the
 ;; helpers for wrapping, merges and column letters.
 
 ;;; Code:
@@ -37,8 +36,8 @@
 (defconst grid-table--row-header-col-idx 0
   "Special column index for the 1, 2, 3... row header column.")
 
-(defun grid-table--classic-merges (source)
-  "Return the merges of SOURCE the classic renderer can draw.
+(defun grid-table-text--merges (source)
+  "Return the merges of SOURCE the text table can draw.
 It draws merges along one row or one column; a rectangular merge is
 shown as separate cells, of which only the first holds a value."
   (cl-remove-if (lambda (merge)
@@ -187,7 +186,7 @@ Returns the valid, existing path if found, otherwise nil."
          (get-header-fn (gethash :get-header-value data-source))
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
-         (merges (grid-table--classic-merges data-source))
+         (merges (grid-table-text--merges data-source))
          (headers (cl-loop for c from 0 below num-cols
                            collect (funcall get-header-fn data-source c)))
          (all-rows (cl-loop for r from 0 below num-rows
@@ -548,7 +547,7 @@ window or renderer is involved."
          (get-header-fn (gethash :get-header-value source))
          (num-rows (funcall get-row-count-fn source))
          (num-cols (funcall get-col-count-fn source))
-         (merges (grid-table--classic-merges source))
+         (merges (grid-table-text--merges source))
          (headers (cl-loop for c from 0 below num-cols
                            collect (funcall get-header-fn source c)))
          (all-rows (cl-loop for r from 0 below num-rows

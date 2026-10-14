@@ -17,7 +17,6 @@
 (require 'ert)
 (setq load-prefer-newer t)
 (require 'grid-table)
-(setq grid-table-renderer 'classic)
 (require 'grid-table-xlsx)
 
 (defconst grid-table-xlsx-test--fixture

@@ -6,7 +6,6 @@
 (require 'grid-table)
 
 ;; These tests characterize the classic renderer.
-(setq grid-table-renderer 'classic)
 (require 'grid-table-csv)
 
 (defun grid-table-test--source ()
@@ -121,33 +120,6 @@
     (should (equal (grid-model-get-merges restored) '((1 0 1 1))))
     (should-not (grid-model-get-merges deleted))))
 
-(ert-deftest grid-table-render-and-navigation-use-merge-intervals ()
-  (let ((source (grid-table-test--source)))
-    (funcall (gethash :merge-cells source) source 1 0 2)
-    (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      (should (string-match-p "┴───────┴───────"
-                              (buffer-substring-no-properties
-                               (point-min) (point-max))))
-      (should (grid-table--move-to-cell 2 3))
-      (grid-table-previous-line)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-col-idx) 1))
-        (should (= (plist-get coords :display-col-end-idx) 3)))
-      (grid-table-next-line)
-      (should (= (plist-get (grid-table-get-cell-at-point)
-                            :display-col-idx)
-                 3))
-      (should (grid-table--move-to-cell 1 2))
-      (grid-table-cell-right)
-      (should (= (plist-get (grid-table-get-cell-at-point)
-                            :display-col-idx)
-                 4))
-      (grid-table-cell-left)
-      (should (= (plist-get (grid-table-get-cell-at-point)
-                            :display-col-idx)
-                 1)))))
 
 (ert-deftest grid-table-merged-content-does-not-size-columns ()
   (should
@@ -302,142 +274,6 @@
       (delete-file output))))
 
 ;;;----------------------------------------------------------------------
-;;; Navigation regression tests (spec checklist, dev-note/merge-cells-spec.md)
-;;;
-;;; Display coordinates used below: display row -1 is the A, B, C...
-;;; column header row (`grid-table--col-header-row-idx'); display rows
-;;; 0..N-1 are model rows; display col 0 is the row-number column
-;;; (`grid-table--row-header-col-idx'); display col c+1 is model col c.
-;;; All navigation entry points used here are plain commands with no
-;;; interactive input, so in batch mode calling them directly (rather
-;;; than through key events) drives exactly the code their key bindings
-;;; run.
-;;;----------------------------------------------------------------------
-
-(defun grid-table-test--nav-source ()
-  "Return a 5-column source whose user header row merges model cols 1..3.
-The merge renders as display row 0, display cols 2..4 (\"B1:D1\"), with
-covered cells empty.  Display col 5 (\"E1\") and all of rows 1 and 2 are
-ordinary cells."
-  (make-default-data-source
-   '("A" "BCD" "" "" "E")
-   '(("A" "BCD" "" "" "E")
-     ("a1" "b1" "c1" "d1" "e1")
-     ("a2" "b2" "c2" "d2" "e2"))
-   "Nav merge test"
-   '((0 1 0 3))))
-
-(ert-deftest grid-table-tab-and-shift-tab-skip-covered-cells ()
-  (let ((source (grid-table-test--nav-source)))
-    (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      ;; Point starts on A1 (display row 0, col 1).
-      (should (= (plist-get (grid-table-get-cell-at-point) :display-col-idx) 1))
-      ;; Tab moves to the next visible segment: the merged B1:D1 node,
-      ;; reported at its anchor col 2; covered cols 3/4 are unreachable.
-      (grid-table-next-cell)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-col-idx) 2))
-        (should (= (plist-get coords :display-col-end-idx) 4)))
-      ;; Tab again jumps straight past the merge to E1 (display col 5).
-      (grid-table-next-cell)
-      (should (= (plist-get (grid-table-get-cell-at-point) :display-col-idx) 5))
-      ;; Shift-Tab back lands on the merged anchor, then on A1.
-      (grid-table-previous-cell)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-col-idx) 2))
-        (should (= (plist-get coords :display-col-end-idx) 4)))
-      (grid-table-previous-cell)
-      (should (= (plist-get (grid-table-get-cell-at-point) :display-col-idx) 1)))))
-
-(ert-deftest grid-table-tab-wraps-through-abc-header-row-with-merges ()
-  (let ((source (grid-table-test--nav-source)))
-    (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      ;; Tab from the last data row's last column wraps to the ABC
-      ;; header row's row-number cell (-1, 0).
-      (should (grid-table--move-to-cell 2 5))
-      (grid-table-next-cell)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx)
-                   grid-table--col-header-row-idx))
-        (should (= (plist-get coords :display-col-idx)
-                   grid-table--row-header-col-idx)))
-      ;; Tab from the ABC header row's last column wraps to the first
-      ;; data row's row-number cell (0, 0).
-      (should (grid-table--move-to-cell grid-table--col-header-row-idx 5))
-      (grid-table-next-cell)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx) 0))
-        (should (= (plist-get coords :display-col-idx)
-                   grid-table--row-header-col-idx)))
-      ;; Shift-Tab from the first data row's row-number cell wraps back
-      ;; to the ABC header row's last column.
-      (grid-table-previous-cell)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx)
-                   grid-table--col-header-row-idx))
-        (should (= (plist-get coords :display-col-idx) 5))))))
-
-(ert-deftest grid-table-row-header-column-cycles-vertically-with-merges ()
-  (let ((source (grid-table-test--nav-source)))
-    (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      ;; The row-number column (col 0) never participates in merges;
-      ;; vertical cycling there must be unaffected by the merge on row 0.
-      (should (grid-table--move-to-cell 0 0))
-      ;; Up from the first data row reaches the ABC header row.
-      (grid-table-previous-line)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx)
-                   grid-table--col-header-row-idx))
-        (should (= (plist-get coords :display-col-idx)
-                   grid-table--row-header-col-idx)))
-      ;; Up again wraps to the last data row.
-      (grid-table-previous-line)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx) 2))
-        (should (= (plist-get coords :display-col-idx)
-                   grid-table--row-header-col-idx)))
-      ;; Down from the last data row wraps back to the ABC header row.
-      (grid-table-next-line)
-      (should (= (plist-get (grid-table-get-cell-at-point) :display-row-idx)
-                 grid-table--col-header-row-idx))
-      ;; Down once more returns to the first data row.
-      (grid-table-next-line)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx) 0))
-        (should (= (plist-get coords :display-col-idx)
-                   grid-table--row-header-col-idx))))))
-
-(ert-deftest grid-table-refresh-preserves-nav-col-into-merge ()
-  (let ((source (grid-table-test--nav-source)))
-    (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      ;; Enter the merged B1:D1 (display cols 2..4) from D2 (row 1,
-      ;; col 4) via Up: point lands on the anchor, but the navigation
-      ;; column stays 4 (the D column).
-      (should (grid-table--move-to-cell 1 4))
-      (grid-table-previous-line)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx) 0))
-        (should (= (plist-get coords :display-col-idx) 2)))
-      (should (= grid-table--nav-col 4))
-      ;; Redraw the table; the navigation column must survive the refresh.
-      (grid-table-refresh)
-      (should (= grid-table--nav-col 4))
-      ;; Down must return to the D column (col 4), not to the merge
-      ;; anchor column B (col 2).
-      (grid-table-next-line)
-      (let ((coords (grid-table-get-cell-at-point)))
-        (should (= (plist-get coords :display-row-idx) 1))
-        (should (= (plist-get coords :display-col-idx) 4))))))
-
-;;;----------------------------------------------------------------------
 ;;; Persistence: old loaders must reject v2 tagged files
 ;;;----------------------------------------------------------------------
 
@@ -515,27 +351,6 @@ save from the old version)."
                (regexp-quote "((0 1))")
                (error-message-string err))))))
 
-(ert-deftest grid-table-edit-cell-supports-m-ret-newlines ()
-  (let ((source (grid-table-test--source))
-        prompt
-        edit-map)
-    (with-temp-buffer
-      (grid-table-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      (cl-letf (((symbol-function 'read-string)
-                 (lambda (&rest _)
-                   (ert-fail "Cell editing must use a multiline minibuffer")))
-                ((symbol-function 'read-from-minibuffer)
-                 (lambda (text &optional _initial keymap &rest _)
-                   (setq prompt text
-                         edit-map keymap)
-                   "first\nsecond")))
-        (grid-table-edit-cell))
-      (should (equal (grid-get-raw-value-at source 0 0)
-                     "first\nsecond"))
-      (should (string-match-p "M-RET inserts newline" prompt))
-      (should (eq (lookup-key edit-map (kbd "M-RET")) #'newline))
-      (should (eq (lookup-key edit-map (kbd "RET")) #'exit-minibuffer)))))
 
 (provide 'grid-table-merge-test)
 

@@ -30,9 +30,7 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
   (declare (indent 1))
   `(progn
      (skip-unless grid-table-etaf-test--available)
-     (let* ((grid-table-renderer 'etaf)
-            (grid-table--etaf-warned nil)
-            (grid-table-etaf-mount-options
+     (let* ((grid-table-etaf-mount-options
              (list :viewport-width ,(or (nth 2 spec) 100)
                    :viewport-height ,(or (nth 3 spec) 12)))
             (source (make-default-data-source
@@ -62,23 +60,16 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 (ert-deftest grid-table-etaf-show-mounts-the-grid ()
   (grid-table-etaf-test--with-grid (6 5)
     (should (eq major-mode 'grid-table-etaf-mode))
-    (should (grid-table--etaf-p))
     (should (etaf-runtime-for-buffer (current-buffer)))
     (should-not (buffer-modified-p))
     (should (equal (plist-get (grid-table-get-cell-at-point) :slice-row) 0))
     (should (equal (plist-get (grid-table-get-cell-at-point) :slice-col) 1))
     (should (string-match-p "H0" (grid-table-etaf-test--text)))))
 
-(ert-deftest grid-table-etaf-classic-renderer-stays-selectable ()
-  (let ((grid-table-renderer 'classic)
-        (source (make-default-data-source
-                 '("" "") (grid-table-etaf-test--rows 3 2))))
-    (with-temp-buffer
-      (grid-table--enter-classic-mode)
-      (grid-table--show-grid-in-current-buffer source)
-      (should (eq major-mode 'grid-table-mode))
-      (should-not (grid-table--etaf-p))
-      (should (string-match-p "│" (grid-table-etaf-test--text))))))
+(ert-deftest grid-table-etaf-mode-derives-from-the-grid-mode ()
+  (grid-table-etaf-test--with-grid (3 2)
+    (should (eq major-mode 'grid-table-etaf-mode))
+    (should (derived-mode-p 'grid-table-mode))))
 
 (ert-deftest grid-table-etaf-navigation-commands-move-the-cursor ()
   (grid-table-etaf-test--with-grid (6 5)
@@ -128,20 +119,14 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-scroll-up)
     (should (grid-table-etaf-test--cursor-painted-p))))
 
-(ert-deftest grid-table-etaf-falls-back-to-classic-when-mounting-fails ()
+(ert-deftest grid-table-etaf-a-failed-mount-is-an-error ()
   (skip-unless grid-table-etaf-test--available)
-  (let ((grid-table-renderer 'etaf)
-        (grid-table--etaf-warned nil)
-        (source (make-default-data-source
+  (let ((source (make-default-data-source
                  '("" "") (grid-table-etaf-test--rows 3 2))))
     (cl-letf (((symbol-function 'etaf-mount)
                (lambda (&rest _) (error "Stale ETAF"))))
       (with-temp-buffer
-        (grid-table--show-grid-in-current-buffer source)
-        (should (eq major-mode 'grid-table-mode))
-        (should-not (grid-table--etaf-p))
-        (should grid-table--etaf-warned)
-        (should (string-match-p "│" (buffer-string)))))))
+        (should-error (grid-table--show-grid-in-current-buffer source))))))
 
 (ert-deftest grid-table-etaf-paging-follows-the-window-height ()
   (grid-table-etaf-test--with-grid (200 4 100 12)

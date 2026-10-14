@@ -2,19 +2,19 @@
 
 ;;; Commentary:
 
-;; Renders a grid-table data source through ETAF (https://github.com/emacs-taf)
-;; instead of drawing box characters into the buffer.  Only the rows and
-;; columns that fit the window are mounted, so the cost of moving, scrolling
-;; and editing does not grow with the size of the sheet.
+;; Shows a grid-table data source through ETAF (https://github.com/emacs-taf).
+;; Only the rows and columns that fit the window are mounted, so the cost
+;; of moving, scrolling and editing does not grow with the size of the
+;; sheet.
 ;;
-;; This file is loaded on demand by `grid-table--resolve-renderer' when
-;; `grid-table-renderer' is `etaf'.  It needs the ecss, ebox and etaf
-;; repository roots on `load-path'.  Developed against ecss 9a4270e,
-;; ebox 99cdf0d and etaf 2e08bd9.
+;; This file is loaded by `grid-table--require-view' the first time a grid
+;; is shown.  It needs the ecss, ebox and etaf repository roots on
+;; `load-path'.  Developed against ecss 9a4270e, ebox 99cdf0d and etaf
+;; 2e08bd9.
 ;;
-;; The command layer in grid-table.el is shared with the classic renderer:
+;; The commands in grid-table.el work on the cell this view reports:
 ;; `grid-table-get-cell-at-point', `grid-table-refresh', `grid-table-edit-cell'
-;; and the navigation commands dispatch here in an ETAF buffer.
+;; and the navigation commands end up here.
 
 ;;; Code:
 
@@ -2517,13 +2517,12 @@ ignoring the case of FROM.  The whole is one undoable step."
     (grid-table-write-file)
     t))
 
-(define-derived-mode grid-table-etaf-mode special-mode "Grid Table"
-  "Major mode for a grid shown through the ETAF renderer.
+(define-derived-mode grid-table-etaf-mode grid-table-mode "Grid Table"
+  "Major mode for a grid, which ETAF shows.
 Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
   :group 'grid-table
   (setq buffer-read-only nil)
   (setq truncate-lines t)
-  (setq-local grid-table--renderer 'etaf)
   (add-hook 'write-contents-functions #'grid-table-etaf--write-contents nil t))
 
 (defun grid-table-etaf-refresh (&optional restore-row restore-col)

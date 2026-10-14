@@ -6,7 +6,6 @@
 (require 'grid-table)
 
 ;; These tests characterize the classic renderer.
-(setq grid-table-renderer 'classic)
 
 (ert-deftest grid-table-model-accepts-vertical-merge-quad ()
   (let* ((model (grid-model-create

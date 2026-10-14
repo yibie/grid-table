@@ -302,7 +302,6 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
                                      sheets)))
          (buffer (generate-new-buffer (file-name-nondirectory file))))
     (with-current-buffer buffer
-      (grid-table--enter-classic-mode)
       (setq-local grid-table--title (gethash :title source))
       (grid-table--show-grid-in-current-buffer source))
     (switch-to-buffer buffer)

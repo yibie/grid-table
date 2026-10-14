@@ -76,11 +76,9 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 (require 'grid-table-markdown) ;; Markdown integration
 ```
 
-#### 🖼️ Renderers
+#### 🖼️ The view
 
-`grid-table-renderer` chooses how a grid is drawn:
-
-- `etaf` (default) mounts the grid through [ETAF](https://github.com/emacs-taf). Only the rows and columns that fit the window are rendered, cells are edited in place, and `S-<arrow>` selects a range. It needs the `ecss`, `ebox` and `etaf` repositories on `load-path`:
+- A grid is shown through [ETAF](https://github.com/emacs-taf). Only the rows and columns that fit the window are rendered, cells are edited in place, and `S-<arrow>` selects a range. It needs the `ecss`, `ebox` and `etaf` repositories on `load-path`; without them, opening a grid says so:
 
   ```elisp
   (add-to-list 'load-path "/path/to/ecss")
@@ -92,7 +90,7 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 
   Formatting applies to the selection: `C-c f b` bold, `C-c f i` italic, `C-c f c` text color, `C-c f g` fill color, `C-c f l`/`e`/`r` align left, center or right, `C-c f x` clear. Number formats: `C-c f ,` number with thousands separators, `C-c f p` percent, `C-c f $` currency, `C-c f d` date, `C-c f t` text, `C-c f G` general, and `C-c f +`/`-` for more or fewer decimal places. `C-c f n` adds a conditional format (for example "greater than 100" in red) that keeps following the values, and `C-c f N` removes the ones touching the selection. Formats move with their cells when rows and columns are inserted, deleted or sorted, and are saved in the `.grid` file. A file with formats is written as format version 4, which earlier releases cannot open; files without formats keep their older version.
 
-  With several cells selected, `C-c m` merges them into one; the range can be a rectangle, not only a row or a column (the classic renderer shows a rectangular merge as separate cells). A chart formula is drawn inside its cell at the chart's own size, so its row and column grow to fit; `C-c v` still opens it in its own buffer.
+  With several cells selected, `C-c m` merges them into one; the range can be a rectangle, not only a row or a column. A chart formula is drawn inside its cell at the chart's own size, so its row and column grow to fit; `C-c v` still opens it in its own buffer.
 
   `C-c s` sorts by what a column shows: numbers by value before text, text ignoring case, empty cells last in either direction. `C-c / f` filters the rows by a condition on the cursor's column, `C-c / v` keeps the rows holding the cursor cell's value, `C-c / c` clears that column's filter and `C-c / a` clears all. Filters on several columns combine, a filtered column shows `▼` after its letter, and moving, copying, clearing, formatting and the status bar figures leave hidden rows out. Rows are filtered when a filter is set and on refresh (`C-c C-r`), not after each edit.
 
@@ -102,9 +100,9 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 
   A grid can hold several sheets. `C-c w n` adds one, `C-c w r` renames the current sheet, `C-c w d` deletes it, `C-c w <` and `C-c w >` move it, `C-<next>` and `C-<prior>` show the next and the previous sheet, `C-c w s` asks for one by name, and with ETAF the sheets have tabs on the bottom line that can be clicked. A formula reads another sheet as `Sheet2!A1`, `SUM(Sheet2!A1:B5)` or `'My Sheet'!A1`; it follows a renamed sheet and rows and columns added or deleted there, and shows `#REF!` once the sheet is gone. Each sheet keeps its own cursor, filters and undo history. A grid with one sheet is saved as before; with several the file has version 5, which earlier releases do not read.
 
-- `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete. It gets no new features: selections, in-place editing, formats, filters, fill, find and replace, frozen panes, rectangular merges and sheet tabs exist in the ETAF view only. The plain-text table that the Markdown preview and the exporters use lives in `grid-table-text.el` and does not depend on either view.
+The view that drew box characters into the buffer and edited through the minibuffer is gone, and with it `grid-table-renderer`. The plain-text table it drew is still what the Markdown preview and the exporters use; it lives in `grid-table-text.el` (`grid-table-text-render`) and needs no view. `grid-table-mode` remains as the parent of `grid-table-etaf-mode`, so hooks on it still run.
 
-Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/checkouts`.
+Run the tests with `make test-model` (the model, the formulas and the text table; no ETAF needed) and `make test-etaf ETAF_SRC=/path/to/checkouts`.
 
 ## 📋 Operation Quick Reference
 

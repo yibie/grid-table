@@ -95,17 +95,15 @@ Supported arguments:
   "Internal function to create a grid table."
   (let ((buffer (generate-new-buffer "*Grid Table*")))
     (with-current-buffer buffer
-      (grid-table-mode)
-      (setq grid-table--data-source data-source)
       (setq grid-table--title title)
       (setq grid-table--file-path file-path)
-      
+
+      ;; Render the grid; this sets the major mode
+      (grid-table--show-grid-in-current-buffer data-source title)
+
       ;; Apply key bindings
       (grid-table--apply-key-bindings key-bindings)
-      
-      ;; Render the grid
-      (grid-table--show-grid data-source)
-      
+
       ;; Switch to the buffer
       (switch-to-buffer buffer))))
 

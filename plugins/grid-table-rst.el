@@ -70,7 +70,7 @@
 (defun grid-table-export-as-rst ()
   "Export the current grid table to a reStructuredText-formatted file."
   (interactive)
-  (unless (derived-mode-p 'grid-table-mode 'grid-table-etaf-mode)
+  (unless (derived-mode-p 'grid-table-mode)
     (error "Not in a grid-table buffer"))
   (when-let ((data-source grid-table--data-source))
     (let ((file-path (read-file-name "Export as rST to: " nil nil nil ".rst")))

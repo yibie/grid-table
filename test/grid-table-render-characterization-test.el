@@ -6,13 +6,11 @@
 (require 'grid-table)
 
 ;; These tests characterize the classic renderer.
-(setq grid-table-renderer 'classic)
 
 (defun grid-table-render-test--render (source)
   "Return SOURCE rendered as plain buffer text."
   (with-temp-buffer
-    (grid-table-mode)
-    (grid-table--show-grid-in-current-buffer source)
+    (insert (grid-table-text-render source))
     (buffer-substring-no-properties (point-min) (point-max))))
 
 (defun grid-table-render-test--source (headers rows &optional merges)
@@ -36,8 +34,7 @@
 (defun grid-table-render-test--property-ranges (source)
   "Return contiguous `grid-cell' text property ranges after rendering SOURCE."
   (with-temp-buffer
-    (grid-table-mode)
-    (grid-table--show-grid-in-current-buffer source)
+    (insert (grid-table-text-render source))
     (let ((pos (point-min))
           ranges)
       (while (< pos (point-max))
