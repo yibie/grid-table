@@ -1260,7 +1260,10 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-goto 0 0)
     (grid-table-etaf-goto 6 0 t)
     (grid-table-etaf-hide-rows)
-    (should (equal (car (grid-table-hidden source)) '(0 5 6)))))
+    (should (equal (car (grid-table-hidden source)) '(0 5 6)))
+    ;; With the rest filtered away, the last shown row cannot go.
+    (grid-table-etaf-select-all)
+    (should-error (grid-table-etaf-hide-rows) :type 'user-error)))
 
 (ert-deftest grid-table-etaf-defined-names ()
   (grid-table-etaf-test--with-grid (8 4 100 12)
@@ -1282,6 +1285,12 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-goto 0 0)
     (grid-table-etaf-goto-address "amounts")
     (should (equal (grid-table-etaf-selection) '(1 1 3 1)))
+    ;; A short name reads like column letters; the name wins.
+    (grid-table-etaf-goto 4 2)
+    (grid-table-etaf-define-name "Qty")
+    (grid-table-etaf-goto 0 0)
+    (grid-table-etaf-goto-name "Qty")
+    (should (equal (grid-table-etaf--cursor) '(4 . 2)))
     ;; Tracing the formula shows the named cells.
     (grid-table-etaf-goto 6 2)
     (grid-table-etaf-trace-precedents)

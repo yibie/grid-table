@@ -1366,12 +1366,13 @@ spreadsheet does."
                    (cdr (grid-table-sheets))))
           nil nil nil 'grid-table-etaf--goto-history)))
   (pcase-let ((`(,sheet ,top ,left ,bottom ,right)
-               (or (grid-table-etaf--parse-address address)
-                   (when-let* ((workbook (grid-workbook-of
+               ;; A name first: Qty is a name before it is column QTY.
+               (or (when-let* ((workbook (grid-workbook-of
                                           grid-table--data-source))
                                (definition (grid-workbook-name-definition
                                             workbook (string-trim address))))
                      (grid-table-etaf--parse-address (substring definition 1)))
+                   (grid-table-etaf--parse-address address)
                    (user-error "Not a cell, range or name: %s" address))))
     (when sheet
       (grid-table-switch-to-sheet
@@ -2627,7 +2628,9 @@ copying, clearing and pasting.  `grid-table-etaf-show-rows' shows them."
                        (cl-remove-if-not
                         (lambda (row) (grid-table-etaf--row-shown-p state row))
                         (number-sequence (nth 0 range) (nth 2 range))))))
-    (when (cl-every (lambda (row) (memq row rows))
+    (when (cl-every (lambda (row)
+                      (or (memq row rows)
+                          (not (grid-table-etaf--row-shown-p state row))))
                     (number-sequence 0 (1- (grid-get-row-count source))))
       (user-error "At least one row has to stay shown"))
     (grid-table-etaf--set-hidden state rows (cdr hidden))))
