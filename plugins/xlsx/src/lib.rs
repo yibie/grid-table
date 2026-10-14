@@ -10,7 +10,8 @@ use std::path::Path;
 use umya_spreadsheet::{
     reader, writer, Color, ConditionalFormatValues, ConditionalFormatting,
     ConditionalFormattingOperatorValues, ConditionalFormattingRule, DataValidation,
-    DataValidationValues, DataValidations, DefinedName, Formula, HorizontalAlignmentValues, Pane,
+    Comment, DataValidationValues, DataValidations, DefinedName, Formula, Hyperlink,
+    HorizontalAlignmentValues, Pane,
     PaneStateValues, PaneValues, PatternValues, Selection, SheetView, Style, Workbook, Worksheet,
 };
 use umya_spreadsheet::structs::drawing::Theme;
@@ -127,7 +128,30 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             }
         }
         push_style(out, cell.style(), theme, false);
+        // A link inside the workbook is written #Sheet2!A1, as grid-table
+        // keeps it.
+        if let Some(link) = cell.hyperlink() {
+            if link.location() {
+                keyword(out, ":link", &format!("#{}", link.url()));
+            } else if !link.url().is_empty() {
+                keyword(out, ":link", link.url());
+            }
+        }
         out.push(')');
+    }
+    out.push_str(") :notes (");
+    for comment in sheet.comments() {
+        let at = comment.coordinate();
+        let text = match (comment.text().text(), comment.text().rich_text()) {
+            (Some(text), _) => text.value().to_string(),
+            (None, Some(rich)) => rich.text().to_string(),
+            (None, None) => String::new(),
+        };
+        if !text.is_empty() {
+            write!(out, "({} {} ", at.row_num() - 1, at.col_num() - 1)?;
+            quote(out, &text);
+            out.push_str(") ");
+        }
     }
     out.push_str(") :merges (");
     for merge in sheet.merge_cells() {
@@ -396,6 +420,7 @@ fn clear(sheet: &mut Worksheet) {
         sheet.remove_cell(at);
     }
     sheet.merge_cells_mut().clear();
+    sheet.comments_mut().clear();
     sheet.set_conditional_formatting_collection(Vec::new());
     sheet.remove_data_validations();
     for row in sheet.row_dimensions_mut() {
@@ -441,6 +466,28 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
             }
             "M" if fields.len() >= 2 => {
                 sheet.add_merge_cells(fields[1]);
+            }
+            // N row col text: a note on a cell
+            "N" if fields.len() >= 4 => {
+                let row: u32 = fields[1].parse()?;
+                let col: u32 = fields[2].parse()?;
+                let mut comment = Comment::default();
+                comment
+                    .new_comment((col + 1, row + 1))
+                    .set_author("grid-table")
+                    .set_text_string(fields[3]);
+                sheet.add_comments(comment);
+            }
+            // L row col link: a web address or file, or #Sheet!A1 inside
+            "L" if fields.len() >= 4 => {
+                let row: u32 = fields[1].parse()?;
+                let col: u32 = fields[2].parse()?;
+                let mut link = Hyperlink::default();
+                match fields[3].strip_prefix('#') {
+                    Some(place) => link.set_url(place).set_location(true),
+                    None => link.set_url(fields[3]),
+                };
+                sheet.cell_mut((col + 1, row + 1)).set_hyperlink(link);
             }
             "F" if fields.len() >= 4 => conditionals.push(&record[2..]),
             // W col width: a column sized by hand, in characters

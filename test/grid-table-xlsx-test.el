@@ -295,6 +295,35 @@
         (grid-table-xlsx-write-workbook back file)
         (should-not (grid-workbook-names (grid-table-xlsx-create-workbook file)))))))
 
+(ert-deftest grid-table-xlsx-test-notes-and-links ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "" "")
+                  '(("Item" "Site" "") ("a" "home" "") ("b" "back" ""))))
+           (workbook (grid-workbook-create (list (cons "Data" data)))))
+      (grid-set-style-at data 1 0 '(:bold t :note "Checked\nby Ann"))
+      (grid-set-style-at data 1 1 '(:link "https://example.org/a?b=1"))
+      (grid-set-style-at data 2 1 '(:link "#Data!A1"))
+      ;; A note on an empty cell
+      (grid-set-style-at data 2 2 '(:note "to do"))
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                       "Data")))
+        (should (equal (grid-get-style-at back 1 0)
+                       '(:bold t :note "Checked\nby Ann")))
+        (should (equal (grid-get-style-at back 1 1)
+                       '(:link "https://example.org/a?b=1")))
+        (should (equal (grid-get-style-at back 2 1) '(:link "#Data!A1")))
+        (should (equal (grid-get-style-at back 2 2) '(:note "to do")))
+        ;; Written back without them, they are gone from the file.
+        (grid-set-style-at back 1 0 '(:bold t))
+        (grid-table-xlsx-write-workbook (grid-workbook-of back) file)
+        (let ((again (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                          "Data")))
+          (should (equal (grid-get-style-at again 1 0) '(:bold t)))
+          (should (equal (grid-get-style-at again 2 2) '(:note "to do"))))))))
+
 (ert-deftest grid-table-xlsx-test-export-keeps-other-sheets ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

@@ -166,7 +166,9 @@ written back."
                  (list :color (concat "#" color)))
             (and fill (list :background (concat "#" fill)))
             (and align (list :align (intern align)))
-            (and format (list :format format)))))
+            (and format (list :format format))
+            (and (plist-get properties :link)
+                 (list :link (plist-get properties :link))))))
 
 (defun grid-table-xlsx--unquote (text)
   "Return TEXT without the double quotes of a formula string."
@@ -278,6 +280,10 @@ the header row."
     (dolist (merge merges)
       (setq rows (max rows (1+ (nth 2 merge)))
             cols (max cols (1+ (nth 3 merge)))))
+    ;; A note may sit on an empty cell.
+    (dolist (note (plist-get data :notes))
+      (setq rows (max rows (1+ (nth 0 note)))
+            cols (max cols (1+ (nth 1 note)))))
     (when (> (* rows cols) grid-table-xlsx-max-cells)
       (error "Sheet %s spans %d by %d cells, more than grid-table opens"
              sheet rows cols))
@@ -306,6 +312,11 @@ the header row."
         (dolist (cell cells)
           (when-let* ((style (grid-table-xlsx--style (nthcdr 3 cell))))
             (grid-model-set-style model (nth 0 cell) (nth 1 cell) style)))
+        (pcase-dolist (`(,row ,col ,text) (plist-get data :notes))
+          (grid-model-set-style
+           model row col
+           (plist-put (copy-sequence (grid-model-get-style model row col))
+                      :note text)))
         (grid-model-set-conditionals model (car rules))
         ;; A width is in characters on both sides; a workbook counts a
         ;; little padding in, which rounding takes off again.
@@ -468,7 +479,16 @@ RAW is its raw input and STYLE its style."
                         (if (and format (not (plist-get style :format)))
                             (plist-put (copy-sequence style) :format format)
                           style)))))
-          (push record records))))
+          (push record records))
+        (let ((style (grid-get-style-at source row col)))
+          (dolist (entry '((:note . "N") (:link . "L")))
+            (when-let* ((text (plist-get style (car entry))))
+              (push (mapconcat #'identity
+                               (list (cdr entry) (number-to-string row)
+                                     (number-to-string col)
+                                     (grid-table-xlsx--clean text))
+                               grid-table-xlsx--field)
+                    records))))))
     (dolist (merge (grid-get-merges source))
       (push (concat "M" grid-table-xlsx--field
                     (apply #'grid-table-xlsx--range-name merge))
