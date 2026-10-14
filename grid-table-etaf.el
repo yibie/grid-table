@@ -1309,8 +1309,27 @@ LINE, the grid line border."
   "Return the pixel height of one line."
   (max 1 (or (and (display-graphic-p) (default-line-height)) 1)))
 
-(defun grid-table-etaf--chart-data (source chart)
-  "Return the data CHART reads from SOURCE, as `grid-chart-svg-data' does."
+(defvar-local grid-table-etaf--chart-data-cache nil
+  "(TICK . TABLE): chart data read while the view's tick was TICK.
+Cells change only with a new tick, so cursor moves and scrolling reuse
+what was read.")
+
+(defun grid-table-etaf--chart-data (source chart &optional tick)
+  "Return the data CHART reads from SOURCE, as `grid-chart-svg-data' does.
+TICK, the view's change counter, lets the data be read once per change."
+  (if (null tick)
+      (grid-table-etaf--read-chart-data source chart)
+    (unless (eql (car grid-table-etaf--chart-data-cache) tick)
+      (setq grid-table-etaf--chart-data-cache
+            (cons tick (make-hash-table :test #'equal))))
+    (let ((key (list source (plist-get chart :range) (plist-get chart :by)
+                     (plist-get chart :type)))
+          (table (cdr grid-table-etaf--chart-data-cache)))
+      (or (gethash key table)
+          (puthash key (grid-table-etaf--read-chart-data source chart) table)))))
+
+(defun grid-table-etaf--read-chart-data (source chart)
+  "Read the data CHART draws from SOURCE."
   (let* ((range (grid-chart-svg-parse-range (plist-get chart :range)))
          (rows (grid-get-row-count source))
          (cols (grid-get-column-count source)))
@@ -1368,17 +1387,12 @@ what row heights are measured over."
                (cl-incf total (grid-table-etaf--col-pixels state col))))
     (* sign total)))
 
-(defun grid-table-etaf--chart-place (state source chart rows cols)
-  "Return where CHART shows in STATE's window, or nil when it does not.
-ROWS and COLS are the model rows and columns shown.  The result is
-\(LEFT-PIXELS TOP-LINE COLUMNS LINES CUT-COLUMNS CUT-LINES): the part of
-the chart shown, and how much of it is cut off at the left and top."
+(defun grid-table-etaf--chart-frame (state source rows cols)
+  "Return the window's layout that charts are placed in, as a plist.
+ROWS and COLS are the model rows and columns STATE shows of SOURCE."
   (let* ((merges (grid-get-merges source))
          (frozen (grid-table-frozen source))
          (char (grid-table-etaf--char-width))
-         (size (plist-get chart :size))
-         (anchor (plist-get chart :anchor))
-         (row (car anchor)) (col (cdr anchor))
          ;; Lines and pixels where the cells of the grid begin
          (y0 (+ 2 (grid-table-etaf--title-lines state)))
          (x0 (* char (+ 2 (grid-table-etaf--row-header-width source))))
@@ -1395,7 +1409,31 @@ the chart shown, and how much of it is cut off at the left and top."
          ;; A chart may run past the last column, to the window's edge.
          (sx1 (max (+ sx0 (cl-loop for c in scrolled-cols
                                    sum (grid-table-etaf--col-pixels state c)))
-                   (car (grid-table-etaf--viewport state))))
+                   (car (grid-table-etaf--viewport state)))))
+    (list :merges merges :frozen frozen :char char :y0 y0 :x0 x0
+          :frozen-rows frozen-rows :scrolled-rows scrolled-rows
+          :frozen-cols frozen-cols :scrolled-cols scrolled-cols
+          :sy0 sy0 :sy1 sy1 :sx0 sx0 :sx1 sx1)))
+
+(defun grid-table-etaf--chart-place (state frame chart cols)
+  "Return where CHART shows in STATE's window, or nil when it does not.
+FRAME is what `grid-table-etaf--chart-frame' returns and COLS the model
+columns shown.  The result is (LEFT-PIXELS TOP-LINE COLUMNS LINES
+CUT-COLUMNS CUT-LINES): the part of the chart shown, and how much of it
+is cut off at the left and top."
+  (let* ((merges (plist-get frame :merges))
+         (frozen (plist-get frame :frozen))
+         (char (plist-get frame :char))
+         (y0 (plist-get frame :y0)) (x0 (plist-get frame :x0))
+         (frozen-rows (plist-get frame :frozen-rows))
+         (scrolled-rows (plist-get frame :scrolled-rows))
+         (frozen-cols (plist-get frame :frozen-cols))
+         (scrolled-cols (plist-get frame :scrolled-cols))
+         (sy0 (plist-get frame :sy0)) (sy1 (plist-get frame :sy1))
+         (sx0 (plist-get frame :sx0)) (sx1 (plist-get frame :sx1))
+         (size (plist-get chart :size))
+         (anchor (plist-get chart :anchor))
+         (row (car anchor)) (col (cdr anchor))
          ;; A chart anchored in the frozen rows or columns stays put along
          ;; that axis; any other scrolls with the cells.
          (y (if (< row (car frozen))
@@ -1426,14 +1464,18 @@ the chart shown, and how much of it is cut off at the left and top."
 (defun grid-table-etaf--chart-nodes (state source rows cols)
   "Return the View nodes of SOURCE's floating charts for STATE's window.
 ROWS and COLS are the model rows and columns shown."
-  (let ((buffer (grid-table-etaf--state-buffer state)))
+  (let* ((buffer (grid-table-etaf--state-buffer state))
+         (charts (grid-table-charts source))
+         (frame (and charts
+                     (grid-table-etaf--chart-frame state source rows cols)))
+         (tick (etaf-value (grid-table-etaf--state-tick state))))
     (cl-loop
-     for chart in (grid-table-charts source) for index from 0
-     for place = (grid-table-etaf--chart-place state source chart rows cols)
+     for chart in charts for index from 0
+     for place = (grid-table-etaf--chart-place state frame chart cols)
      when place collect
      (pcase-let* ((`(,left ,top ,columns ,lines ,cut-cols ,cut-lines) place)
                   (size (plist-get chart :size))
-                  (data (grid-table-etaf--chart-data source chart))
+                  (data (grid-table-etaf--chart-data source chart tick))
                   (drawn (if (eql index grid-table-etaf--chart)
                              (plist-put (copy-sequence chart) :selected t)
                            chart)))

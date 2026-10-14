@@ -1499,6 +1499,19 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (let ((chart (car (grid-table-charts source))))
         (should (equal (plist-get chart :anchor) '(2 . 3)))
         (should (equal (plist-get chart :range) "B3:C7")))
+      ;; A drag moves the chart by whole cells, as one undo step.
+      (etaf-drag-step (grid-table-etaf--runtime) 'grid-table-etaf-chart-0 0 3)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(5 . 3)))
+      (grid-table-etaf-undo)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(2 . 3)))
+      ;; The chart draws what the cells hold now.
+      (grid-table-etaf-set-cell 2 1 "999")
+      (should (equal (cadr (car (plist-get (grid-table-etaf--chart-data
+                                             source (car (grid-table-charts source))
+                                             (etaf-value (grid-table-etaf--state-tick
+                                                          grid-table-etaf--state)))
+                                            :series)))
+                     999))
       (grid-table-etaf-chart-move-here)
       (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(1 . 0)))
       (grid-table-etaf-chart-delete)
