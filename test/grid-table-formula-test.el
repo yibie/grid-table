@@ -987,6 +987,28 @@
     (should (equal (grid-table-formula-test--all-values model)
                    (grid-table-formula-test--fresh-values model)))))
 
+;; The text table needs a data source and nothing else.
+(ert-deftest grid-table-text-render-needs-no-buffer ()
+  (let* ((source (make-default-data-source
+                  '("" "" "")
+                  '(("Item" "Qty" "Total") ("pear" "2" "=B2*3")
+                    ("wide" "" ""))))
+         (text (progn
+                 (grid-merge-cells source 2 0 2 2)
+                 (with-temp-buffer
+                   (let ((grid-table--data-source nil))
+                     (grid-table-text-render source))))))
+    (should (equal (split-string (substring-no-properties text) "\n" t)
+                   '("┌───┬───────┬───────┬───────┐"
+                     "│   │ A     │ B     │ C     │"
+                     "├───┼───────┼───────┼───────┤"
+                     "│1  │ Item  │ Qty   │ Total │"
+                     "├───┼───────┼───────┼───────┤"
+                     "│2  │ pear  │ 2     │ 6     │"
+                     "├───┼───────┴───────┴───────┤"
+                     "│3  │ wide                  │"
+                     "└───┴───────────────────────┘")))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

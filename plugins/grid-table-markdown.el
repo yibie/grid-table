@@ -14,12 +14,7 @@
   (unless (and file-path (file-exists-p file-path))
     (error "Grid file not found: %s" file-path))
   (let* ((data-source (grid-table-persistence-create-data-source-from-file file-path))
-         (preview ""))
-    (with-temp-buffer
-      ;; Reuse core build function to generate plain text table
-      (let ((grid-table--data-source data-source))
-        (grid-table--insert-table-from-data-source))
-      (setq preview (buffer-string)))
+         (preview (grid-table-text-render data-source)))
     preview))
 
 (defun grid-table-markdown-insert-block (file-path)

@@ -102,7 +102,7 @@ Press `C-c m` and enter a same-row or same-column A1 range to merge it. Press `C
 
   A grid can hold several sheets. `C-c w n` adds one, `C-c w r` renames the current sheet, `C-c w d` deletes it, `C-c w <` and `C-c w >` move it, `C-<next>` and `C-<prior>` show the next and the previous sheet, `C-c w s` asks for one by name, and with ETAF the sheets have tabs on the bottom line that can be clicked. A formula reads another sheet as `Sheet2!A1`, `SUM(Sheet2!A1:B5)` or `'My Sheet'!A1`; it follows a renamed sheet and rows and columns added or deleted there, and shows `#REF!` once the sheet is gone. Each sheet keeps its own cursor, filters and undo history. A grid with one sheet is saved as before; with several the file has version 5, which earlier releases do not read.
 
-- `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete.
+- `classic` draws box characters into the buffer and edits through the minibuffer. It is the fallback during the migration to ETAF: it is used automatically when ETAF cannot be loaded, and it will be removed once the migration is complete. It gets no new features: selections, in-place editing, formats, filters, fill, find and replace, frozen panes, rectangular merges and sheet tabs exist in the ETAF view only. The plain-text table that the Markdown preview and the exporters use lives in `grid-table-text.el` and does not depend on either view.
 
 Run the tests with `make test-classic` and `make test-etaf ETAF_SRC=/path/to/checkouts`.
 

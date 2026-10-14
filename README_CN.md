@@ -102,7 +102,7 @@
 
   一个表格可以有多张工作表。`C-c w n` 新建，`C-c w r` 给当前工作表改名，`C-c w d` 删除，`C-c w <` 和 `C-c w >` 移动，`C-<next>` 和 `C-<prior>` 切到后一张和前一张，`C-c w s` 按名称选择；用 ETAF 时底部一行有可点击的工作表标签。公式用 `Sheet2!A1`、`SUM(Sheet2!A1:B5)`、`'My Sheet'!A1` 读取其他工作表；工作表改名、那张表增删行列时引用会跟着改，工作表删除后显示 `#REF!`。每张工作表有各自的光标、筛选和撤销历史。只有一张工作表时文件格式不变；有多张时保存为版本 5，旧版本读不了。
 
-- `classic` 用边框字符直接画进 buffer，通过 minibuffer 编辑。它是迁移到 ETAF 期间的兜底选择：ETAF 无法加载时自动使用，迁移完成后移除。
+- `classic` 用边框字符直接画进 buffer，通过 minibuffer 编辑。它是迁移到 ETAF 期间的兜底选择：ETAF 无法加载时自动使用，迁移完成后移除。它不再增加新功能：选区、原位编辑、格式、筛选、填充、查找替换、冻结窗格、矩形合并和工作表标签只在 ETAF 视图里有。Markdown 预览和各导出器用的纯文本表格在 `grid-table-text.el` 里，不依赖任何一种视图。
 
 运行测试：`make test-classic` 与 `make test-etaf ETAF_SRC=/path/to/checkouts`。
 
