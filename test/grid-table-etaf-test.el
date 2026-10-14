@@ -1119,6 +1119,40 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (execute-kbd-macro (kbd "C-c g")))
     (should (equal (grid-table-etaf--cursor) '(6 . 4)))))
 
+(ert-deftest grid-table-etaf-traces-precedents-and-dependents ()
+  (grid-table-etaf-test--with-grid (8 5 100 12)
+    ;; D3 is =B3+C3.
+    (grid-table-etaf-goto 2 3)
+    (should (string-match-p "2 precedents" (grid-table-etaf-trace-precedents)))
+    (should (eq (grid-table-etaf--traced source 2 1) 'precedent))
+    (should (eq (grid-table-etaf--traced source 2 2) 'precedent))
+    (should-not (grid-table-etaf--traced source 2 3))
+    ;; A formula elsewhere reading a range that takes in B3.
+    (grid-table-etaf-set-cell 6 4 "=SUM(B:B)")
+    (should-not grid-table-etaf--traces)
+    (grid-table-sheet-new "Totals")
+    (grid-table-etaf-set-cell 1 0 "=Sheet1!B3*2")
+    (grid-table-sheet-select "Sheet1")
+    (grid-table-etaf-goto 2 1)
+    (should (string-match-p "3 dependents (1 on other sheets)"
+                            (grid-table-etaf-trace-dependents)))
+    (should (eq (grid-table-etaf--traced source 2 3) 'dependent))
+    (should (eq (grid-table-etaf--traced source 6 4) 'dependent))
+    (should-not (grid-table-etaf--traced source 3 3))
+    ;; Visiting them goes to the other sheet in turn.
+    (grid-table-etaf-next-trace)
+    (should (equal (grid-table-etaf--cursor) '(2 . 3)))
+    (grid-table-etaf-next-trace)
+    (should (equal (grid-table-etaf--cursor) '(6 . 4)))
+    (grid-table-etaf-next-trace)
+    (should (equal (grid-workbook-sheet-name grid-table--data-source) "Totals"))
+    (should (equal (grid-table-etaf--cursor) '(1 . 0)))
+    (grid-table-etaf-clear-traces)
+    (should-not grid-table-etaf--traces)
+    (should-error (grid-table-etaf-next-trace) :type 'user-error)
+    (grid-table-etaf-goto 0 0)
+    (should-error (grid-table-etaf-trace-precedents) :type 'user-error)))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

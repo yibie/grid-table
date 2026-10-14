@@ -48,6 +48,18 @@
   "Face whose colors paint the selected range."
   :group 'grid-table)
 
+(defface grid-table-etaf-precedent-face
+  '((((background dark)) :background "#1f3a5c")
+    (t :background "#d6e6fb"))
+  "Face whose background paints the cells a traced formula reads."
+  :group 'grid-table)
+
+(defface grid-table-etaf-dependent-face
+  '((((background dark)) :background "#4d3812")
+    (t :background "#fbe3c2"))
+  "Face whose background paints the formulas that read a traced cell."
+  :group 'grid-table)
+
 (defcustom grid-table-etaf-min-column-width 5
   "Narrowest content width of a column, in characters."
   :type 'integer
@@ -72,6 +84,17 @@
 
 (defvar-local grid-table-etaf--state nil
   "Renderer state of the current ETAF grid buffer.")
+
+(defvar-local grid-table-etaf--traces nil
+  "Traced cells painted in the grid, as (SHEET TOP LEFT BOTTOM RIGHT KIND).
+SHEET is the data source of the sheet, KIND `precedent' or `dependent'.
+Open ends of whole columns and rows are nil.  The list outlives a switch
+to another sheet and is dropped when a cell or the structure changes.")
+(put 'grid-table-etaf--traces 'permanent-local t)
+
+(defvar-local grid-table-etaf--next-trace 0
+  "Index of the trace `grid-table-etaf-next-trace' visits next.")
+(put 'grid-table-etaf--next-trace 'permanent-local t)
 
 (defvar grid-table-etaf-mount-options nil
   "Options passed to `etaf-mount' when a grid is shown.
@@ -609,6 +632,10 @@ The column follows the pointer; a cancelled drag restores its width."
     ("s-Z" grid-table-etaf-redo "Redo")
     ("C-x h" grid-table-etaf-select-all "Select all")
     ("C-c g" grid-table-etaf-goto-address "Go to cell or range")
+    ("C-c a p" grid-table-etaf-trace-precedents "Trace precedents")
+    ("C-c a d" grid-table-etaf-trace-dependents "Trace dependents")
+    ("C-c a n" grid-table-etaf-next-trace "Go to next traced cell")
+    ("C-c a x" grid-table-etaf-clear-traces "Clear traces")
     ("C-<next>" grid-table-sheet-next "Next sheet")
     ("C-<prior>" grid-table-sheet-previous "Previous sheet")
     ("C-c w n" grid-table-sheet-new "New sheet")
@@ -715,7 +742,11 @@ position, the node key and the paint state of the cell."
          (image (and (not editing) (grid-table--extract-image-path text)))
          (face (cond ((plist-get spec :cursor) 'grid-table-etaf-cursor-face)
                      ((plist-get spec :selected)
-                      'grid-table-etaf-selection-face)))
+                      'grid-table-etaf-selection-face)
+                     ((eq (plist-get spec :traced) 'precedent)
+                      'grid-table-etaf-precedent-face)
+                     ((eq (plist-get spec :traced) 'dependent)
+                      'grid-table-etaf-dependent-face)))
          (line (plist-get spec :line))
          (grid-row (plist-get spec :grid-row))
          (grid-col (plist-get spec :grid-col))
@@ -1096,6 +1127,9 @@ LINE, the grid line border."
                          (eql (if merge (car (last merge-rows)) row) edge-row)
                          edge)
                     :cursor cursor-p
+                    :traced (and grid-table-etaf--traces
+                                 (grid-table-etaf--traced
+                                  source cell-row cell-col))
                     :editing (and cursor-p editing)
                     :selected
                     (and ranged
@@ -1746,6 +1780,7 @@ that reject the value, such as the covered part of a merge, are skipped."
 Return the number of cells that changed."
   (let ((applied (grid-table-etaf--write-cells state changes)))
     (when applied
+      (setq grid-table-etaf--traces nil)
       (grid-table-etaf--record state (cons 'cells applied)))
     (grid-table-etaf--widen-visible state)
     (grid-table-etaf--bump state)
@@ -1809,6 +1844,7 @@ previous model is all that undoing them needs."
          (model (gethash :model source))
          (known (grid-table-etaf--state-model state)))
     (when (and model known (not (eq model known)))
+      (setq grid-table-etaf--traces nil)
       (setf (grid-table-etaf--state-manual state) nil)
       (grid-table-etaf--forget-moved-filters state known model)
       (grid-table-etaf--record state (list 'model known model)))
@@ -2358,6 +2394,114 @@ passed over: the pasted lines go to the rows that are shown."
       (grid-table-etaf-goto bottom right)
       (grid-table-etaf-goto top left t)
       (message "Pasted %d cell%s" count (if (= count 1) "" "s")))))
+
+;;;----------------------------------------------------------------------
+;;; Tracing formulas
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--traced (source row col)
+  "Return the kind of the trace painting the cell at ROW and COL of SOURCE."
+  (cl-loop for trace in grid-table-etaf--traces
+           when (and (eq (car trace) source)
+                     (grid-calc-reference-covers-p trace row col))
+           return (nth 5 trace)))
+
+(defun grid-table-etaf--sheet-named (source name)
+  "Return the sheet NAME of SOURCE's workbook; SOURCE itself when NAME is nil."
+  (if (null name)
+      source
+    (when-let* ((workbook (grid-workbook-of source)))
+      (grid-workbook-sheet workbook name))))
+
+(defun grid-table-etaf--show-traces (traces kind)
+  "Paint TRACES and report how many of KIND there are."
+  (let* ((source grid-table--data-source)
+         (here (cl-count source traces :key #'car)))
+    (setq grid-table-etaf--traces traces
+          grid-table-etaf--next-trace 0)
+    (grid-table-etaf--bump (grid-table-etaf--state-or-error))
+    (message (if (null traces)
+                 (format "No %ss" kind)
+               (format "%d %s%s%s; C-c a n visits them, C-c a x clears"
+                       (length traces) kind (if (cdr traces) "s" "")
+                       (if (< here (length traces))
+                           (format " (%d on other sheets)"
+                                   (- (length traces) here))
+                         ""))))))
+
+(defun grid-table-etaf-trace-precedents ()
+  "Paint the cells and ranges the formula under the cursor reads.
+References into other sheets count, and `grid-table-etaf-next-trace'
+goes there."
+  (interactive)
+  (let* ((source grid-table--data-source)
+         (model (or (gethash :model source)
+                    (user-error "This grid keeps no formulas")))
+         (cursor (grid-table-etaf--cursor))
+         (traces
+          (delq nil
+                (mapcar
+                 (lambda (reference)
+                   (let ((sheet (grid-table-etaf--sheet-named
+                                 source (car reference))))
+                     (and sheet
+                          (append (list sheet) (cdr reference)
+                                  '(precedent)))))
+                 (grid-calc-precedents model (car cursor) (cdr cursor))))))
+    (unless (string-prefix-p
+             "=" (or (grid-get-raw-value-at source (car cursor) (cdr cursor))
+                     ""))
+      (user-error "The cell holds no formula"))
+    (grid-table-etaf--show-traces traces "precedent")))
+
+(defun grid-table-etaf-trace-dependents ()
+  "Paint the formulas that read the cell under the cursor.
+Formulas on every sheet of the workbook are looked at."
+  (interactive)
+  (let* ((source grid-table--data-source)
+         (cursor (grid-table-etaf--cursor))
+         (row (car cursor)) (col (cdr cursor))
+         traces)
+    (dolist (sheet (or (grid-table-sheets) (list source)))
+      (when-let* ((model (gethash :model sheet)))
+        (dotimes (r (grid-data-model-rows model))
+          (dotimes (c (grid-data-model-cols model))
+            (when (cl-some
+                   (lambda (reference)
+                     (and (eq (grid-table-etaf--sheet-named sheet (car reference))
+                              source)
+                          (grid-calc-reference-covers-p reference row col)))
+                   (grid-calc-precedents model r c))
+              (push (list sheet r c r c 'dependent) traces))))))
+    (grid-table-etaf--show-traces (nreverse traces) "dependent")))
+
+(defun grid-table-etaf-next-trace ()
+  "Go to the next traced cell or range, showing its sheet."
+  (interactive)
+  (unless grid-table-etaf--traces
+    (user-error "Nothing is traced; C-c a p or C-c a d traces a cell"))
+  (let* ((index (mod grid-table-etaf--next-trace
+                     (length grid-table-etaf--traces)))
+         (trace (nth index grid-table-etaf--traces)))
+    (setq grid-table-etaf--next-trace (1+ index))
+    (unless (memq (car trace) (or (grid-table-sheets) (list (car trace))))
+      (user-error "The traced sheet is gone"))
+    (grid-table-switch-to-sheet (car trace))
+    (pcase-let* ((source grid-table--data-source)
+                 (`(,_ ,top ,left ,bottom ,right) trace)
+                 (last-row (1- (grid-get-row-count source)))
+                 (last-col (1- (grid-get-column-count source))))
+      (grid-table-etaf-goto (min last-row (or bottom last-row))
+                            (min last-col (or right last-col)))
+      (grid-table-etaf-goto (or top 0) (or left 0)
+                            (not (and top left (eql top bottom)
+                                      (eql left right)))))))
+
+(defun grid-table-etaf-clear-traces ()
+  "Stop painting traced cells."
+  (interactive)
+  (setq grid-table-etaf--traces nil)
+  (grid-table-etaf--bump (grid-table-etaf--state-or-error)))
 
 ;;;----------------------------------------------------------------------
 ;;; Filling

@@ -235,6 +235,48 @@ whose value changes by itself, or runs Lisp."
         (walk ast))
       reads)))
 
+(defun grid-calc-precedents (model row col)
+  "Return the cells and ranges the formula at ROW and COL of MODEL reads.
+Each is (SHEET TOP LEFT BOTTOM RIGHT), zero-based and inclusive.  SHEET
+is the sheet name the formula wrote, or nil for MODEL's own sheet.  The
+rows of a whole column, and the columns of a whole row, are nil.  A cell
+that holds no formula, or one that does not parse, reads nothing."
+  (let* ((cell (grid-model-get-cell model row col))
+         (raw (and cell (grid-cell-raw-input cell)))
+         (ast (and (stringp raw) (> (length raw) 1) (eq (aref raw 0) ?=)
+                   (condition-case nil (grid-calc--parsed cell raw)
+                     (error nil))))
+         found)
+    (cl-labels
+        ((add (sheet start end)
+           (let ((from (grid-calc--reference-coords start))
+                 (to (grid-calc--reference-coords end)))
+             (when (and from to)
+               (push (list sheet
+                           (and (car from) (car to) (min (car from) (car to)))
+                           (and (cdr from) (cdr to) (min (cdr from) (cdr to)))
+                           (and (car from) (car to) (max (car from) (car to)))
+                           (and (cdr from) (cdr to) (max (cdr from) (cdr to))))
+                     found))))
+         (walk (node)
+           (pcase node
+             (`(CELL-REF ,ref . ,sheet) (add (car sheet) ref ref))
+             (`(RANGE (CELL-REF ,start . ,sheet) (CELL-REF ,end . ,_))
+              (add (car sheet) start end))
+             ((pred consp)
+              (dolist (part node)
+                (when (consp part) (walk part)))))))
+      (when ast (walk ast)))
+    (delete-dups (nreverse found))))
+
+(defun grid-calc-reference-covers-p (reference row col)
+  "Return non-nil when REFERENCE takes in the cell at ROW and COL.
+REFERENCE is (SHEET TOP LEFT BOTTOM RIGHT) as `grid-calc-precedents'
+returns it; its sheet is not looked at."
+  (pcase-let ((`(,_ ,top ,left ,bottom ,right) reference))
+    (and (or (null top) (<= top row bottom))
+         (or (null left) (<= left col right)))))
+
 (defun grid-calc--register (model graph index)
   "Record in GRAPH what the cell at INDEX of MODEL reads."
   (let* ((cell (aref (grid-data-model-cells model) index))
