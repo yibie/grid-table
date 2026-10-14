@@ -435,6 +435,33 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should (= (grid-get-row-count grid-table--data-source) 7))
     (should (equal (grid-get-raw-value-at source 3 0) "inserted"))))
 
+(ert-deftest grid-table-etaf-undo-forgets-old-sheet-copies-beyond-budget ()
+  ;; 6x5 grows to 7, 8 and 9 rows: the newest step keeps 40 + 45 cells,
+  ;; the one before would add 35 more.
+  (let ((grid-table-etaf-undo-model-cells 100))
+    (grid-table-etaf-test--with-grid (6 5)
+      (grid-table-etaf-goto 1 0)
+      (grid-table-etaf-set-cell 1 0 "kept")
+      (dotimes (_ 3) (grid-table-add-row 1))
+      (should (= (grid-get-row-count grid-table--data-source) 9))
+      (grid-table-etaf-undo)
+      (should (= (grid-get-row-count grid-table--data-source) 8))
+      (should-error (grid-table-etaf-undo) :type 'user-error)
+      (should (= (grid-get-row-count grid-table--data-source) 8))))
+  ;; Even a single step over the budget stays undoable.
+  (let ((grid-table-etaf-undo-model-cells 10))
+    (grid-table-etaf-test--with-grid (6 5)
+      (grid-table-etaf-goto 1 0)
+      (grid-table-add-row 1)
+      (grid-table-etaf-undo)
+      (should (= (grid-get-row-count grid-table--data-source) 6))))
+  (let ((grid-table-etaf-undo-model-cells nil))
+    (grid-table-etaf-test--with-grid (6 5)
+      (grid-table-etaf-goto 1 0)
+      (dotimes (_ 3) (grid-table-add-row 1))
+      (dotimes (_ 3) (grid-table-etaf-undo))
+      (should (= (grid-get-row-count grid-table--data-source) 6)))))
+
 (ert-deftest grid-table-etaf-headers-select-rows-and-columns ()
   (grid-table-etaf-test--with-grid (200 5 100 12)
     (grid-table-etaf-goto 3 2)

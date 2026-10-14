@@ -1839,13 +1839,57 @@ Nothing is recorded when they did not change."
       (unless (equal old new)
         (grid-table-etaf--record state (list 'frozen old new))))))
 
+(defcustom grid-table-etaf-undo-model-cells 1000000
+  "How many cells the whole-sheet copies kept for undo may hold in all.
+Undoing an added or deleted line, a sort or a merge needs the sheet as it
+was before.  When the copies the undo history holds exceed this many
+cells, the oldest such changes are forgotten; the newest change can
+always be undone.  nil means no limit beyond the number of changes."
+  :type '(choice (const :tag "No limit" nil) natnum)
+  :group 'grid-table)
+
+(defun grid-table-etaf--record-models (record)
+  "Return the models RECORD keeps, looking inside groups."
+  (pcase record
+    (`(model ,old ,new) (list old new))
+    (`(group . ,records) (mapcan #'grid-table-etaf--record-models records))))
+
+(defun grid-table-etaf--trim-undo (undo)
+  "Cut UNDO, a list of records newest first, to fit the undo limits.
+Keep at most `grid-table-etaf--undo-limit' records and no more models
+than `grid-table-etaf-undo-model-cells' allows, but always the first."
+  (let ((seen (make-hash-table :test #'eq))
+        (cells 0)
+        (count 0)
+        (budget grid-table-etaf-undo-model-cells))
+    (cl-loop for tail on undo
+             do (cl-incf count)
+                (dolist (model (grid-table-etaf--record-models (car tail)))
+                  (unless (or (null model) (gethash model seen))
+                    (puthash model t seen)
+                    (cl-incf cells (* (grid-data-model-rows model)
+                                      (grid-data-model-cols model)))))
+             when (and (cdr tail)
+                       (or (>= count grid-table-etaf--undo-limit)
+                           (and budget
+                                (grid-table-etaf--record-models (cadr tail))
+                                (> (+ cells
+                                      (cl-loop for model in (grid-table-etaf--record-models
+                                                             (cadr tail))
+                                               unless (or (null model)
+                                                          (gethash model seen))
+                                               sum (* (grid-data-model-rows model)
+                                                      (grid-data-model-cols model))))
+                                   budget))))
+             do (setcdr tail nil))
+    undo))
+
 (defun grid-table-etaf--record (state record)
   "Push RECORD on STATE's undo history and drop its redo history."
-  (let ((undo (cons record (grid-table-etaf--state-undo state))))
-    (when (> (length undo) grid-table-etaf--undo-limit)
-      (setcdr (nthcdr (1- grid-table-etaf--undo-limit) undo) nil))
-    (setf (grid-table-etaf--state-undo state) undo
-          (grid-table-etaf--state-redo state) nil)))
+  (setf (grid-table-etaf--state-undo state)
+        (grid-table-etaf--trim-undo
+         (cons record (grid-table-etaf--state-undo state)))
+        (grid-table-etaf--state-redo state) nil))
 
 (defun grid-table-etaf--as-one-step (state function)
   "Call FUNCTION and fold the undo records it leaves on STATE into one.
