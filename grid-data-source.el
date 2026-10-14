@@ -66,6 +66,14 @@ TITLE is an optional string for the grid title."
              (lambda (s rows cols)
                (grid-model-set-frozen (gethash :model s) rows cols))
              source)
+    (puthash :get-hidden
+             (lambda (s)
+               (grid-data-model-hidden (gethash :model s)))
+             source)
+    (puthash :set-hidden
+             (lambda (s rows cols)
+               (grid-model-set-hidden (gethash :model s) rows cols))
+             source)
     (puthash :grow
              (lambda (s rows cols)
                (puthash :model (grid-model-grow (gethash :model s) rows cols) s)
@@ -447,12 +455,17 @@ change rewrote in other sheets go back with it."
                (pcase (grid-workbook--line-change key args old-model)
                  (`(col ,at ,delta)
                   (grid-model-carry-widths old-model model at delta)
-                  (grid-model-carry-frozen old-model model 'col at delta))
+                  (grid-model-carry-frozen old-model model 'col at delta)
+                  (grid-model-carry-hidden old-model model 'col at delta))
                  (`(row ,at ,delta)
                   (grid-model-carry-widths old-model model)
-                  (grid-model-carry-frozen old-model model 'row at delta))
+                  (grid-model-carry-frozen old-model model 'row at delta)
+                  (grid-model-carry-hidden old-model model 'row at delta))
                  (_ (grid-model-carry-widths old-model model)
-                    (grid-model-carry-frozen old-model model))))))))
+                    (grid-model-carry-frozen old-model model)
+                    ;; A sort moved the hidden rows along itself.
+                    (unless (eq key :sort-by-column)
+                      (grid-model-carry-hidden old-model model)))))))))
      source)))
 
 (provide 'grid-data-source)

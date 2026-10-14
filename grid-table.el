@@ -213,6 +213,19 @@ Return non-nil when SOURCE can keep rows and columns in place."
     (funcall function source rows cols)
     t))
 
+(defun grid-table-hidden (source)
+  "Return (ROWS . COLS): the rows and columns of SOURCE hidden, sorted lists."
+  (if-let* ((function (gethash :get-hidden source)))
+      (funcall function source)
+    (cons nil nil)))
+
+(defun grid-table-set-hidden (source rows cols)
+  "Hide the ROWS and COLS of SOURCE, lists of indexes; nil shows them all.
+Return non-nil when SOURCE can hide rows and columns."
+  (when-let* ((function (gethash :set-hidden source)))
+    (funcall function source rows cols)
+    t))
+
 (defun grid-get-conditional-formats (source)
   "Return SOURCE's conditional format rules.
 Each rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE)."

@@ -61,7 +61,9 @@ CONDITIONALS a list of conditional format rules."
           ;; Column widths set by hand: column index to characters
           (make-hash-table)
           ;; Leading rows and columns that stay in place: (ROWS . COLS)
-          (cons 0 0)))
+          (cons 0 0)
+          ;; Hidden rows and columns: (ROWS . COLS), sorted lists
+          (cons nil nil)))
 
 (defun grid-data-model-rows (model) (aref model 0))
 (defun grid-data-model-cols (model) (aref model 1))
@@ -85,6 +87,10 @@ CONDITIONALS a list of conditional format rules."
   "Return (ROWS . COLS): the leading rows and columns of MODEL kept in place."
   (or (and (> (length model) 7) (aref model 7))
       (cons 0 0)))
+(defun grid-data-model-hidden (model)
+  "Return (ROWS . COLS): the rows and columns of MODEL hidden, sorted lists."
+  (or (and (> (length model) 8) (aref model 8))
+      (cons nil nil)))
 
 ;;;----------------------------------------------------------------------
 ;;; Model Creation and Access
@@ -233,6 +239,44 @@ A row and a column are always left to scroll."
     (aset model 7
           (cons (max 0 (min rows (1- (grid-data-model-rows model))))
                 (max 0 (min cols (1- (grid-data-model-cols model))))))))
+
+(defun grid-model-set-hidden (model rows cols)
+  "Hide the ROWS and COLS of MODEL, lists of indexes; nil shows them all.
+Indexes outside the model are dropped."
+  (when (> (length model) 8)
+    (cl-flet ((clean (indexes limit)
+                (sort (delete-dups
+                       (cl-remove-if-not (lambda (i)
+                                           (and (natnump i) (< i limit)))
+                                         (copy-sequence indexes)))
+                      #'<)))
+      (aset model 8
+            (cons (clean rows (grid-data-model-rows model))
+                  (clean cols (grid-data-model-cols model)))))))
+
+(defun grid-model--lines-after (lines at delta)
+  "Return the line indexes LINES after a line was inserted or deleted.
+A line inserted at AT (DELTA 1) pushes the ones from AT on down; the
+line deleted at AT (DELTA -1) leaves LINES, and the ones after it move
+up."
+  (if (null at)
+      lines
+    (delq nil (mapcar (lambda (line)
+                        (cond ((< line at) line)
+                              ((and (= line at) (< delta 0)) nil)
+                              (t (+ line delta))))
+                      lines))))
+
+(defun grid-model-carry-hidden (old new &optional axis at delta)
+  "Give model NEW the hidden rows and columns of model OLD and return NEW.
+AXIS, AT and DELTA are as for `grid-model-carry-frozen'."
+  (unless (eq old new)
+    (let ((hidden (grid-data-model-hidden old)))
+      (grid-model-set-hidden
+       new
+       (grid-model--lines-after (car hidden) (and (eq axis 'row) at) delta)
+       (grid-model--lines-after (cdr hidden) (and (eq axis 'col) at) delta))))
+  new)
 
 (defun grid-model--frozen-after (count at delta)
   "Return frozen COUNT after a line was inserted or deleted at AT by DELTA."
@@ -621,16 +665,27 @@ being sorted moves like one that names none."
                         (setq new-idx (1+ new-idx)))
                       (grid-data-model-merges model)))))
       ;; Create a new model with the sorted data
-      (grid-model-create
-       num-rows num-cols new-raw-values new-merges
-       ;; A style travels with its row; conditional ranges stay in place.
-       (grid-model--map-styles
-        model (lambda (row col)
-                (cons (if (< row kept)
-                          row
-                        (+ kept (aref old-to-new (- row kept))))
-                      col)))
-       (grid-data-model-conditionals model)))))
+      (let ((sorted
+             (grid-model-create
+              num-rows num-cols new-raw-values new-merges
+              ;; A style travels with its row; conditional ranges stay in place.
+              (grid-model--map-styles
+               model (lambda (row col)
+                       (cons (if (< row kept)
+                                 row
+                               (+ kept (aref old-to-new (- row kept))))
+                             col)))
+              (grid-data-model-conditionals model)))
+            (hidden (grid-data-model-hidden model)))
+        ;; A hidden row stays hidden wherever it goes.
+        (grid-model-set-hidden
+         sorted
+         (mapcar (lambda (row)
+                   (if (< row kept) row
+                     (+ kept (aref old-to-new (- row kept)))))
+                 (car hidden))
+         (cdr hidden))
+        sorted))))
 
 (defun grid-model-get-all-raw-values (model)
   "Extracts all raw values (headers and cell contents) from the model.

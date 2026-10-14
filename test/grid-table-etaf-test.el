@@ -1211,6 +1211,43 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
                                   (grid-get-raw-value-at grid-table--data-source row 1)))
                    '(("a" . "10") ("a" . "8") ("a" . "4") ("b" . "6") ("b" . "2"))))))
 
+(ert-deftest grid-table-etaf-hidden-rows-and-columns ()
+  (grid-table-etaf-test--with-grid (10 5 100 14)
+    ;; Hide rows 3 and 4 (model 2 and 3) and column B.
+    (grid-table-etaf-goto 2 0)
+    (grid-table-etaf-goto 3 0 t)
+    (grid-table-etaf-hide-rows)
+    (should (equal (car (grid-table-hidden source)) '(2 3)))
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-hide-columns)
+    (should (equal (grid-table-etaf--cursor) '(1 . 2)))
+    (let ((window (grid-table-etaf-test--window)))
+      (should-not (memq 2 (car window)))
+      (should-not (memq 1 (cdr window))))
+    ;; Movement passes over them.
+    (grid-table-etaf-goto 1 0)
+    (grid-table-next-line)
+    (should (equal (grid-table-etaf--cursor) '(4 . 0)))
+    (grid-table-cell-right)
+    (should (equal (grid-table-etaf--cursor) '(4 . 2)))
+    (grid-table-cell-left)
+    (should (equal (grid-table-etaf--cursor) '(4 . 0)))
+    ;; Copying leaves them out.
+    (grid-table-etaf-goto 1 0)
+    (grid-table-etaf-goto 4 2 t)
+    (grid-table-etaf-copy)
+    (should (equal (current-kill 0 t) "1\t3\n4\t12"))
+    ;; Undo shows the column again; showing the rows takes a selection
+    ;; across them.
+    (grid-table-etaf-undo)
+    (should (equal (cdr (grid-table-hidden source)) nil))
+    (grid-table-etaf-select-all)
+    (grid-table-etaf-show-rows)
+    (should (equal (grid-table-hidden source) '(nil)))
+    ;; Not everything can be hidden.
+    (grid-table-etaf-select-all)
+    (should-error (grid-table-etaf-hide-columns) :type 'user-error)))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

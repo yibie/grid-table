@@ -1062,6 +1062,34 @@
   (should (equal (grid-chart-columnplot nil nil nil) ""))
   (should (stringp (grid-chart--lineplot-render nil nil nil))))
 
+(ert-deftest grid-table-hidden-lines-follow-structure-and-files ()
+  (let* ((source (make-default-data-source
+                  '("K" "V" "W")
+                  '(("K" "V" "W") ("c" "1" "x") ("a" "2" "y") ("b" "3" "z"))))
+         (file (make-temp-file "grid-hidden" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Row 1 (c) and column W are hidden.
+          (grid-table-set-hidden source '(1) '(2))
+          (should (equal (grid-table-hidden source) '((1) 2)))
+          ;; A row inserted above pushes the hidden row down.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (car (grid-table-hidden source)) '(2)))
+          ;; The hidden row travels with a sort.
+          (funcall (gethash :sort-by-column source) source 0 'ascending)
+          (let ((row (car (car (grid-table-hidden source)))))
+            (should (equal (grid-get-raw-value-at source row 0) "c")))
+          ;; Deleting the hidden column forgets it.
+          (funcall (gethash :delete-column source) source 2)
+          (should (equal (cdr (grid-table-hidden source)) nil))
+          (grid-table-set-hidden source (car (grid-table-hidden source)) '(1))
+          (grid-table-persistence--save-to-file source file)
+          (let ((loaded (grid-table-persistence-create-data-source-from-file
+                         file)))
+            (should (equal (grid-table-hidden loaded)
+                           (grid-table-hidden source)))))
+      (delete-file file))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

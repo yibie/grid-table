@@ -248,20 +248,24 @@ Covered cells and horizontally merged anchors do not widen a column."
                      (1+ (* char (+ 2 (aref widths frozen))))))
           (kept 0))
       (while (and (< kept frozen)
-                  (let ((need (1+ (* char (+ 2 (aref widths kept))))))
-                    (when (or (null room) (<= (+ need room) budget))
-                      (setq budget (- budget need))
-                      t)))
-        (push kept result)
+                  (or (not (grid-table-etaf--col-shown-p state kept))
+                      (let ((need (1+ (* char (+ 2 (aref widths kept))))))
+                        (when (or (null room) (<= (+ need room) budget))
+                          (setq budget (- budget need))
+                          t))))
+        (when (grid-table-etaf--col-shown-p state kept)
+          (push kept result))
         (setq kept (1+ kept))))
     (while (and (< col cols)
-                (let ((need (1+ (* char (+ 2 (aref widths col))))))
-                  (when (or (not scrolled) (<= need budget))
-                    (setq budget (- budget need))
-                    t)))
-      (push col result)
-      (setq scrolled t
-            col (1+ col)))
+                (or (not (grid-table-etaf--col-shown-p state col))
+                    (let ((need (1+ (* char (+ 2 (aref widths col))))))
+                      (when (or (not scrolled) (<= need budget))
+                        (setq budget (- budget need))
+                        t))))
+      (when (grid-table-etaf--col-shown-p state col)
+        (push col result)
+        (setq scrolled t))
+      (setq col (1+ col)))
     (nreverse result)))
 
 (defun grid-table-etaf--cell-lines (value width &optional format)
@@ -339,15 +343,19 @@ last one when none follows."
    state (+ (grid-table-etaf--row-position state row) count)))
 
 (defun grid-table-etaf--apply-filters (state)
-  "Recompute which rows of STATE its filters leave shown.
-A header row holds the column titles and is always shown."
+  "Recompute which rows of STATE its filters and hidden rows leave shown.
+A header row holds the column titles and is not filtered; hiding it
+hides it."
   (let* ((source (grid-table-etaf--source state))
          (filters (grid-table-etaf--state-filters state))
+         (hidden (car (grid-table-hidden source)))
          (kept (if (grid-table-header-row-p source) 1 0)))
     (setf (grid-table-etaf--state-shown state)
-          (and filters
+          (and (or filters hidden)
                (vconcat
-                (append
+                (cl-remove-if
+                 (lambda (row) (memq row hidden))
+                 (append
                       (number-sequence 0 (1- kept))
                       (cl-loop
                        for row from kept below (grid-get-row-count source)
@@ -358,7 +366,38 @@ A header row holds the column titles and is always shown."
                                 (grid-get-computed-value-at
                                  source row (car filter))))
                              filters)
-                       collect row)))))))
+                       collect row))))))))
+
+(defun grid-table-etaf--col-shown-p (state col)
+  "Return non-nil when model column COL of STATE is not hidden."
+  (not (memq col (cdr (grid-table-hidden (grid-table-etaf--source state))))))
+
+(defun grid-table-etaf--shown-col (state col &optional backward)
+  "Return the shown column nearest model column COL of STATE.
+Look right of COL first, or left of it when BACKWARD, then the other way."
+  (let* ((cols (grid-get-column-count (grid-table-etaf--source state)))
+         (col (max 0 (min (1- cols) col)))
+         (step (if backward -1 1)))
+    (or (cl-loop for c = col then (+ c step)
+                 while (< -1 c cols)
+                 when (grid-table-etaf--col-shown-p state c) return c)
+        (cl-loop for c = col then (- c step)
+                 while (< -1 c cols)
+                 when (grid-table-etaf--col-shown-p state c) return c)
+        col)))
+
+(defun grid-table-etaf--step-col (state col count)
+  "Return the shown column COUNT shown columns right of COL in STATE.
+A negative COUNT goes left; the walk stops at the edge of the sheet."
+  (let ((cols (grid-get-column-count (grid-table-etaf--source state)))
+        (step (if (< count 0) -1 1))
+        (left (abs count))
+        (at col))
+    (cl-loop for c = (+ col step) then (+ c step)
+             while (and (< -1 c cols) (> left 0))
+             when (grid-table-etaf--col-shown-p state c)
+             do (setq at c left (1- left)))
+    at))
 
 (defun grid-table-etaf--visible-rows (state top cols)
   "Return the model rows STATE shows over COLS when the first one is TOP."
@@ -651,6 +690,10 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c w f" grid-table-etaf-freeze-panes "Freeze rows above, columns left")
     ("C-c w u" grid-table-unfreeze-panes "Unfreeze rows and columns")
     ("C-c r i" grid-table-insert-row-above "Insert row above")
+    ("C-c r h" grid-table-etaf-hide-rows "Hide rows")
+    ("C-c r s" grid-table-etaf-show-rows "Show hidden rows")
+    ("C-c c h" grid-table-etaf-hide-columns "Hide columns")
+    ("C-c c s" grid-table-etaf-show-columns "Show hidden columns")
     ("C-c / f" grid-table-etaf-filter-column "Filter column")
     ("C-c / v" grid-table-etaf-filter-by-cell "Filter by this value")
     ("C-c / c" grid-table-etaf-clear-column-filter "Clear column filter")
@@ -926,7 +969,7 @@ line border."
 RANGE is the selected (TOP LEFT BOTTOM RIGHT), or nil for a single cell.
 Rows hidden by a filter are left out of the figures."
   (if (null range)
-      (if (grid-table-etaf--state-shown state)
+      (if (grid-table-etaf--state-filters state)
           (format "%d of %d rows shown (filtered) × %d columns"
                   (1- (grid-table-etaf--row-count state))
                   (1- (grid-get-row-count source))
@@ -938,7 +981,8 @@ Rows hidden by a filter are left out of the figures."
        for row from (nth 0 range) to (nth 2 range)
        when (grid-table-etaf--row-shown-p state row) do
        (cl-loop
-        for col from (nth 1 range) to (nth 3 range) do
+        for col from (nth 1 range) to (nth 3 range)
+        when (grid-table-etaf--col-shown-p state col) do
         (let* ((value (grid-get-computed-value-at source row col))
                (number (grid-table-etaf--number value)))
           (unless (member value '(nil ""))
@@ -1254,11 +1298,11 @@ painted cursor fits."
   "Move the cursor to model ROW and COL.
 With EXTEND non-nil keep the selection anchor, extending the range."
   (let* ((state (grid-table-etaf--state-or-error))
-         (source (grid-table-etaf--source state))
          ;; A filtered-out row is not a place to be: take the next shown.
          (row (grid-table-etaf--row-at
                state (grid-table-etaf--row-position state row)))
-         (col (max 0 (min (1- (grid-get-column-count source)) col))))
+         ;; Nor is a hidden column.
+         (col (grid-table-etaf--shown-col state col)))
     (grid-table-etaf--finish-edit state)
     (etaf-batch
       (etaf-set-value (grid-table-etaf--state-cursor state) (cons row col))
@@ -1351,8 +1395,8 @@ With EXTEND non-nil extend the selection instead."
                              rows)))
               (grid-table-etaf--row-at state target)))
            (t (car cursor)))
-     (cond ((> cols 0) (+ (nth 3 extent) cols))
-           ((< cols 0) (+ (nth 1 extent) cols))
+     (cond ((> cols 0) (grid-table-etaf--step-col state (nth 3 extent) cols))
+           ((< cols 0) (grid-table-etaf--step-col state (nth 1 extent) cols))
            (t (cdr cursor)))
      extend)))
 
@@ -1366,9 +1410,13 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
          (cursor (grid-table-etaf--cursor))
          (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor)))
          (position (grid-table-etaf--row-position state (car cursor)))
-         (col (if (> direction 0) (1+ (nth 3 extent)) (1- (nth 1 extent)))))
-    (cond ((>= col cols) (setq col 0 position (mod (1+ position) rows)))
-          ((< col 0) (setq col (1- cols) position (mod (1- position) rows))))
+         (edge (if (> direction 0) (nth 3 extent) (nth 1 extent)))
+         (col (grid-table-etaf--step-col state edge direction)))
+    ;; Stepping off either end of the row wraps to the next or previous row.
+    (when (= col edge)
+      (setq position (mod (+ position direction) rows)
+            col (grid-table-etaf--shown-col
+                 state (if (> direction 0) 0 (1- cols)) (< direction 0))))
     (grid-table-etaf-goto (grid-table-etaf--row-at state position) col)))
 
 (defun grid-table-etaf--page-size ()
@@ -1461,7 +1509,10 @@ scrolls again, as after `grid-table-unfreeze-panes'."
   "Move the cursor to the last cell of the sheet."
   (interactive)
   (grid-table-etaf-goto (1- (grid-get-row-count grid-table--data-source))
-                        (1- (grid-get-column-count grid-table--data-source))))
+                        (grid-table-etaf--shown-col
+                         grid-table-etaf--state
+                         (1- (grid-get-column-count grid-table--data-source))
+                         t)))
 
 ;;;----------------------------------------------------------------------
 ;;; Filters
@@ -1540,7 +1591,10 @@ after each edit."
   "Move the cursor to the last column of its row."
   (interactive)
   (grid-table-etaf-goto (car (grid-table-etaf--cursor))
-                        (1- (grid-get-column-count grid-table--data-source))))
+                        (grid-table-etaf--shown-col
+                         grid-table-etaf--state
+                         (1- (grid-get-column-count grid-table--data-source))
+                         t)))
 
 (defun grid-table-etaf-extend-down ()
   "Extend the selection one row down."
@@ -1716,7 +1770,8 @@ TAB or the mouse, stores the text too."
         changes)
     (cl-loop for row from (nth 0 range) to (nth 2 range)
              when (grid-table-etaf--row-shown-p state row) do
-             (cl-loop for col from (nth 1 range) to (nth 3 range) do
+             (cl-loop for col from (nth 1 range) to (nth 3 range)
+                      when (grid-table-etaf--col-shown-p state col) do
                       (push (list row col "") changes)))
     (grid-table-etaf--set-cells state (nreverse changes))))
 
@@ -1887,6 +1942,12 @@ shifts."
        (grid-table-etaf--settle state))
       (`(width ,col ,old ,new)
        (grid-table-etaf--restore-column-width state col (if forward new old)))
+      (`(hidden ,old ,new)
+       (let ((hidden (if forward new old)))
+         (grid-table-set-hidden source (car hidden) (cdr hidden)))
+       (grid-table-etaf--apply-filters state)
+       (grid-table-etaf--bump state)
+       (grid-table-etaf--settle state))
       (`(frozen ,old ,new)
        (let ((frozen (if forward new old)))
          (grid-table-set-frozen source (car frozen) (cdr frozen)))
@@ -1969,7 +2030,8 @@ change is one undoable step.  Covered cells of a merge are skipped."
      for row from (nth 0 range) to (nth 2 range)
      when (grid-table-etaf--row-shown-p state row) do
      (cl-loop
-      for col from (nth 1 range) to (nth 3 range) do
+      for col from (nth 1 range) to (nth 3 range)
+      when (grid-table-etaf--col-shown-p state col) do
       (let ((merge (and merges (grid-table--merge-at merges row col))))
         (when (or (null merge)
                   (and (= row (nth 0 merge)) (= col (nth 1 merge))))
@@ -2239,7 +2301,8 @@ Quoted fields may hold tabs, newlines and doubled quotes."
 Rows hidden by STATE's filters are left out."
   (cl-loop for row from (nth 0 range) to (nth 2 range)
            when (grid-table-etaf--row-shown-p state row) collect
-           (cl-loop for col from (nth 1 range) to (nth 3 range) collect
+           (cl-loop for col from (nth 1 range) to (nth 3 range)
+                    when (grid-table-etaf--col-shown-p state col) collect
                     (funcall reader source row col))))
 
 (defun grid-table-etaf-copy ()
@@ -2290,6 +2353,7 @@ cells' formats."
         (cl-loop for row from (nth 0 range) to (nth 2 range)
                  when (grid-table-etaf--row-shown-p state row) nconc
                  (cl-loop for col from (nth 1 range) to (nth 3 range)
+                          when (grid-table-etaf--col-shown-p state col)
                           collect (list row col nil))))))))
 
 (defun grid-table-etaf--shifted (value origin row col)
@@ -2403,16 +2467,25 @@ MODE is as for `grid-table-etaf--paste-material'."
                         (push row targets))
                       (setq row (1+ row)))
                     (nreverse targets)))
+         (col-count (grid-get-column-count source))
+         ;; Hidden columns are passed over in the same way.
+         (col-targets (let ((col left) targets
+                            (width (apply #'max (mapcar #'length rows))))
+                        (while (< (length targets) width)
+                          (when (or (>= col col-count)
+                                    (grid-table-etaf--col-shown-p state col))
+                            (push col targets))
+                          (setq col (1+ col)))
+                        (nreverse targets)))
          ;; How far the pasted block reaches past the grid
          (more-rows (if (or single (null (gethash :grow source)))
                         0
                       (max 0 (- (1+ (car (last targets))) row-count))))
          (more-cols (if (or single (null (gethash :grow source)))
                         0
-                      (max 0 (- (+ left (apply #'max (mapcar #'length rows)))
-                                (grid-get-column-count source)))))
+                      (max 0 (- (1+ (car (last col-targets))) col-count))))
          (max-row (+ more-rows (1- row-count)))
-         (max-col (+ more-cols (1- (grid-get-column-count source))))
+         (max-col (+ more-cols (1- col-count)))
          (bottom top)
          (right left)
          (styled (nth 1 material))
@@ -2421,7 +2494,8 @@ MODE is as for `grid-table-etaf--paste-material'."
     (if single
         (cl-loop for row from top to (nth 2 range)
                  when (grid-table-etaf--row-shown-p state row) do
-                 (cl-loop for col from left to (nth 3 range) do
+                 (cl-loop for col from left to (nth 3 range)
+                          when (grid-table-etaf--col-shown-p state col) do
                           (push (list row col
                                       (grid-table-etaf--shifted
                                        (caar rows) origin row col))
@@ -2433,7 +2507,9 @@ MODE is as for `grid-table-etaf--paste-material'."
        for values in rows for row in targets for line from 0
        while (<= row max-row) do
        (setq bottom row)
-       (cl-loop for value in values for col from left to max-col do
+       (cl-loop for value in values for col in col-targets
+                for column from 0
+                while (<= col max-col) do
                 (setq right (max right col))
                 (push (list row col
                             ;; Every cell travels as far as the first one.
@@ -2441,7 +2517,7 @@ MODE is as for `grid-table-etaf--paste-material'."
                       changes)
                 (when styled
                   (push (list row col
-                              (nth (- col left) (nth line styled)))
+                              (nth column (nth line styled)))
                         styles)))))
     (let ((count (grid-table-etaf--as-one-step
                   state
@@ -2467,6 +2543,85 @@ MODE is as for `grid-table-etaf--paste-material'."
       (if (eq mode 'formats)
           (message "Pasted formats")
         (message "Pasted %d cell%s" count (if (= count 1) "" "s"))))))
+
+;;;----------------------------------------------------------------------
+;;; Hiding rows and columns
+;;;----------------------------------------------------------------------
+
+(defun grid-table-etaf--set-hidden (state rows cols)
+  "Hide ROWS and COLS of STATE's sheet, as one undoable step."
+  (let* ((source (grid-table-etaf--source state))
+         (old (grid-table-hidden source)))
+    (unless (grid-table-set-hidden source rows cols)
+      (user-error "This grid cannot hide rows and columns"))
+    (let ((new (grid-table-hidden source)))
+      (unless (equal old new)
+        (grid-table-etaf--record state (list 'hidden old new))))
+    (grid-table-etaf--apply-filters state)
+    (grid-table-etaf--bump state)
+    ;; The cursor leaves a line that was just hidden.
+    (let ((cursor (grid-table-etaf--cursor)))
+      (grid-table-etaf-goto (car cursor) (cdr cursor)))))
+
+(defun grid-table-etaf-hide-rows ()
+  "Hide the rows of the selection.
+They keep their data, are saved hidden, and are passed over by movement,
+copying, clearing and pasting.  `grid-table-etaf-show-rows' shows them."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (hidden (grid-table-hidden source))
+         (rows (append (car hidden)
+                       (number-sequence (nth 0 range) (nth 2 range)))))
+    (when (cl-every (lambda (row) (memq row rows))
+                    (number-sequence 0 (1- (grid-get-row-count source))))
+      (user-error "At least one row has to stay shown"))
+    (grid-table-etaf--set-hidden state rows (cdr hidden))))
+
+(defun grid-table-etaf-show-rows ()
+  "Show the hidden rows inside the selection.
+Select across the place a row is missing from, or the whole sheet with
+\\[grid-table-etaf-select-all], to show them."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (hidden (grid-table-hidden source)))
+    (grid-table-etaf--set-hidden
+     state
+     (cl-remove-if (lambda (row) (<= (nth 0 range) row (nth 2 range)))
+                   (car hidden))
+     (cdr hidden))))
+
+(defun grid-table-etaf-hide-columns ()
+  "Hide the columns of the selection.
+They keep their data, are saved hidden, and are passed over like hidden
+rows.  `grid-table-etaf-show-columns' shows them."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (hidden (grid-table-hidden source))
+         (cols (append (cdr hidden)
+                       (number-sequence (nth 1 range) (nth 3 range)))))
+    (when (cl-every (lambda (col) (memq col cols))
+                    (number-sequence 0 (1- (grid-get-column-count source))))
+      (user-error "At least one column has to stay shown"))
+    (grid-table-etaf--set-hidden state (car hidden) cols)))
+
+(defun grid-table-etaf-show-columns ()
+  "Show the hidden columns inside the selection."
+  (interactive)
+  (let* ((state (grid-table-etaf--state-or-error))
+         (source (grid-table-etaf--source state))
+         (range (grid-table-etaf-selection))
+         (hidden (grid-table-hidden source)))
+    (grid-table-etaf--set-hidden
+     state
+     (car hidden)
+     (cl-remove-if (lambda (col) (<= (nth 1 range) col (nth 3 range)))
+                   (cdr hidden)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Tracing formulas
@@ -2605,7 +2760,8 @@ moved along, and the cells take the formats of the ones they copy."
      for row from top to (nth 2 range)
      when (grid-table-etaf--row-shown-p state row) do
      (cl-loop
-      for col from left to (nth 3 range) do
+      for col from left to (nth 3 range)
+      when (grid-table-etaf--col-shown-p state col) do
       (let ((from-row (if down top row))
             (from-col (if down col left)))
         (unless (and (= row from-row) (= col from-col))
@@ -2695,6 +2851,7 @@ Week 2; a formula is copied with its references moved along."
                                 when (grid-table-etaf--row-shown-p state row)
                                 collect (cons row line))
                      (cl-loop for col from (nth 1 range) to (nth 3 range)
+                              when (grid-table-etaf--col-shown-p state col)
                               collect (cons line col))))
             (raws (mapcar (lambda (cell)
                             (or (grid-get-raw-value-at source
@@ -2813,7 +2970,8 @@ ignoring the case of FROM.  The whole is one undoable step."
      for row from (nth 0 range) to (nth 2 range)
      when (grid-table-etaf--row-shown-p state row) do
      (cl-loop
-      for col from (nth 1 range) to (nth 3 range) do
+      for col from (nth 1 range) to (nth 3 range)
+      when (grid-table-etaf--col-shown-p state col) do
       (let ((raw (grid-get-raw-value-at source row col)))
         (when (and (stringp raw) (string-match-p pattern raw))
           (push (list row col
