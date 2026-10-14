@@ -1151,7 +1151,14 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should-not grid-table-etaf--traces)
     (should-error (grid-table-etaf-next-trace) :type 'user-error)
     (grid-table-etaf-goto 0 0)
-    (should-error (grid-table-etaf-trace-precedents) :type 'user-error)))
+    (should-error (grid-table-etaf-trace-precedents) :type 'user-error)
+    ;; Undoing an edit drops the traces it would make stale.
+    (grid-table-sheet-select "Sheet1")
+    (grid-table-etaf-goto 2 1)
+    (grid-table-etaf-trace-dependents)
+    (should grid-table-etaf--traces)
+    (grid-table-etaf-undo)
+    (should-not grid-table-etaf--traces)))
 
 (ert-deftest grid-table-etaf-paste-special ()
   (grid-table-etaf-test--with-grid (14 5 100 12)
@@ -1246,7 +1253,14 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should (equal (grid-table-hidden source) '(nil)))
     ;; Not everything can be hidden.
     (grid-table-etaf-select-all)
-    (should-error (grid-table-etaf-hide-columns) :type 'user-error)))
+    (should-error (grid-table-etaf-hide-columns) :type 'user-error)
+    ;; Rows a filter hides stay the filter's: B is 2, 4, ... so rows 1 to
+    ;; 4 go, and hiding rows 0 to 6 hides only the ones shown.
+    (grid-table-etaf-filter-column 1 ">" "8")
+    (grid-table-etaf-goto 0 0)
+    (grid-table-etaf-goto 6 0 t)
+    (grid-table-etaf-hide-rows)
+    (should (equal (car (grid-table-hidden source)) '(0 5 6)))))
 
 (provide 'grid-table-etaf-test)
 

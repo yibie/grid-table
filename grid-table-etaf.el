@@ -1923,6 +1923,7 @@ shifts."
        (dolist (part (if forward records (reverse records)))
          (grid-table-etaf--replay state part forward)))
       (`(cells . ,cells)
+       (setq grid-table-etaf--traces nil)
        (grid-table-etaf--write-cells
         state
         (mapcar (lambda (cell)
@@ -2572,8 +2573,11 @@ copying, clearing and pasting.  `grid-table-etaf-show-rows' shows them."
          (source (grid-table-etaf--source state))
          (range (grid-table-etaf-selection))
          (hidden (grid-table-hidden source))
+         ;; Rows a filter hides are left to the filter.
          (rows (append (car hidden)
-                       (number-sequence (nth 0 range) (nth 2 range)))))
+                       (cl-remove-if-not
+                        (lambda (row) (grid-table-etaf--row-shown-p state row))
+                        (number-sequence (nth 0 range) (nth 2 range))))))
     (when (cl-every (lambda (row) (memq row rows))
                     (number-sequence 0 (1- (grid-get-row-count source))))
       (user-error "At least one row has to stay shown"))
