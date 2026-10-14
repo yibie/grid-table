@@ -121,16 +121,23 @@ follows the hour stands for minutes.  Everything else is copied."
      pattern t t)))
 
 (defun grid-format-parse-date (text)
-  "Return the serial number of TEXT written year first, or nil.
-TEXT is a date such as 2026-10-13 or 2026/10/13, optionally followed by
-a time such as 18:30 or 18:30:05."
+  "Return the serial number of the date TEXT, or nil.
+TEXT is a date written year first, such as 2026-10-13 or 2026/10/13, or
+month first with slashes as in the United States, such as 10/13/2026,
+optionally followed by a time such as 18:30 or 18:30:05."
   (when (and (stringp text)
-             (string-match
-              (concat "\\`[ \t]*\\([0-9]\\{4\\}\\)\\([-/]\\)\\([0-9]\\{1,2\\}\\)\\2"
-                      "\\([0-9]\\{1,2\\}\\)"
-                      "\\(?:[ T]\\([0-9]\\{1,2\\}\\):\\([0-9]\\{2\\}\\)"
-                      "\\(?::\\([0-9]\\{2\\}\\)\\)?\\)?[ \t]*\\'")
-              text))
+             (or (string-match
+                  (concat "\\`[ \t]*\\(?1:[0-9]\\{4\\}\\)\\(?2:[-/]\\)"
+                          "\\(?3:[0-9]\\{1,2\\}\\)\\2\\(?4:[0-9]\\{1,2\\}\\)"
+                          "\\(?:[ T]\\(?5:[0-9]\\{1,2\\}\\):\\(?6:[0-9]\\{2\\}\\)"
+                          "\\(?::\\(?7:[0-9]\\{2\\}\\)\\)?\\)?[ \t]*\\'")
+                  text)
+                 (string-match
+                  (concat "\\`[ \t]*\\(?3:[0-9]\\{1,2\\}\\)/\\(?4:[0-9]\\{1,2\\}\\)/"
+                          "\\(?1:[0-9]\\{4\\}\\)"
+                          "\\(?: \\(?5:[0-9]\\{1,2\\}\\):\\(?6:[0-9]\\{2\\}\\)"
+                          "\\(?::\\(?7:[0-9]\\{2\\}\\)\\)?\\)?[ \t]*\\'")
+                  text)))
     (let ((year (string-to-number (match-string 1 text)))
           (month (string-to-number (match-string 3 text)))
           (day (string-to-number (match-string 4 text)))
@@ -251,9 +258,11 @@ nil for anything else, which is stored as it is."
        (serial
         (cons (grid-format--raw-number serial)
               (list 'date
-                    (concat (if (string-search "/" text)
-                                "yyyy/mm/dd"
-                              "yyyy-mm-dd")
+                    (concat (cond ((string-match-p
+                                    "\\`[ \t]*[0-9]\\{1,2\\}/" text)
+                                   "mm/dd/yyyy")
+                                  ((string-search "/" text) "yyyy/mm/dd")
+                                  (t "yyyy-mm-dd"))
                             (cond ((string-match-p ":[0-9]+:" text) " hh:mm:ss")
                                   ((string-search ":" text) " hh:mm")
                                   (t ""))))))

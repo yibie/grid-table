@@ -1009,6 +1009,22 @@
                      "│3  │ wide                  │"
                      "└───┴───────────────────────┘")))))
 
+(ert-deftest grid-table-dates-written-month-first ()
+  (should (= (grid-format-parse-date "10/13/2026") 46308))
+  (should (= (grid-format-parse-date "3/4/2026")
+             (grid-format-parse-date "2026-03-04")))
+  (should (= (grid-format-parse-date "10/13/2026 18:30")
+             (grid-format-parse-date "2026-10-13 18:30")))
+  ;; There is no month 13: day first is not guessed.
+  (should-not (grid-format-parse-date "13/10/2026"))
+  (should-not (grid-format-parse-date "2/30/2026"))
+  (should-not (grid-format-parse-date "10/13/26"))
+  (let ((source (make-default-data-source '("" "") '(("" "=A1+1")))))
+    (grid-table-enter-value source 0 0 "3/4/2026")
+    (should (equal (grid-get-raw-value-at source 0 0) "46085"))
+    (should (equal (grid-get-display-value-at source 0 0) "03/04/2026"))
+    (should (equal (grid-get-computed-value-at source 0 1) 46086))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
