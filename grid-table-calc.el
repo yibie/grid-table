@@ -88,6 +88,17 @@ format, is text even when it reads as a number."
          (propertize raw 'grid-text t))
         (t raw)))
 
+(defun grid-calc--parsed (cell raw)
+  "Return the parsed form of the formula RAW that CELL holds.
+The cell keeps it for as long as it holds that text, so a formula is
+parsed once and not at every recalculation."
+  (let ((kept (aref cell grid-cell--dependencies)))
+    (if (and (consp kept) (eq (car kept) raw))
+        (cdr kept)
+      (let ((parsed (grid-parser-parse (substring raw 1))))
+        (aset cell grid-cell--dependencies (cons raw parsed))
+        parsed))))
+
 (defun grid-calc--compute-cell (model index)
   "Compute the cell at INDEX of MODEL unless this pass already did.
 A formula that fails gives its cell one of `grid-calc-error-values'
@@ -106,8 +117,7 @@ instead of stopping the recalculation."
           (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
               (condition-case err
                   (let ((grid-calc--depth (1+ grid-calc--depth)))
-                    (grid-calc-eval-ast
-                     model (grid-parser-parse (substring raw 1))))
+                    (grid-calc-eval-ast model (grid-calc--parsed cell raw)))
                 (grid-calc-cycle (setq cycle t) "#CYCLE!")
                 (error (grid-calc--error-value err)))
             (grid-calc--typed-value model index raw)))
