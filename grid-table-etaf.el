@@ -2333,7 +2333,7 @@ The choice is read in the minibuffer; an empty one clears the cell."
     (grid-table-etaf--enter-cells
      state (list (list (car cursor) (cdr cursor) choice)))))
 
-(defcustom grid-table-etaf-type-to-edit nil
+(defcustom grid-table-etaf-type-to-edit t
   "Non-nil makes typing a character replace the cursor cell, as in Excel.
 nil leaves the cell alone until RET or F2 starts an edit, so a stray key
 changes nothing."

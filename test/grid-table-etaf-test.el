@@ -444,7 +444,6 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 (ert-deftest grid-table-etaf-undo-and-redo-restore-cells ()
   (grid-table-etaf-test--with-grid (6 5)
     ;; Typing starts an edit here, as in Excel.
-    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (grid-table-etaf-goto 2 1)
     (execute-kbd-macro (kbd "9 9 RET"))
@@ -789,7 +788,6 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 (ert-deftest grid-table-etaf-typed-dates-and-number-formats ()
   (grid-table-etaf-test--with-grid (6 5)
     ;; Typing starts an edit here, as in Excel.
-    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (let ((state grid-table-etaf--state))
       ;; A typed date is stored as a number and shown as typed.
@@ -1111,7 +1109,6 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 (ert-deftest grid-table-etaf-typing-replaces-the-cell-and-return-moves-down ()
   (grid-table-etaf-test--with-grid (6 5)
     ;; Typing starts an edit here, as in Excel.
-    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (grid-table-etaf-goto 1 1)
     (execute-kbd-macro (kbd "4 2 RET"))
@@ -1132,7 +1129,7 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-goto 1 1)
     (execute-kbd-macro (kbd "<f2> 0 RET"))
     (should (equal (grid-get-raw-value-at source 1 1) "420"))
-    ;; By default a typed key changes nothing; RET starts the edit.
+    ;; With the option off a typed key changes nothing; RET starts the edit.
     (setq-local grid-table-etaf-type-to-edit nil)
     (grid-table-etaf-goto 1 1)
     (execute-kbd-macro (kbd "7"))
@@ -1404,7 +1401,6 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 (ert-deftest grid-table-etaf-validation-lists ()
   (grid-table-etaf-test--with-grid (8 4 100 12)
     ;; Typing starts an edit here, as in Excel.
-    (setq-local grid-table-etaf-type-to-edit t)
     (switch-to-buffer buffer)
     (grid-table-etaf-goto 1 0)
     (grid-table-etaf-goto 3 0 t)
