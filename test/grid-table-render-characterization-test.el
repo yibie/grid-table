@@ -214,3 +214,26 @@
 (provide 'grid-table-render-characterization-test)
 
 ;;; grid-table-render-characterization-test.el ends here
+
+(ert-deftest grid-table-org-preview-heads-the-table-once ()
+  "The Org preview puts the header row above the rule, and not again below."
+  (require 'grid-table-org)
+  (let ((file (make-temp-file "grid-org-" nil ".grid")))
+    (unwind-protect
+        (let ((source (make-default-data-source
+                       '("Region" "Total")
+                       '(("Region" "Total") ("North" "10") ("South" "20")))))
+          (grid-table-persistence--save-to-file source file)
+          (let ((preview (grid-table-org--render-preview-from-file file)))
+            (should (= (grid-table-test--occurrences "Region" preview) 1))
+            (should (string-match-p "\\`| Region +| Total +|\n|-" preview))
+            (should (string-match-p "| North +| 10 +|" preview))
+            (should (string-match-p "| South +| 20 +|" preview))))
+      (delete-file file))))
+
+(defun grid-table-test--occurrences (needle haystack)
+  "Return how many times NEEDLE occurs in HAYSTACK."
+  (let ((count 0) (start 0))
+    (while (string-match (regexp-quote needle) haystack start)
+      (setq count (1+ count) start (match-end 0)))
+    count))

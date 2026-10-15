@@ -45,11 +45,16 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
          (get-header-fn (gethash :get-header-value data-source)) ; Get header function
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
-         (actual-headers (gethash :headers data-source)) ; Original headers from data-source
-         (all-data-rows (cl-loop for r from 0 below num-rows ; Get all data rows
-                                 collect (cl-loop for c from 0 below num-cols
-                                                 collect (grid-get-display-value-at data-source r c))))
-         (column-widths (grid-table-org--calculate-column-widths actual-headers all-data-rows))
+         (all-rows (cl-loop for r from 0 below num-rows
+                            collect (cl-loop for c from 0 below num-cols
+                                             collect (grid-get-display-value-at data-source r c))))
+         ;; The first row of the grid is its header row, unless that is
+         ;; turned off; it heads the Org table once.
+         (actual-headers (and (grid-table-header-row-p data-source) (car all-rows)))
+         (all-data-rows (if actual-headers (cdr all-rows) all-rows))
+         (num-rows (length all-data-rows))
+         (column-widths (grid-table-org--calculate-column-widths
+                         (or actual-headers (make-list num-cols "")) all-data-rows))
          (buffer-content ""))
     (with-temp-buffer
       (let ((first-row t))
