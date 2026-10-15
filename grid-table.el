@@ -127,6 +127,16 @@ stored for them."
                          (plist-get (grid-get-style-at source row col)
                                     :format)))
 
+(defun grid-table--reads-as-other-than-text-p (text)
+  "Return non-nil when TEXT, stored as it is, is not plain text.
+That is a formula, a number, a date, a truth value or text that starts
+with the apostrophe that marks text."
+  (or (string-prefix-p "=" text)
+      (string-prefix-p "'" text)
+      (grid-format-number text)
+      (grid-format-parse-entry text)
+      (member (upcase (string-trim text)) '("TRUE" "FALSE"))))
+
 (defun grid-table-read-entry (source row col text)
   "Read TEXT as typed into the cell at ROW and COL of SOURCE.
 Return (RAW . STYLE): RAW is the text to store and STYLE the style to
@@ -134,7 +144,9 @@ give the cell, or the symbol `keep' to leave its style alone.  A date
 written year first, a percentage, an amount of money and a number with
 thousands separators are stored as numbers; a cell without a format
 takes the one that shows the number as it was typed.  Sources that keep
-no styles, and cells with the text format, store TEXT as it is."
+no styles store TEXT as it is.  In a cell with the text format TEXT is
+text: it is stored after an apostrophe when it would read otherwise, so
+the number already in such a cell stays a number, as in a spreadsheet."
   (let* ((style (grid-get-style-at source row col))
          (format (plist-get style :format))
          (typed (and (gethash :set-style-at source)
@@ -146,7 +158,10 @@ no styles, and cells with the text format, store TEXT as it is."
                               (grid-format-number text)
                               (grid-format-parse-entry
                                (concat (string-trim text) "%")))))))
-    (cond ((null typed) (cons text 'keep))
+    (cond ((and (eq (car-safe format) 'text)
+                (grid-table--reads-as-other-than-text-p text))
+           (cons (concat "'" text) 'keep))
+          ((null typed) (cons text 'keep))
           (format (cons (car typed) 'keep))
           (t (cons (car typed)
                    (plist-put (copy-sequence style) :format (cdr typed)))))))
@@ -256,7 +271,8 @@ range inside the sheet."
          (let ((value (grid-get-display-value-at source row col)))
            (if (stringp value) (substring-no-properties value)
              (format "%s" (or value "")))))
-       (plist-get chart :by) (plist-get chart :type)))))
+       (plist-get chart :by) (plist-get chart :type)
+       (plist-get chart :labels) (plist-get chart :names)))))
 
 (defun grid-table-validations (source)
   "Return SOURCE's validation rules, (TOP LEFT BOTTOM RIGHT KIND SPEC) each."

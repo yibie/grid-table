@@ -296,6 +296,21 @@
           (should (equal (grid-workbook-name-problem workbook "data")
                          "There is already a sheet called data"))
           (should (grid-workbook-name-problem workbook "a:b"))
+          ;; A name longer than one can type here may come from a file.
+          (let ((long (make-string 40 ?x)))
+            (should (grid-workbook-name-problem workbook long))
+            (should-not (grid-workbook-name-problem workbook long nil t))
+            (should (equal (grid-workbook-sheet-name
+                            (car (grid-workbook-sheets
+                                  (grid-workbook-create
+                                   (list (cons long (make-default-data-source
+                                                     '("") '(("1"))))
+                                         (cons "Other"
+                                               (make-default-data-source
+                                                '("")
+                                                `((,(format "=%s!A1+1" long))))))
+                                   t))))
+                           long)))
           (should (equal (grid-workbook-fresh-name workbook) "Sheet1"))
           (should (equal (grid-workbook-fresh-name workbook "Data") "Sheet1"))
           ;; A name with an apostrophe or an exclamation mark is a name.
@@ -559,11 +574,22 @@
     (should (equal (grid-get-computed-value-at source 3 1) 0))
     (grid-set-raw-value-at source 3 1 "=A4+1")
     (should (equal (grid-get-computed-value-at source 3 1) 8))
-    ;; So is a number in a cell with the text format.
+    ;; So is a number typed into a cell with the text format, which keeps
+    ;; it after an apostrophe; a number already there stays a number.
     (grid-set-style-at source 0 1 '(:format (text)))
     (grid-set-raw-value-at source 0 1 "12")
     (grid-set-raw-value-at source 0 0 "=COUNT(B1:B1)")
+    (should (equal (grid-get-computed-value-at source 0 0) 1))
+    (grid-table-enter-value source 0 1 "12")
+    (should (equal (grid-get-raw-value-at source 0 1) "'12"))
+    (should (equal (grid-table-edit-text source 0 1) "12"))
     (should (equal (grid-get-computed-value-at source 0 0) 0))
+    (grid-table-enter-value source 0 1 "twelve")
+    (should (equal (grid-get-raw-value-at source 0 1) "twelve"))
+    (grid-table-enter-value source 0 1 "'q")
+    (should (equal (grid-get-raw-value-at source 0 1) "''q"))
+    (should (equal (grid-get-display-value-at source 0 1) "'q"))
+    (grid-table-enter-value source 0 1 "12")
     ;; The formats are saved with the grid and come back.
     (let ((file (make-temp-file "grid-format-" nil ".grid")))
       (unwind-protect
@@ -938,14 +964,11 @@
             (should (= calls (1+ before)))
             (should (equal (grid-model-get-computed-value model 0 2) calls)))
           (should (numberp (grid-model-get-computed-value model 1 1)))
-          ;; The text format changes what a typed cell is worth.
+          ;; The text format leaves a number that is there a number.
           (grid-model-set-raw-value model 0 0 "5")
           (grid-model-set-raw-value model 1 2 "=SUM(A1:A1)")
           (should (equal (grid-model-get-computed-value model 1 2) 5))
           (grid-model-set-style model 0 0 '(:format (text)))
-          (grid-table-calc-evaluate model)
-          (should (equal (grid-model-get-computed-value model 1 2) 0))
-          (grid-model-set-style model 0 0 nil)
           (grid-table-calc-evaluate model)
           (should (equal (grid-model-get-computed-value model 1 2) 5)))
       (remhash "TICK" grid-calc-functions))))

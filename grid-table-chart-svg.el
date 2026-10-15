@@ -78,12 +78,15 @@
   (and (stringp value) (not (string-empty-p value))
        (not (grid-chart-svg--number value))))
 
-(defun grid-chart-svg-data (range value-fn label-fn &optional by type)
+(defun grid-chart-svg-data (range value-fn label-fn &optional by type labels names)
   "Read the chart data of RANGE, (TOP LEFT BOTTOM RIGHT).
 VALUE-FN, called with a row and a column, returns a cell's computed
 value; LABEL-FN returns the text it shows.  BY is `columns', `rows' or
 nil to choose.  TYPE `scatter' takes the first column, or row, as the
-x values whatever it holds.
+x values whatever it holds.  With BY given, LABELS t says the first
+column, or row, of RANGE labels the categories and `none' that nothing
+does; NAMES says the same of the first row, or column, naming the
+series.  Left nil, what the cells hold decides.
 
 Return (:categories LABELS :series ((NAME . VALUES) ...) :by BY
 :ranges RANGES :category-range RANGE :names CELLS), where VALUES holds
@@ -98,22 +101,29 @@ and cells are (TOP LEFT BOTTOM RIGHT)."
                (label (lambda (r c) (funcall label-fn (+ top r) (+ left c))))
                (corner-empty (let ((v (funcall value 0 0)))
                                (or (null v) (equal v ""))))
+               ;; What a workbook says of its first row and column.
+               (header-given (pcase by ('columns names) ('rows labels)))
+               (side-given (pcase by ('columns labels) ('rows names)))
                ;; A first row of text names the series of columns.
-               (header (and (> rows 1)
-                            (or (and corner-empty (> cols 1))
-                                (cl-loop for c from 1 below cols
-                                         thereis (grid-chart-svg--label-p
-                                                  (funcall value 0 c)))
-                                (and (= cols 1)
-                                     (grid-chart-svg--label-p
-                                      (funcall value 0 0))))))
+               (header (if header-given
+                           (and (> rows 1) (eq header-given t))
+                         (and (> rows 1)
+                              (or (and corner-empty (> cols 1))
+                                  (cl-loop for c from 1 below cols
+                                           thereis (grid-chart-svg--label-p
+                                                    (funcall value 0 c)))
+                                  (and (= cols 1)
+                                       (grid-chart-svg--label-p
+                                        (funcall value 0 0)))))))
                ;; A first column of text names the categories.
-               (side (and (> cols 1)
-                          (or (eq type 'scatter)
-                              (and corner-empty header)
-                              (cl-loop for r from (if header 1 0) below rows
-                                       thereis (grid-chart-svg--label-p
-                                                (funcall value r 0))))))
+               (side (if side-given
+                         (and (> cols 1) (eq side-given t))
+                       (and (> cols 1)
+                            (or (eq type 'scatter)
+                                (and corner-empty header)
+                                (cl-loop for r from (if header 1 0) below rows
+                                         thereis (grid-chart-svg--label-p
+                                                  (funcall value r 0)))))))
                (h (if header 1 0))
                (k (if side 1 0))
                (by (or by (if (>= (- rows h) (- cols k)) 'columns 'rows))))

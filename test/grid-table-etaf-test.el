@@ -827,15 +827,18 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
       (grid-table-etaf-set-cell 3 2 "=1=2")
       (should (equal (grid-get-display-value-at source 3 2) "FALSE"))
       (should (string-match-p "FALSE" (grid-table-etaf-test--body)))
-      ;; The text format makes what is there text, and undo takes it back.
+      ;; The text format leaves the number there a number; what is typed
+      ;; after it is text.
       (grid-table-etaf-set-cell 4 1 "007")
       (grid-table-etaf-set-cell 4 2 "=COUNT(B5:B5)")
       (should (equal (grid-get-computed-value-at source 4 2) 1))
       (grid-table-etaf-goto 4 1)
       (grid-table-etaf-format-text)
-      (should (equal (grid-get-computed-value-at source 4 2) 0))
-      (grid-table-etaf-undo)
-      (should (equal (grid-get-computed-value-at source 4 2) 1)))))
+      (should (equal (grid-get-computed-value-at source 4 2) 1))
+      (grid-table-etaf--enter-cells (grid-table-etaf--state-or-error)
+                                    '((4 1 "007")))
+      (should (equal (grid-get-display-value-at source 4 1) "007"))
+      (should (equal (grid-get-computed-value-at source 4 2) 0)))))
 
 (ert-deftest grid-table-etaf-paste-grows-the-grid ()
   (grid-table-etaf-test--with-grid (4 3)

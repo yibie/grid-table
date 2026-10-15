@@ -105,24 +105,15 @@ A sheet that does not exist makes the reference #REF!."
            "#N/A")
           (t "#ERROR!"))))
 
-(defun grid-calc--typed-value (model index raw)
-  "Return the value of the cell at INDEX of MODEL that holds typed RAW.
-Text typed after an apostrophe, and anything in a cell with the text
-format, is text even when it reads as a number."
-  (cond ((string-empty-p raw) raw)
-        ((eq (aref raw 0) ?')
-         (propertize (substring raw 1) 'grid-text t))
-        ((and (let ((styles (grid-data-model-styles model)))
-                (and styles (> (hash-table-count styles) 0)
-                     (let ((cols (grid-data-model-cols model)))
-                       (eq (car-safe
-                            (plist-get (gethash (cons (/ index cols)
-                                                      (% index cols))
-                                                styles)
-                                       :format))
-                           'text)))))
-         (propertize raw 'grid-text t))
-        (t raw)))
+(defun grid-calc--typed-value (raw)
+  "Return the value of a cell that holds typed RAW.
+Text typed after an apostrophe is text even when it reads as a number.
+A cell's format does not change what it holds: a number typed into a
+cell with the text format is stored after an apostrophe, as
+`grid-table-read-entry' does."
+  (if (and (not (string-empty-p raw)) (eq (aref raw 0) ?'))
+      (propertize (substring raw 1) 'grid-text t)
+    raw))
 
 (defun grid-calc--parsed (cell raw)
   "Return the parsed form of the formula RAW that CELL holds.
@@ -166,7 +157,7 @@ instead of stopping the recalculation."
                           (t "#VALUE!")))
                 (grid-calc-cycle (setq cycle t) "#CYCLE!")
                 (error (grid-calc--error-value err)))
-            (grid-calc--typed-value model index raw)))
+            (grid-calc--typed-value raw)))
          (if (vectorp pass)
              (aset pass index 'done)
            (puthash index 'done pass))

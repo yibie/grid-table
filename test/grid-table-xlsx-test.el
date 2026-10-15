@@ -11,6 +11,13 @@
 ;; E, a boolean, a date and a percentage in column F, a merge over B7:D8, a
 ;; "greater than 5" conditional format on C3:C5 and a total in E6.  Sheet
 ;; Sheet2 holds a formula that reads the first sheet and a two-line text.
+;;
+;; test/fixtures/compat.xlsx began as a workbook grid-table wrote and was
+;; then edited by hand into shapes other writers produce and umya used to
+;; panic on or drop: cells of row 2 carry no reference, A3:B3 holds one
+;; hyperlink, the page setup names printer settings the package lacks, the
+;; chart frame links to #Data!A1, and C2 is the text 'quoted.  It also has
+;; a hidden row 40 and a width for column Z, both past the data.
 
 ;;; Code:
 
@@ -22,6 +29,10 @@
 (defconst grid-table-xlsx-test--fixture
   (expand-file-name "fixtures/styled.xlsx"
                     (file-name-directory (or load-file-name buffer-file-name))))
+
+(defconst grid-table-xlsx-test--compat
+  (expand-file-name "compat.xlsx"
+                    (file-name-directory grid-table-xlsx-test--fixture)))
 
 (defconst grid-table-xlsx-test--available
   (ignore-errors (grid-table-xlsx--ensure-module) t))
@@ -97,9 +108,14 @@
                                                 0 0 "'007" nil))
                                3 5)
                    '("s" "007")))
+    ;; A number under the text format is still a number.
     (should (equal (nth 3 (funcall fields (grid-table-xlsx--cell-record
                                            0 0 "12" '(:format (text)))))
-                   "s"))
+                   "n"))
+    (should (equal (seq-subseq (funcall fields (grid-table-xlsx--cell-record
+                                                0 0 "''x" nil))
+                               3 5)
+                   '("s" "'x")))
     (should-not (grid-table-xlsx--cell-record 0 0 "" nil))
     (should (equal (seq-drop (funcall fields
                                       (grid-table-xlsx--cell-record
@@ -186,6 +202,31 @@
       (let ((back (grid-table-xlsx-create-data-source file "Formats")))
         (should (equal (grid-get-merges back) '((0 0 1 0))))
         (should-not (grid-table-header-row-p back))))))
+
+;; Text a workbook holds stays the text it was, whatever it reads as, and
+;; a number stays a number under the text format.
+(ert-deftest grid-table-xlsx-test-text-keeps-what-it-is ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((texts '("'" "'[Book1]Sheet1'!$C2" "=A1" "TRUE" "007" "plain"))
+           (source (make-default-data-source
+                    '("" "")
+                    (append (mapcar (lambda (text) (list (concat "'" text) ""))
+                                    texts)
+                            '(("3" "=SUM(A7:A7)"))))))
+      (grid-set-style-at source 6 0 '(:format (text)))
+      (grid-table-xlsx-write-data-source source file "Texts")
+      (let ((back (grid-table-xlsx-create-data-source file "Texts")))
+        (seq-do-indexed
+         (lambda (text row)
+           (should (equal (grid-get-display-value-at back row 0) text)))
+         texts)
+        ;; Text that reads as nothing else needs no apostrophe.
+        (should (equal (grid-get-raw-value-at back 5 0) "plain"))
+        (should (equal (grid-get-raw-value-at back 6 0) "3"))
+        (should (equal (plist-get (grid-get-style-at back 6 0) :format)
+                       '(text)))
+        (should (equal (grid-get-computed-value-at back 6 1) 3))))))
 
 (ert-deftest grid-table-xlsx-test-round-trip ()
   (skip-unless grid-table-xlsx-test--available)
@@ -367,12 +408,20 @@ grid reads them back without it."
                          (list :anchor '(4 . 7) :size '(42 . 12) :type 'line
                                :range "A1:E3" :by 'columns :title nil)
                          (list :anchor '(20 . 0) :size '(42 . 12) :type 'pie
-                               :range "A1:E2" :by 'rows :title "North"))))
+                               :range "A1:E2" :by 'rows :title "North")))
+           ;; The workbook says where the labels and names are, which
+           ;; are where the grid found them.
+           (written (mapcar (lambda (chart) (append chart '(:labels t :names t)))
+                            charts)))
       (grid-table-set-charts data charts)
       (grid-table-xlsx-write-workbook workbook file)
       (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
                                        "My Data")))
-        (should (equal (grid-table-charts back) charts))
+        (should (equal (grid-table-charts back) written))
+        (should (equal (mapcar (lambda (chart) (grid-table-chart-data back chart))
+                               written)
+                       (mapcar (lambda (chart) (grid-table-chart-data data chart))
+                               charts)))
         ;; The sheet reaches the cells the charts stand on, so a chart
         ;; beside the data is not pushed onto it.
         (should (>= (grid-get-column-count back) 8))
@@ -381,14 +430,14 @@ grid reads them back without it."
         (grid-table-xlsx-write-workbook (grid-workbook-of back) file)
         (let ((again (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
                                           "My Data")))
-          (should (equal (grid-table-charts again) charts))
+          (should (equal (grid-table-charts again) written))
           ;; Deleted in the grid, a chart is gone from the file.
-          (grid-table-set-charts again (cdr charts))
+          (grid-table-set-charts again (cdr written))
           (grid-table-xlsx-write-workbook (grid-workbook-of again) file)
           (should (equal (grid-table-charts
                           (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
                                                "My Data"))
-                         (cdr charts))))))))
+                         (cdr written))))))))
 
 (ert-deftest grid-table-xlsx-test-export-keeps-other-sheets ()
   (skip-unless grid-table-xlsx-test--available)
@@ -486,6 +535,60 @@ grid reads them back without it."
                                  (concat (regexp-quote
                                           (file-name-nondirectory file))
                                          "\\.tmp")))))
+
+(ert-deftest grid-table-xlsx-test-charts-other-shapes ()
+  "Charts of one-value series, unlabelled doughnuts and short data return."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  (make-list 3 "")
+                  '(("" "Linux" "Mac") ("Share" "60" "30") ("" "" "")
+                    ("" "" ""))))
+           (workbook (grid-workbook-create (list (cons "Data" data))))
+           (charts (list
+                    ;; Each series holds one value, under its name.
+                    (list :anchor '(6 . 0) :size '(42 . 10) :type 'column
+                          :range "A1:C2" :by 'columns :title nil
+                          :labels t :names t)
+                    ;; Two rings and nothing to label them.
+                    (list :anchor '(6 . 6) :size '(42 . 10) :type 'doughnut
+                          :range "B2:C3" :by 'columns :title nil
+                          :labels 'none :names 'none)
+                    ;; Its range runs into empty rows the file does not hold.
+                    (list :anchor '(18 . 0) :size '(42 . 10) :type 'line
+                          :range "B2:B4" :by 'columns :title nil
+                          :labels 'none :names 'none))))
+      (grid-table-set-charts data charts)
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                       "Data")))
+        (should (equal (grid-table-charts back) charts))))))
+
+(ert-deftest grid-table-xlsx-test-other-writers ()
+  "A workbook in shapes other writers produce reads and writes back."
+  (skip-unless grid-table-xlsx-test--available)
+  (let ((source (car (grid-workbook-sheets
+                      (grid-table-xlsx-create-workbook
+                       grid-table-xlsx-test--compat)))))
+    (should (equal (grid-table-xlsx-test--raw source 1 0) "4"))
+    (should (equal (grid-table-xlsx-test--raw source 1 1) "30"))
+    (should (equal (grid-table-xlsx-test--raw source 1 2) "''quoted"))
+    (should (equal (grid-table-hidden source) '((39))))
+    (should (equal (gethash 25 (grid-get-column-widths source)) 20))
+    (should (= (length (grid-table-charts source)) 1))
+    (dolist (col '(0 1))
+      (should (equal (plist-get (grid-get-style-at source 2 col) :link)
+                     "#Data!A1")))
+    (grid-table-xlsx-test--with-file file
+      (grid-table-xlsx-write-workbook (grid-workbook-of source) file)
+      (let ((back (car (grid-workbook-sheets
+                        (grid-table-xlsx-create-workbook file)))))
+        (dotimes (row 3)
+          (dotimes (col 3)
+            (should (equal (grid-table-xlsx-test--raw back row col)
+                           (grid-table-xlsx-test--raw source row col)))))
+        (should (equal (grid-table-hidden back) '((39))))
+        (should (equal (gethash 25 (grid-get-column-widths back)) 20))))))
 
 (provide 'grid-table-xlsx-test)
 

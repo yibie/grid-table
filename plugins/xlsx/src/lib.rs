@@ -16,8 +16,8 @@ use umya_spreadsheet::{
 };
 use umya_spreadsheet::structs::drawing::Theme;
 use umya_spreadsheet::structs::drawing::charts::{
-    BarDirectionValues, CategoryAxisData, ChartText, GroupingValues, ScatterStyleValues, Smooth,
-    StringReference,
+    AreaChartSeries, BarDirectionValues, CategoryAxisData, ChartText, GroupingValues,
+    ScatterStyleValues, Smooth, StringReference,
 };
 use umya_spreadsheet::structs::drawing::spreadsheet::MarkerType;
 use umya_spreadsheet::structs::{Chart, ChartType};
@@ -117,15 +117,16 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
     for cell in sheet.cells_sorted() {
         let at = cell.coordinate();
         write!(out, "({} {} ", at.row_num() - 1, at.col_num() - 1)?;
-        if cell.is_formula() {
+        // A data table or a spilled array has no formula of its own to
+        // give, only the value it shows.
+        if cell.is_formula() && !cell.formula().is_empty() {
             quote(out, &format!("={}", cell.formula()));
         } else {
             let value = cell.value();
             quote(out, &value);
-            // Text that reads as a number, such as 007, must stay text.
-            if matches!(cell.data_type(), "s" | "str" | "inlineStr")
-                && value.trim().parse::<f64>().is_ok()
-            {
+            // Text that reads as something else, such as 007 or =A1,
+            // must stay text; grid-table decides which text that is.
+            if matches!(cell.data_type(), "s" | "str" | "inlineStr") {
                 keyword(out, ":text", "1");
             }
         }
@@ -232,8 +233,10 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
                 "{} {} {} {} (",
                 info.from.0, info.from.1, info.to.0, info.to.1
             )?;
-            for reference in &info.refs {
+            for (role, reference) in &info.refs {
+                write!(out, "({} ", role)?;
                 quote(out, reference);
+                out.push(')');
                 out.push(' ');
             }
             out.push_str("))");
@@ -583,8 +586,9 @@ struct ChartInfo {
     /// The zero-based (ROW, COL) of the cells the chart's corners sit on
     from: (u32, u32),
     to: (u32, u32),
-    /// The ranges the chart reads: values, labels and x values
-    refs: Vec<String>,
+    /// The ranges the chart reads, each with what it holds: v values,
+    /// x the x values of a scatter chart, c categories, n a series name
+    refs: Vec<(char, String)>,
 }
 
 /// Describe CHART of the sheet named SHEET, or None when grid-table
@@ -618,28 +622,42 @@ fn chart_info(chart: &Chart, sheet: &str) -> Option<ChartInfo> {
     let mut refs = Vec::new();
     for series in list.area_chart_series() {
         let formulas = [
-            series.values().map(|v| v.number_reference().formula()),
-            series.x_values().map(|v| v.number_reference().formula()),
-            series.y_values().map(|v| v.number_reference().formula()),
-            series
-                .category_axis_data()
-                .and_then(|c| c.string_reference())
-                .map(|r| r.formula()),
-            series
-                .category_axis_data()
-                .and_then(|c| c.number_reference())
-                .map(|r| r.formula()),
+            ('v', series.values().map(|v| v.number_reference().formula())),
+            ('x', series.x_values().map(|v| v.number_reference().formula())),
+            ('v', series.y_values().map(|v| v.number_reference().formula())),
+            (
+                'c',
+                series
+                    .category_axis_data()
+                    .and_then(|c| c.string_reference())
+                    .map(|r| r.formula()),
+            ),
+            (
+                'c',
+                series
+                    .category_axis_data()
+                    .and_then(|c| c.number_reference())
+                    .map(|r| r.formula()),
+            ),
+            (
+                'n',
+                series
+                    .chart_text()
+                    .and_then(|t| t.string_reference())
+                    .map(|r| r.formula()),
+            ),
         ];
-        let name = series
-            .chart_text()
-            .and_then(|t| t.string_reference())
-            .map(|r| r.formula());
-        for formula in formulas.into_iter().chain([name]).flatten() {
+        for (role, formula) in formulas {
+            let Some(formula) = formula else { continue };
+            // A defined name or a constant: the workbook keeps the chart.
+            if !umya_spreadsheet::helper::address::is_address(formula.address_str()) {
+                return None;
+            }
             let owner = formula.address().sheet_name();
             if !owner.is_empty() && owner != sheet {
                 return None;
             }
-            refs.push(formula.address().range().range());
+            refs.push((role, formula.address().range().range()));
         }
     }
     if refs.is_empty() {
@@ -708,7 +726,7 @@ fn chart_sheets(chart: &Chart) -> Vec<String> {
 /// of a list) and the range of the category labels, then the data ranges as the
 /// chart type takes
 /// them: one per series, or x and y ranges in turn for a scatter chart,
-/// labels and values in turn for a doughnut.
+/// labels and values in turn for each ring of a doughnut.
 fn chart(fields: &[&str]) -> Result<Chart> {
     let kind = fields[1];
     let chart_type = match kind {
@@ -772,14 +790,28 @@ fn chart(fields: &[&str]) -> Result<Chart> {
     };
     // The series names are read from their cells too.
     let names = items(fields[5]);
-    if kind != "doughnut" {
-        let list = chart.area_chart_series_list_mut().area_chart_series_mut();
-        for (series, name) in list.iter_mut().zip(names.iter()) {
-            let mut reference = StringReference::default();
-            reference.formula_mut().set_address_str(name);
-            let mut text = ChartText::default();
-            text.set_string_reference(reference);
-            series.set_chart_text(text);
+    let list = chart.area_chart_series_list_mut().area_chart_series_mut();
+    for (series, name) in list.iter_mut().zip(names.iter()) {
+        let mut reference = StringReference::default();
+        reference.formula_mut().set_address_str(name);
+        let mut text = ChartText::default();
+        text.set_string_reference(reference);
+        series.set_chart_text(text);
+    }
+    // A doughnut is built from labels and values in turn; with no labels
+    // its values stood in for them, and its series keep only the values.
+    if kind == "doughnut" && fields[6].is_empty() {
+        for series in chart.area_chart_series_list_mut().area_chart_series_mut() {
+            let mut bare = AreaChartSeries::default();
+            if let Some(values) = series.values() {
+                bare.set_values(values.clone());
+            }
+            if let Some(text) = series.chart_text() {
+                bare.set_chart_text(text.clone());
+            }
+            bare.index_mut().set_val(series.index().val());
+            bare.order_mut().set_val(series.order().val());
+            *series = bare;
         }
     }
     // The labels are read from their cells, as the values are.

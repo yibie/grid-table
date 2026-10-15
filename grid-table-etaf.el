@@ -1335,7 +1335,8 @@ TICK, the view's change counter, lets the data be read once per change."
       (setq grid-table-etaf--chart-data-cache
             (cons tick (make-hash-table :test #'equal))))
     (let ((key (list source (plist-get chart :range) (plist-get chart :by)
-                     (plist-get chart :type)))
+                     (plist-get chart :type) (plist-get chart :labels)
+                     (plist-get chart :names)))
           (table (cdr grid-table-etaf--chart-data-cache)))
       (or (gethash key table)
           (puthash key (grid-table-etaf--read-chart-data source chart) table)))))
@@ -1733,6 +1734,11 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
        (let ((by (plist-get (grid-table-etaf--chart-data
                              (grid-table-etaf--source state) chart)
                             :by)))
+         ;; The first column and row keep what they hold: what named
+         ;; the series now labels the categories, and the other way.
+         (let ((labels (plist-get chart :labels)))
+           (setq chart (plist-put chart :labels (plist-get chart :names)))
+           (setq chart (plist-put chart :names labels)))
          (plist-put chart :by (if (eq by 'rows) 'columns 'rows)))))))
 
 (defun grid-table-etaf-chart-title (title)
@@ -1752,6 +1758,9 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
   (let ((range (grid-table-etaf-selection)))
     (grid-table-etaf--change-chart
      (lambda (chart)
+       ;; What labels the new cells is read from them again.
+       (cl-remf chart :labels)
+       (cl-remf chart :names)
        (plist-put chart :range (apply #'grid-chart-svg-range-text range))))))
 
 (defun grid-table-etaf-chart-move-here ()
@@ -2578,14 +2587,6 @@ in STATE.  Return the number of cells that changed."
          (grid-table-etaf--set-styles state (nreverse styles)))
        (grid-table-etaf--set-cells state (nreverse values))))))
 
-(defun grid-table-etaf--text-format-changed-p (cells)
-  "Return non-nil when CELLS, (ROW COL OLD NEW) styles, touch a text format.
-Whether a cell holds text or a number then has to be worked out again."
-  (cl-some (lambda (cell)
-             (not (eq (eq (car-safe (plist-get (nth 2 cell) :format)) 'text)
-                      (eq (car-safe (plist-get (nth 3 cell) :format)) 'text))))
-           cells))
-
 (defun grid-table-etaf--set-styles (state changes)
   "Give cells their styles from CHANGES, a list of (ROW COL STYLE).
 The change is one undoable step in STATE.  Nothing happens when the data
@@ -2599,8 +2600,6 @@ source stores no styles.  Return the number of cells that changed."
             (grid-set-style-at source row col style)
             (push (list row col old style) applied)))))
     (when applied
-      (when (grid-table-etaf--text-format-changed-p applied)
-        (grid-table-recalculate source))
       (grid-table-etaf--record state (cons 'styles (nreverse applied)))
       (grid-table-etaf--widen-visible state)
       (grid-table-etaf--bump state)
@@ -2650,8 +2649,6 @@ shifts."
        (dolist (cell cells)
          (grid-set-style-at source (nth 0 cell) (nth 1 cell)
                             (nth (if forward 3 2) cell)))
-       (when (grid-table-etaf--text-format-changed-p cells)
-         (grid-table-recalculate source))
        (grid-table-etaf--bump state)
        (grid-table-etaf--settle state))
       (`(width ,col ,old ,new)
@@ -2765,8 +2762,6 @@ change is one undoable step.  Covered cells of a merge are skipped."
               (grid-set-style-at source row col new)
               (push (list row col old new) changed)))))))
     (when changed
-      (when (grid-table-etaf--text-format-changed-p changed)
-        (grid-table-recalculate source))
       (grid-table-etaf--record state (cons 'styles (nreverse changed)))
       (grid-table-etaf--widen-visible state))
     (grid-table-etaf--bump state)

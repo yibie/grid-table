@@ -46,6 +46,9 @@ prebuilt grid-table-xlsx-module file next to this plugin."
 (defconst grid-table-xlsx--field (string #x1f)
   "Separator of the fields of a record.")
 
+(defconst grid-table-xlsx--max-cols 16384
+  "How many columns a worksheet can have.")
+
 (defconst grid-table-xlsx--default-width 8.43
   "Width in characters of a column a workbook has not sized.")
 
@@ -199,12 +202,29 @@ A string is in double quotes, with a doubled quote inside it."
      (lambda (text)
        (replace-regexp-in-string "_xlfn\\.\\(?:_xlws\\.\\)?" "" text t t)))))
 
+(defconst grid-table-xlsx--own-formula-regexp
+  (concat "\\`=[ \t]*"
+          (regexp-opt '("BARPLOT" "COLUMNPLOT" "HISTOGRAM" "BOXPLOT"
+                        "MULTILINE" "DENSITY" "COUNTPLOT" "LINEPLOT"
+                        "SCATTER" "SPARKLINE" "LINECHART"))
+          "[ \t]*(")
+  "Matches a chart formula, which only grid-table can evaluate.")
+
 (defun grid-table-xlsx--raw (cell)
   "Return the raw input for CELL, a (ROW COL VALUE . PROPERTIES) entry.
-Text that reads as a number is marked with an apostrophe, so it stays
-text.  A formula loses the prefixes a workbook gives newer functions."
+Text that would read as a number, a formula or a truth value, or that
+starts with an apostrophe, is marked with an apostrophe so it stays what
+it is; a formula of grid-table's own, kept in a workbook as text, is
+not.  A formula loses the prefixes a workbook gives newer functions."
   (let ((value (nth 2 cell)))
-    (cond ((plist-get (nthcdr 3 cell) :text) (concat "'" value))
+    (cond ((plist-get (nthcdr 3 cell) :text)
+           ;; grid-table's own formulas travel as text and come back.
+           (if (and (grid-table--reads-as-other-than-text-p value)
+                    (let ((case-fold-search t))
+                      (not (string-match-p grid-table-xlsx--own-formula-regexp
+                                           value))))
+               (concat "'" value)
+             value))
           ((and (stringp value) (string-prefix-p "=" value))
            (grid-table-xlsx--unprefix-functions value))
           (t value))))
@@ -319,34 +339,77 @@ With KEEP, the names FILE has besides are kept; otherwise they go."
 
 (defun grid-table-xlsx--chart (source entry)
   "Return the floating chart of SOURCE that ENTRY, read from a workbook, is.
-ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL RANGES); the chart
-draws the block covering RANGES, its series running the way its first
-range does.  Return nil for an ENTRY that reads no cells."
-  (pcase-let* ((`(,type ,title ,top ,left ,bottom ,right ,ranges) entry)
-               (boxes (delq nil (mapcar #'grid-chart-svg-parse-range ranges)))
+ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL REFS), each of REFS
+\(ROLE RANGE) with ROLE v for values, x for x values, c for categories
+and n for a series name.  The chart draws the block covering the
+ranges, its series running the way its first values do.  Return nil
+for an ENTRY that reads no cells."
+  (pcase-let* ((`(,type ,title ,top ,left ,bottom ,right ,refs) entry)
+               (refs (delq nil (mapcar (lambda (ref)
+                                         (when-let* ((box (grid-chart-svg-parse-range
+                                                           (cadr ref))))
+                                           (cons (car ref) box)))
+                                       refs)))
+               (boxes (mapcar #'cdr refs))
                (widths (grid-get-column-widths source)))
     (when (and boxes (assq (intern type) grid-chart-svg-types))
-      (let ((first (car boxes))
-            (box (list (apply #'min (mapcar (lambda (b) (nth 0 b)) boxes))
-                       (apply #'min (mapcar (lambda (b) (nth 1 b)) boxes))
-                       (apply #'max (mapcar (lambda (b) (nth 2 b)) boxes))
-                       (apply #'max (mapcar (lambda (b) (nth 3 b)) boxes)))))
-        (list :anchor (cons top left)
-              ;; Columns count their width in characters; a row is a line.
-              :size (cons (max 8 (min 999 (round (cl-loop
-                                                  for col from left below (max right (1+ left))
-                                                  sum (or (and widths (gethash col widths))
-                                                          grid-table-xlsx--default-width)))))
-                          (max 4 (min 999 (- bottom top))))
-              :type (intern type)
-              :range (apply #'grid-chart-svg-range-text box)
-              :by (cond ((and (= (nth 1 first) (nth 3 first))
-                              (< (nth 0 first) (nth 2 first)))
-                         'columns)
-                        ((and (= (nth 0 first) (nth 2 first))
-                              (< (nth 1 first) (nth 3 first)))
-                         'rows))
-              :title (and (not (string-empty-p title)) title))))))
+      (let* ((first (or (cdr (assq 'v refs)) (car boxes)))
+             (box (list (apply #'min (mapcar (lambda (b) (nth 0 b)) boxes))
+                        (apply #'min (mapcar (lambda (b) (nth 1 b)) boxes))
+                        (apply #'max (mapcar (lambda (b) (nth 2 b)) boxes))
+                        (apply #'max (mapcar (lambda (b) (nth 3 b)) boxes))))
+             (single (lambda (b) (and (= (nth 0 b) (nth 2 b))
+                                      (= (nth 1 b) (nth 3 b)))))
+             ;; A series of one value runs the way its name sits from it,
+             ;; or across from the next series.
+             (beside (lambda (b)
+                       (cond ((= (nth 1 b) (nth 1 first)) 'columns)
+                             ((= (nth 0 b) (nth 0 first)) 'rows))))
+             (by (cond ((and (= (nth 1 first) (nth 3 first))
+                             (< (nth 0 first) (nth 2 first)))
+                        'columns)
+                       ((and (= (nth 0 first) (nth 2 first))
+                             (< (nth 1 first) (nth 3 first)))
+                        'rows)
+                       ((funcall single first)
+                        (or (when-let* ((name (cdr (assq 'n refs))))
+                              (funcall beside name))
+                            (when-let* ((next (cl-find-if
+                                               (lambda (ref)
+                                                 (and (eq (car ref) 'v)
+                                                      (not (eq (cdr ref) first))))
+                                               refs)))
+                              (pcase (funcall beside (cdr next))
+                                ('columns 'rows)
+                                ('rows 'columns)))))))
+             ;; What the first column and row hold, when the workbook
+             ;; says so and they are where grid-table looks.
+             (place (lambda (roles side)
+                      (let ((held (cl-loop for (role . b) in refs
+                                           when (memq role roles) collect b)))
+                        (cond ((null held) 'none)
+                              ((cl-every (lambda (b)
+                                           (if (eq side 'col)
+                                               (= (nth 1 b) (nth 3 b) (nth 1 box))
+                                             (= (nth 0 b) (nth 2 b) (nth 0 box))))
+                                         held)
+                               t)))))
+             (labels (and by (funcall place '(c x) (if (eq by 'columns) 'col 'row))))
+             (names (and by (funcall place '(n) (if (eq by 'columns) 'row 'col)))))
+        (append
+         (list :anchor (cons top left)
+               ;; Columns count their width in characters; a row is a line.
+               :size (cons (max 8 (min 999 (round (cl-loop
+                                                   for col from left below (max right (1+ left))
+                                                   sum (or (and widths (gethash col widths))
+                                                           grid-table-xlsx--default-width)))))
+                           (max 4 (min 999 (- bottom top))))
+               :type (intern type)
+               :range (apply #'grid-chart-svg-range-text box)
+               :by by
+               :title (and (not (string-empty-p title)) title))
+         (and labels (list :labels labels))
+         (and names (list :names names)))))))
 
 (defun grid-table-xlsx-create-data-source (file &optional sheet)
   "Return a data source holding sheet SHEET of the xlsx FILE.
@@ -376,7 +439,15 @@ the header row."
             cols (max cols (1+ (nth 1 note)))))
     (dolist (chart (plist-get data :charts))
       (setq rows (max rows (1+ (nth 2 chart)))
-            cols (max cols (1+ (nth 3 chart)))))
+            cols (max cols (1+ (nth 3 chart))))
+      ;; The cells it reads too, empty ones past the data included, so
+      ;; its ranges come back whole; unless that makes the grid too big.
+      (dolist (ref (nth 6 chart))
+        (when-let* ((box (grid-chart-svg-parse-range (cadr ref)))
+                    (more-rows (max rows (1+ (nth 2 box))))
+                    (more-cols (max cols (1+ (nth 3 box))))
+                    ((<= (* more-rows more-cols) grid-table-xlsx-max-cells)))
+          (setq rows more-rows cols more-cols))))
     (when (> (* rows cols) grid-table-xlsx-max-cells)
       (error "Sheet %s spans %d by %d cells, more than grid-table opens"
              sheet rows cols))
@@ -403,7 +474,17 @@ the header row."
             (set-grid-data-model-merges
              model (grid-model-validate-merges model merges t))))
         (dolist (cell cells)
-          (when-let* ((style (grid-table-xlsx--style (nthcdr 3 cell))))
+          (when-let* ((style
+                       (let ((style (grid-table-xlsx--style (nthcdr 3 cell)))
+                             (case-fold-search t))
+                         ;; A workbook shows a date formula without a date
+                         ;; format as a number, and so does the grid.
+                         (if (and (not (plist-get style :format))
+                                  (stringp (nth 2 cell))
+                                  (string-match-p grid-table--date-formula-regexp
+                                                  (nth 2 cell)))
+                             (append style (list :format (list 'general)))
+                           style))))
             (grid-model-set-style model (nth 0 cell) (nth 1 cell) style)))
         (pcase-dolist (`(,row ,col ,text) (plist-get data :notes))
           (grid-model-set-style
@@ -412,9 +493,11 @@ the header row."
                       :note text)))
         (grid-model-set-conditionals model (car rules))
         ;; A width is in characters on both sides; a workbook counts a
-        ;; little padding in, which rounding takes off again.
+        ;; little padding in, which rounding takes off again.  A column
+        ;; past the last cell keeps its width too, to be written back.
         (pcase-dolist (`(,col . ,width) (plist-get data :widths))
-          (when (and (integerp col) (< -1 col cols) (numberp width))
+          (when (and (integerp col) (< -1 col grid-table-xlsx--max-cols)
+                     (numberp width))
             (grid-set-column-width source col
                                    (max 1 (min 200 (round width))))))
         (when-let* ((frozen (plist-get data :frozen)))
@@ -440,7 +523,8 @@ the header row."
           (mapcar (lambda (name)
                     (cons name (grid-table-xlsx-create-data-source file name)))
                   (or (grid-table-xlsx-sheet-names file)
-                      (error "No sheet in %s" file))))))
+                      (error "No sheet in %s" file)))
+          t)))
     (when-let* ((names (grid-table-xlsx--names (expand-file-name file))))
       (grid-workbook-set-names workbook names))
     workbook))
@@ -473,14 +557,6 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
 ;;;----------------------------------------------------------------------
 ;;; Writing
 ;;;----------------------------------------------------------------------
-
-(defconst grid-table-xlsx--own-formula-regexp
-  (concat "\\`=[ \t]*"
-          (regexp-opt '("BARPLOT" "COLUMNPLOT" "HISTOGRAM" "BOXPLOT"
-                        "MULTILINE" "DENSITY" "COUNTPLOT" "LINEPLOT"
-                        "SCATTER" "SPARKLINE" "LINECHART"))
-          "[ \t]*(")
-  "Matches a chart formula, which only grid-table can evaluate.")
 
 (defun grid-table-xlsx--clean (text)
   "Return TEXT without the characters that separate records and fields."
@@ -515,11 +591,11 @@ RAW is its raw input and STYLE its style."
   (let* ((case-fold-search t)
          (text (grid-table-xlsx--clean (format "%s" (or raw ""))))
          (kind (cond
-                ;; Text by its apostrophe or by its format
+                ;; Text by its apostrophe; a number keeps its kind under
+                ;; the text format, as it does in a spreadsheet.
                 ((string-prefix-p "'" text)
                  (setq text (substring text 1))
                  "s")
-                ((eq (car-safe (plist-get style :format)) 'text) "s")
                 ((and (string-prefix-p "=" text) (> (length text) 1)
                       (not (string-match-p
                             grid-table-xlsx--own-formula-regexp text)))
@@ -591,11 +667,11 @@ and rows it covers."
                     nil)
                   (max col (1+ (cdr anchor)))))
          (refs (pcase type
-                 ;; Pie charts draw the first series alone, as here.
-                 ('pie (list (funcall absolute (car ranges))))
-                 ('doughnut (and labels
-                                 (list (funcall absolute labels)
-                                       (funcall absolute (car ranges)))))
+                 ;; Labels and values in turn; with no labels the values
+                 ;; stand in for them.
+                 ('doughnut (cl-loop for range in ranges
+                                     append (list (funcall absolute (or labels range))
+                                                  (funcall absolute range))))
                  ('scatter (and labels
                                 (cl-loop for range in ranges
                                          append (list (funcall absolute labels)
@@ -612,7 +688,7 @@ and rows it covers."
               (mapconcat absolute (plist-get data :names) grid-table-xlsx--item)
               ;; The cells holding the category labels; none when the
               ;; categories are only numbered.
-              (if (and labels (not (memq type '(doughnut scatter))))
+              (if (and labels (not (eq type 'scatter)))
                   (funcall absolute labels)
                 ""))
         refs)
@@ -656,7 +732,7 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
     ;; Columns sized by hand; the others keep what the workbook has.
     (when-let* ((widths (grid-get-column-widths source)))
       (maphash (lambda (col width)
-                 (when (< col cols)
+                 (when (< col grid-table-xlsx--max-cols)
                    (push (format "W%s%d%s%d" grid-table-xlsx--field col
                                  grid-table-xlsx--field width)
                          records)))

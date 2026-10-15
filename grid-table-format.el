@@ -295,7 +295,9 @@ nil for anything else, which is stored as it is."
 (defun grid-format-edit-text (raw format)
   "Return the text an edit of a cell starts from.
 RAW is what the cell stores and FORMAT its format.  A date and a
-percentage are edited as they are typed, not as the number behind them."
+percentage are edited as they are typed, not as the number behind them,
+and text in a cell with the text format without the apostrophe that
+`grid-table-read-entry' puts back."
   (let ((number (and (stringp raw) (not (string-prefix-p "=" raw))
                      (grid-format-number raw))))
     (pcase (and number format)
@@ -311,7 +313,10 @@ percentage are edited as they are typed, not as the number behind them."
        (concat (grid-format-general
                 (/ (grid-format-round (* number 1e12)) 1e10))
                "%"))
-      (_ raw))))
+      (_ (if (and (equal format '(text)) (stringp raw)
+                  (string-prefix-p "'" raw))
+             (substring raw 1)
+           raw)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Spreadsheet format codes

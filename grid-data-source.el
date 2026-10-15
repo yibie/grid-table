@@ -291,9 +291,10 @@ so that undoing the change can put the formulas back.")
                 (grid-calc--same-sheet-p (grid-workbook-sheet-name source) name))
               (grid-workbook-sheets workbook)))
 
-(defun grid-workbook-name-problem (workbook name &optional except)
+(defun grid-workbook-name-problem (workbook name &optional except as-read)
   "Return why NAME cannot name a sheet of WORKBOOK, or nil when it can.
-EXCEPT is a sheet allowed to have that name already."
+EXCEPT is a sheet allowed to have that name already.  AS-READ, for a name
+read from a file, lets it be longer than a name typed here can be."
   (cond
    ((or (not (stringp name)) (string-empty-p (string-trim name)))
     "A sheet name cannot be empty")
@@ -301,7 +302,8 @@ EXCEPT is a sheet allowed to have that name already."
     "A sheet name cannot contain any of [ ] : * ? / \\")
    ((or (string-prefix-p "'" name) (string-suffix-p "'" name))
     "A sheet name cannot begin or end with an apostrophe")
-   ((> (length name) 31) "A sheet name cannot be longer than 31 characters")
+   ((and (not as-read) (> (length name) 31))
+    "A sheet name cannot be longer than 31 characters")
    ((let ((holder (and workbook (grid-workbook-sheet workbook name))))
       (and holder (not (eq holder except))))
     (format "There is already a sheet called %s" name))))
@@ -390,11 +392,13 @@ non-nil, as it has to be when the sheets themselves changed."
     (grid-table-calc-evaluate-models (grid-workbook--models workbook)
                                      everything))))
 
-(defun grid-workbook-create (sheets)
-  "Return a workbook of SHEETS, a list of (NAME . SOURCE) in order."
+(defun grid-workbook-create (sheets &optional as-read)
+  "Return a workbook of SHEETS, a list of (NAME . SOURCE) in order.
+AS-READ means the names come from a file, which may hold one longer than
+a sheet can be given here; they are kept as they are."
   (let ((workbook (grid-workbook--create)))
     (pcase-dolist (`(,name . ,source) sheets)
-      (grid-workbook-add-sheet workbook source name))
+      (grid-workbook-add-sheet workbook source name nil as-read))
     (grid-workbook-recalculate workbook t)
     workbook))
 
@@ -406,10 +410,11 @@ Its name is then its title when that can name a sheet, else Sheet1."
        (list (cons (grid-workbook-fresh-name nil (gethash :title source))
                    source)))))
 
-(defun grid-workbook-add-sheet (workbook source name &optional position)
+(defun grid-workbook-add-sheet (workbook source name &optional position as-read)
   "Add SOURCE to WORKBOOK as the sheet NAME and return SOURCE.
-POSITION is the index it takes; it goes last by default."
-  (when-let* ((problem (grid-workbook-name-problem workbook name)))
+POSITION is the index it takes; it goes last by default.  AS-READ is as
+for `grid-workbook-create'."
+  (when-let* ((problem (grid-workbook-name-problem workbook name nil as-read)))
     (error "%s" problem))
   (puthash :workbook workbook source)
   (puthash :sheet-name name source)
