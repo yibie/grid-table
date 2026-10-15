@@ -353,17 +353,13 @@ sheet named SHEET.  A sort leaves the charts in place."
 
 (defun grid-model-set-hidden (model rows cols)
   "Hide the ROWS and COLS of MODEL, lists of indexes; nil shows them all.
-Indexes outside the model are dropped."
+A line past the last cell stays hidden as well, as a workbook keeps it."
   (when (> (length model) 8)
-    (cl-flet ((clean (indexes limit)
-                (sort (delete-dups
-                       (cl-remove-if-not (lambda (i)
-                                           (and (natnump i) (< i limit)))
-                                         (copy-sequence indexes)))
+    (cl-flet ((clean (indexes)
+                (sort (delete-dups (cl-remove-if-not #'natnump
+                                                     (copy-sequence indexes)))
                       #'<)))
-      (aset model 8
-            (cons (clean rows (grid-data-model-rows model))
-                  (clean cols (grid-data-model-cols model)))))))
+      (aset model 8 (cons (clean rows) (clean cols))))))
 
 (defun grid-model--lines-after (lines at delta)
   "Return the line indexes LINES after a line was inserted or deleted.
@@ -416,7 +412,7 @@ changes how many there are."
   "Give model NEW the column widths of model OLD and return NEW.
 AT and DELTA describe a column inserted at AT (DELTA 1) or deleted there
 \(DELTA -1) on the way from OLD to NEW; the widths move with their
-columns."
+columns.  A column past the last cell keeps its width as well."
   (let ((from (grid-data-model-widths old))
         (to (grid-data-model-widths new)))
     (when (and from to (not (eq old new)))
@@ -425,7 +421,7 @@ columns."
                  (let ((moved (if at
                                   (grid-model--shift-index col at delta)
                                 col)))
-                   (when (and moved (< moved (grid-data-model-cols new)))
+                   (when moved
                      (puthash moved width to))))
                from))
     new))
@@ -798,7 +794,10 @@ being sorted moves like one that names none."
         (grid-model-set-hidden
          sorted
          (mapcar (lambda (row)
-                   (if (< row kept) row
+                   ;; One past the last cell is not sorted.
+                   (if (or (< row kept)
+                           (>= (- row kept) (length old-to-new)))
+                       row
                      (+ kept (aref old-to-new (- row kept)))))
                  (car hidden))
          (cdr hidden))
