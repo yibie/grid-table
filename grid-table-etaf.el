@@ -2480,14 +2480,24 @@ Return the list of (ROW COL OLD NEW) for the cells that changed.  Cells
 that reject the value, such as the covered part of a merge, are skipped."
   (let ((source (grid-table-etaf--source state))
         applied)
-    (pcase-dolist (`(,row ,col ,value) changes)
-      (let ((old (or (grid-get-raw-value-at source row col) "")))
-        (unless (equal old value)
-          (condition-case nil
-              (progn
-                (grid-set-raw-value-at source row col value)
-                (push (list row col old value) applied))
-            (grid-model-covered-cell nil)))))
+    (cl-flet ((write ()
+                (pcase-dolist (`(,row ,col ,value) changes)
+                  (let ((old (or (grid-get-raw-value-at source row col) "")))
+                    (unless (equal old value)
+                      (condition-case nil
+                          (progn
+                            (grid-set-raw-value-at source row col value)
+                            (push (list row col old value) applied))
+                        (grid-model-covered-cell nil)))))))
+      ;; Many cells are recalculated once, after the last of them.
+      (let ((model (gethash :model source)))
+        (cond ((not (cdr changes)) (write))
+              ((grid-workbook-of source)
+               (grid-workbook-with-batched-edits (write)))
+              (model
+               (let ((grid-calc-defer t)) (write))
+               (grid-table-calc-evaluate-models (list model)))
+              (t (write)))))
     (nreverse applied)))
 
 (defun grid-table-etaf--set-cells (state changes)

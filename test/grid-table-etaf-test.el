@@ -900,6 +900,32 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-refresh)
     (should (= (hash-table-count (grid-get-column-widths source)) 0))))
 
+(ert-deftest grid-table-etaf-many-cells-recalculate-once ()
+  "A fill of many cells recalculates the workbook once, not per cell.
+Formulas calling a function defined after loading are computed on every
+recalculation, so a recalculation per cell made a long fill quadratic."
+  (grid-table-etaf-test--with-grid (60 4)
+    (let ((grid-calc-functions (copy-hash-table grid-calc-functions))
+          (recalculations 0))
+      (grid-calc-defun TESTDOUBLE (value) (* 2 (grid-calc-to-number value)))
+      (dotimes (row 59)
+        (grid-set-raw-value-at source (1+ row) 0 (number-to-string row)))
+      (grid-set-raw-value-at source 1 1 "=TESTDOUBLE(A2)")
+      (grid-set-raw-value-at source 1 2 "=SUM(B2:B60)")
+      (cl-letf* ((recalculate (symbol-function 'grid-table-calc-evaluate-models))
+                 ((symbol-function 'grid-table-calc-evaluate-models)
+                  (lambda (&rest args)
+                    (cl-incf recalculations)
+                    (apply recalculate args))))
+        (grid-table-etaf-goto 1 1)
+        (grid-table-etaf-goto 59 1 t)
+        (grid-table-etaf-fill-down))
+      (should (= recalculations 1))
+      (should (equal (grid-get-computed-value-at source 59 1) 116))
+      ;; What reads the filled cells sees their new values.
+      (should (equal (grid-get-computed-value-at source 1 2)
+                     (* 2 (apply #'+ (number-sequence 0 58))))))))
+
 (ert-deftest grid-table-etaf-fill-continues-what-starts-the-selection ()
   (should (equal (mapcar #'car (grid-table-etaf--series '("1" "3") 3))
                  '("5" "7" "9")))

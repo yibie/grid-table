@@ -361,6 +361,23 @@ Each structural change otherwise recomputes every sheet."
              (dolist (workbook (delete-dups grid-workbook--held))
                (grid-workbook-recalculate workbook t))))))))
 
+(defmacro grid-workbook-with-batched-edits (&rest body)
+  "Run BODY, a series of cell edits, recalculating the workbooks once.
+Only the cells that changed and what reads them are computed then, so a
+paste or fill of many cells costs one recalculation, not one per cell.
+Inside a held recalculation, BODY simply joins it."
+  (declare (indent 0))
+  (let ((outer (make-symbol "outer")))
+    `(let ((,outer grid-workbook-holding))
+       (if ,outer
+           (progn ,@body)
+         (let ((grid-workbook--held nil))
+           (prog1 (let ((grid-workbook-holding t)
+                        (grid-calc-defer t))
+                    ,@body)
+             (dolist (workbook (delete-dups grid-workbook--held))
+               (grid-workbook-recalculate workbook))))))))
+
 (defun grid-workbook-recalculate (workbook &optional everything)
   "Recalculate the sheets of WORKBOOK, each reading the others' new values.
 Only what changed and what reads it is computed, unless EVERYTHING is
