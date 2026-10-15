@@ -10,7 +10,7 @@ MODEL_TESTS = test/grid-table-merge-test.el \
 BATCH = $(EMACS) -Q --batch -L . -L plugins -L test
 ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
-.PHONY: test test-model test-etaf test-xlsx module module-dist
+.PHONY: test test-model test-etaf test-xlsx test-corpus corpus-fetch module module-dist
 
 test: test-model test-etaf test-xlsx
 
@@ -44,3 +44,14 @@ endif
 # Skips the tests that read or write a workbook when the module is not built.
 test-xlsx:
 	$(BATCH) $(if $(ETAF_SRC),$(ETAF_PATH)) -l test/grid-table-xlsx-test.el -f ert-run-tests-batch-and-exit
+
+# Workbooks from other spreadsheet projects, opened, written and opened
+# again; needs the module.  corpus-fetch gathers them into CORPUS_DIR.
+CORPUS_DIR ?= $(HOME)/.cache/grid-table-corpus
+CORPUS_RESULTS ?= $(CORPUS_DIR)/results
+
+corpus-fetch:
+	test/corpus/fetch.sh $(CORPUS_DIR)
+
+test-corpus:
+	EMACS=$(EMACS) test/corpus/run.sh $(CORPUS_DIR) $(CORPUS_RESULTS)
