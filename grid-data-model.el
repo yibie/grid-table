@@ -331,8 +331,7 @@ sheet named SHEET.  A sort leaves the charts in place."
       (lambda (chart)
         (let* ((chart (copy-sequence chart))
                (anchor (plist-get chart :anchor))
-               (rows (grid-data-model-rows new))
-               (cols (grid-data-model-cols new)))
+               (rows (grid-data-model-rows new)))
           (when axis
             (setq anchor
                   (if (eq axis 'row)
@@ -344,9 +343,11 @@ sheet named SHEET.  A sort leaves the charts in place."
                           (concat "=" (plist-get chart :range))
                           axis at delta sheet sheet)))
               (setq chart (plist-put chart :range (substring range 1)))))
+          ;; A chart may stand right of the last column, on the empty
+          ;; space there, so only its row is kept inside the sheet.
           (plist-put chart :anchor
                      (cons (max 0 (min (car anchor) (1- rows)))
-                           (max 0 (min (cdr anchor) (1- cols)))))))
+                           (max 0 (cdr anchor))))))
       (grid-data-model-charts old))))
   new)
 

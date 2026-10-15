@@ -1363,10 +1363,18 @@ VIEW is (LEFT TOP SHOWN-COLUMNS SHOWN-LINES) in characters and lines."
                                       (* cw (nth 2 view)) (* lh (nth 3 view)))))
                    grid-table-etaf--chart-images)))))
 
+(defconst grid-table-etaf--blank-col-chars 8
+  "Width in characters of a column past the sheet's right edge.
+Charts may stand there, as on a spreadsheet's empty cells.")
+
 (defun grid-table-etaf--col-pixels (state col)
-  "Return the pixel width column COL takes in STATE's grid."
-  (1+ (* (grid-table-etaf--char-width)
-         (+ 2 (aref (grid-table-etaf--state-widths state) col)))))
+  "Return the pixel width column COL takes in STATE's grid.
+A column past the sheet's right edge has the width of an empty one."
+  (let ((widths (grid-table-etaf--state-widths state)))
+    (1+ (* (grid-table-etaf--char-width)
+           (+ 2 (if (< col (length widths))
+                    (aref widths col)
+                  grid-table-etaf--blank-col-chars))))))
 
 (defun grid-table-etaf--span (state from to axis cols merges)
   "Return how far shown line FROM is from shown line TO along AXIS of STATE.
@@ -1381,9 +1389,15 @@ what row heights are measured over."
                  (cl-incf total (grid-table-etaf--row-lines
                                  state (grid-table-etaf--row-at state position)
                                  cols merges)))
-      (cl-loop for col from low below high
-               when (grid-table-etaf--col-shown-p state col) do
-               (cl-incf total (grid-table-etaf--col-pixels state col))))
+      (let ((edge (length (grid-table-etaf--state-widths state))))
+        (cl-loop for col from low below (min high edge)
+                 when (grid-table-etaf--col-shown-p state col) do
+                 (cl-incf total (grid-table-etaf--col-pixels state col)))
+        ;; Past the last column every column is an empty one of the
+        ;; same width, however far a file's chart stands.
+        (when (> high edge)
+          (cl-incf total (* (- high (max low edge))
+                            (grid-table-etaf--col-pixels state edge))))))
     (* sign total)))
 
 (defun grid-table-etaf--chart-frame (state source rows cols)
@@ -1445,11 +1459,11 @@ is cut off at the left and top."
          (sx0 (plist-get frame :sx0)) (sx1 (plist-get frame :sx1))
          (size (plist-get chart :size))
          (anchor (plist-get chart :anchor))
-         ;; An anchor past the sheet's edge, as a file may hold, sits on
-         ;; its last row or column.
+         ;; An anchor below the last row, as a file may hold, sits on that
+         ;; row; one right of the last column stands on the empty space
+         ;; there, as on a spreadsheet's empty cells.
          (row (max 0 (min (car anchor) (1- (grid-table-etaf--row-count state)))))
-         (col (max 0 (min (cdr anchor)
-                          (1- (length (grid-table-etaf--state-widths state))))))
+         (col (max 0 (cdr anchor)))
          ;; A chart anchored in the frozen rows or columns stays put along
          ;; that axis; any other scrolls with the cells.
          (y (if (< row (car frozen))
@@ -1595,22 +1609,29 @@ chart moves, and each redraw makes a new handler.")
   (let ((cols (grid-get-column-count (grid-table-etaf--source state)))
         (left (abs pixels))
         (step (if (< pixels 0) -1 1)))
+    ;; Past the last column the walk goes on over empty columns, where a
+    ;; chart may stand.
     (while (and (> left (/ (grid-table-etaf--col-pixels state col) 2.0))
-                (< -1 (+ col step) cols))
+                (<= 0 (+ col step)))
       (setq left (- left (grid-table-etaf--col-pixels state col))
-            col (grid-table-etaf--step-col state col step)))
+            col (if (>= (+ col step) cols)
+                    (+ col step)
+                  (grid-table-etaf--step-col state col step))))
     col))
 
 (defun grid-table-etaf--current-region (state)
   "Return the block of filled cells around STATE's cursor, as a range.
 It grows from the cursor while a row or column next to it holds
 something, as a spreadsheet picks the data for a chart."
+  (let ((cursor (etaf-value (grid-table-etaf--state-cursor state))))
+    (grid-table-etaf--region-around state (car cursor) (cdr cursor))))
+
+(defun grid-table-etaf--region-around (state row col)
+  "Return the block of filled cells around ROW and COL of STATE, as a range."
   (let* ((source (grid-table-etaf--source state))
          (rows (grid-get-row-count source))
          (cols (grid-get-column-count source))
-         (cursor (etaf-value (grid-table-etaf--state-cursor state)))
-         (top (car cursor)) (bottom (car cursor))
-         (left (cdr cursor)) (right (cdr cursor))
+         (top row) (bottom row) (left col) (right col)
          (filled (lambda (r1 c1 r2 c2)
                    (and (<= 0 r1) (< r2 rows) (<= 0 c1) (< c2 cols)
                         (cl-loop for r from r1 to r2 thereis
@@ -1647,11 +1668,12 @@ the cells hold."
          (range (if (equal cursor anchor)
                     (grid-table-etaf--current-region state)
                   (grid-table-etaf-selection)))
-         (cols (grid-get-column-count source))
+         ;; Right of the whole block of data the range is part of, so it
+         ;; covers none of it; past the sheet's edge when that is where
+         ;; the data ends, as on a spreadsheet's empty cells.
+         (block (grid-table-etaf--region-around state (nth 0 range) (nth 1 range)))
          (chart (list :anchor (cons (nth 0 range)
-                                    (if (< (1+ (nth 3 range)) cols)
-                                        (1+ (nth 3 range))
-                                      (nth 1 range)))
+                                    (1+ (max (nth 3 range) (nth 3 block))))
                       :size grid-table-etaf-chart-size
                       :type type
                       :range (apply #'grid-chart-svg-range-text range)
@@ -1769,8 +1791,26 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
                       (mod (1+ grid-table-etaf--chart) (length charts))
                     0))
            (anchor (plist-get (nth index charts) :anchor)))
-      (grid-table-etaf-goto (car anchor) (cdr anchor))
-      (grid-table-etaf--select-chart state index))))
+      ;; Selecting a chart leaves the selected cells alone, so a chart
+      ;; can then be given them (C-c k r); only a chart out of sight
+      ;; brings the cursor to it.
+      (unless (grid-table-etaf--chart-shown-p index)
+        (grid-table-etaf-goto (car anchor)
+                              (min (cdr anchor)
+                                   (1- (grid-get-column-count
+                                        (grid-table-etaf--source state))))))
+      (grid-table-etaf--select-chart state index)
+      ;; A chart standing right of the window's edge cannot be scrolled
+      ;; to, as the cells end before it: say how to bring it back.
+      (unless (grid-table-etaf--chart-shown-p index)
+        (message "Chart %d stands past the window's right edge; C-c k m moves it here"
+                 (1+ index))))))
+
+(defun grid-table-etaf--chart-shown-p (index)
+  "Return non-nil when chart INDEX of the sheet is in the window."
+  (ignore-errors
+    (etaf-runtime-host-node (grid-table-etaf--runtime)
+                            (intern (format "grid-table-etaf-chart-%d" index)))))
 
 (defun grid-table-etaf-chart-deselect ()
   "Select no chart."
@@ -1942,9 +1982,15 @@ spreadsheet does."
         (user-error "%s is outside the sheet, which has %d rows and %d columns"
                     address rows cols))
       (grid-table-etaf-goto (or bottom (1- rows)) (or right (1- cols)))
-      (grid-table-etaf-goto (or top 0) (or left 0)
-                            (or (not (eql top bottom)) (not (eql left right))
-                                (null top) (null left))))))
+      (let ((range (or (not (eql top bottom)) (not (eql left right))
+                       (null top) (null left))))
+        (grid-table-etaf-goto (or top 0) (or left 0) range)
+        ;; Going to the far corner and back can leave lines whose text
+        ;; changed undrawn (the status bar of a long range): draw it
+        ;; all.  (ebox writes lines with modification hooks inhibited,
+        ;; so a line that only changed its text may not be redrawn.)
+        (when range
+          (force-window-update (selected-window)))))))
 
 (defun grid-table-etaf--cell-extent (row col)
   "Return (TOP LEFT BOTTOM RIGHT) of the cell covering ROW and COL."

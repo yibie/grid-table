@@ -1525,13 +1525,14 @@ bar moves below the chart."
       (should (equal (plist-get (car (grid-table-charts source)) :range) "A1:H40"))
       (grid-table-etaf-undo)
       (should-not (grid-table-charts source))
-      ;; From the selection, sitting right of it.
+      ;; From the selection, sitting right of the block of data it is
+      ;; part of: here every column is filled, so past the sheet's edge.
       (grid-table-etaf-goto 1 1)
       (grid-table-etaf-goto 5 2 t)
       (grid-table-etaf-insert-chart 'column)
       (let ((chart (car (grid-table-charts source))))
         (should (equal (plist-get chart :range) "B2:C6"))
-        (should (equal (plist-get chart :anchor) '(1 . 3))))
+        (should (equal (plist-get chart :anchor) '(1 . 8))))
       (let ((geometry (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
         (should (equal (plist-get geometry :y) 3))
         (should (equal (plist-get geometry :height) 16)))
@@ -1562,7 +1563,7 @@ bar moves below the chart."
       (grid-table-etaf-goto 1 0)
       (grid-table-insert-row-above)
       (let ((chart (car (grid-table-charts source))))
-        (should (equal (plist-get chart :anchor) '(2 . 3)))
+        (should (equal (plist-get chart :anchor) '(2 . 8)))
         (should (equal (plist-get chart :range) "B3:C7")))
       ;; A pointer drag redraws the grid as it goes, so each move may
       ;; reach a handler made after the drag started.
@@ -1572,13 +1573,13 @@ bar moves below the chart."
                '(:phase move :delta (0 . 2)))
       (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
                '(:phase end :delta (0 . 2)))
-      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(4 . 3)))
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(4 . 8)))
       (grid-table-etaf-undo)
       ;; A drag moves the chart by whole cells, as one undo step.
       (etaf-drag-step (grid-table-etaf--runtime) 'grid-table-etaf-chart-0 0 3)
-      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(5 . 3)))
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(5 . 8)))
       (grid-table-etaf-undo)
-      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(2 . 3)))
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(2 . 8)))
       ;; The chart draws what the cells hold now.
       (grid-table-etaf-set-cell 2 1 "999")
       (should (equal (cadr (car (plist-get (grid-table-etaf--chart-data
@@ -1593,12 +1594,57 @@ bar moves below the chart."
       (should-not (grid-table-charts source))
       (grid-table-etaf-undo)
       (should (grid-table-charts source))
-      ;; A chart anchored past the sheet's edge sits on its last column.
+      ;; A chart anchored far past the sheet's edge, as a file may hold, still mounts.
       (grid-table-set-charts
        source (list (list :anchor '(1 . 50) :size '(20 . 6) :type 'line
                           :range "B2:C6")))
       (grid-table-etaf--bump grid-table-etaf--state)
-      (should (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))))
+      ;; It stands there, out of the window's sight, as on a spreadsheet.
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(1 . 50)))
+      (should-not (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))))
+
+(ert-deftest grid-table-etaf-charts-stand-past-the-last-column ()
+  "A chart can stand right of the sheet, as on a spreadsheet's empty cells.
+Selecting a chart leaves the selected cells alone, so they can be given
+to it."
+  (grid-table-etaf-test--with-grid (12 3 120 24)
+    (let* ((source grid-table--data-source)
+           (state grid-table-etaf--state)
+           (real (+ (grid-table-etaf--col-pixels state 0)
+                    (grid-table-etaf--col-pixels state 1)
+                    (grid-table-etaf--col-pixels state 2))))
+      ;; Right of a three-column block: column D, past the edge
+      (grid-table-etaf-goto 0 0)
+      (grid-table-etaf-goto 5 1 t)
+      (grid-table-etaf-insert-chart 'column)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 3)))
+      (let ((geometry (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
+        (should geometry)
+        ;; it starts right of the last column
+        (should (>= (plist-get geometry :x) real)))
+      ;; Dragged further right, over more empty columns, and back
+      (should (= (grid-table-etaf--walk-cols
+                  state 3 (* 3 (grid-table-etaf--col-pixels state 3)))
+                 6))
+      (should (= (grid-table-etaf--walk-cols
+                  state 6 (- (* 4 (grid-table-etaf--col-pixels state 3))))
+                 2))
+      ;; Dragged two empty columns further, it is still drawn, there.
+      (etaf-drag-step (grid-table-etaf--runtime) 'grid-table-etaf-chart-0
+                      (* 2 (+ 2 grid-table-etaf--blank-col-chars)) 0)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 5)))
+      (let ((geometry (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
+        (should geometry)
+        (should (>= (plist-get geometry :x)
+                    (+ real (* 2 (grid-table-etaf--col-pixels state 3))))))
+      ;; Select cells, then the chart: the cells stay selected for C-c k r.
+      (grid-table-etaf-chart-deselect)
+      (grid-table-etaf-goto 0 0)
+      (grid-table-etaf-goto 5 2 t)
+      (grid-table-etaf-chart-next)
+      (should (equal (grid-table-etaf-selection) '(0 0 5 2)))
+      (grid-table-etaf-chart-range)
+      (should (equal (plist-get (car (grid-table-charts source)) :range) "A1:C6")))))
 
 (provide 'grid-table-etaf-test)
 
