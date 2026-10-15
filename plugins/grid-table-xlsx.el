@@ -369,10 +369,14 @@ the header row."
     (dolist (merge merges)
       (setq rows (max rows (1+ (nth 2 merge)))
             cols (max cols (1+ (nth 3 merge)))))
-    ;; A note may sit on an empty cell.
+    ;; A note may sit on an empty cell, and a chart over empty ones
+    ;; beside the data; the grid keeps them, so the chart stays put.
     (dolist (note (plist-get data :notes))
       (setq rows (max rows (1+ (nth 0 note)))
             cols (max cols (1+ (nth 1 note)))))
+    (dolist (chart (plist-get data :charts))
+      (setq rows (max rows (1+ (nth 2 chart)))
+            cols (max cols (1+ (nth 3 chart)))))
     (when (> (* rows cols) grid-table-xlsx-max-cells)
       (error "Sheet %s spans %d by %d cells, more than grid-table opens"
              sheet rows cols))

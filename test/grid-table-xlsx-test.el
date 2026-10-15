@@ -373,6 +373,10 @@ grid reads them back without it."
       (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
                                        "My Data")))
         (should (equal (grid-table-charts back) charts))
+        ;; The sheet reaches the cells the charts stand on, so a chart
+        ;; beside the data is not pushed onto it.
+        (should (>= (grid-get-column-count back) 8))
+        (should (>= (grid-get-row-count back) 21))
         ;; Written back, the workbook holds them once, not twice.
         (grid-table-xlsx-write-workbook (grid-workbook-of back) file)
         (let ((again (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
