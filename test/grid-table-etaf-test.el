@@ -1470,6 +1470,23 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
   (when-let* ((node (etaf-runtime-host-node (grid-table-etaf--runtime) ref)))
     (ebox-node-geometry node)))
 
+(ert-deftest grid-table-etaf-chart-runs-past-a-short-sheet ()
+  "A chart taller than the rows below its anchor keeps its height.
+The window's empty lines below the grid take the rest, and the status
+bar moves below the chart."
+  (grid-table-etaf-test--with-grid (6 3 120 30)
+    (grid-table-etaf-goto 0 0)
+    (grid-table-etaf-goto 5 1 t)
+    (grid-table-etaf-insert-chart 'column)
+    (let ((chart (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
+      (should (equal (plist-get chart :height) 16))
+      (let ((status-line (with-current-buffer (current-buffer)
+                           (save-excursion
+                             (goto-char (point-min))
+                             (search-forward "Chart:")
+                             (1- (line-number-at-pos))))))
+        (should (>= status-line (+ (plist-get chart :y) 16)))))))
+
 (ert-deftest grid-table-etaf-floating-charts ()
   "A chart floats over its anchor cell, scrolls with it and undoes."
   (grid-table-etaf-test--with-grid (40 8 120 24)

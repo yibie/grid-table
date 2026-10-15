@@ -1267,8 +1267,19 @@ LINE, the grid line border."
                                               (px 1))))
                                   cols)))
               (nreverse children)))
-            ;; Floating charts sit over the grid.
-            (grid-table-etaf--chart-nodes state source rows cols)
+            ;; Floating charts sit over the grid, and over the empty lines
+            ;; left below it for a chart that runs past the last row.
+            (let ((frame (and (grid-table-charts source)
+                              (grid-table-etaf--chart-frame
+                               state source rows cols))))
+              (append
+               (and frame (> (plist-get frame :extra) 0)
+                    (list (etaf-node 'box
+                                     (list :key 'chart-room
+                                           :height (list 'lh (plist-get frame :extra)))
+                                     nil)))
+               (and frame
+                    (grid-table-etaf--chart-nodes state source frame cols))))
             (list
              (grid-table-etaf--status-node
               state source
@@ -1398,10 +1409,23 @@ ROWS and COLS are the model rows and columns STATE shows of SOURCE."
          (sx1 (max (+ sx0 (cl-loop for c in scrolled-cols
                                    sum (grid-table-etaf--col-pixels state c)))
                    (car (grid-table-etaf--viewport state)))))
-    (list :merges merges :frozen frozen :char char :y0 y0 :x0 x0
-          :frozen-rows frozen-rows :scrolled-rows scrolled-rows
-          :frozen-cols frozen-cols :scrolled-cols scrolled-cols
-          :sy0 sy0 :sy1 sy1 :sx0 sx0 :sx1 sx1)))
+    (let* ((frame (list :merges merges :frozen frozen :char char :y0 y0 :x0 x0
+                        :frozen-rows frozen-rows :scrolled-rows scrolled-rows
+                        :frozen-cols frozen-cols :scrolled-cols scrolled-cols
+                        :sy0 sy0 :sy1 most-positive-fixnum :sx0 sx0 :sx1 sx1))
+           ;; A chart may run past the last row into the window's empty
+           ;; lines below the grid, as onto a sheet's empty cells; those
+           ;; lines are then left free and the status bar moves below them.
+           ;; One line stays for the status bar.
+           (free (- (cdr (grid-table-etaf--viewport state)) sy1 1))
+           (reach (cl-loop for chart in (grid-table-charts source)
+                           for place = (grid-table-etaf--chart-place
+                                        state frame chart cols)
+                           when place
+                           maximize (+ (nth 1 place) (nth 3 place))))
+           (extra (max 0 (min free (- (or reach 0) sy1)))))
+      (plist-put frame :sy1 (+ sy1 extra))
+      (plist-put frame :extra extra))))
 
 (defun grid-table-etaf--chart-place (state frame chart cols)
   "Return where CHART shows in STATE's window, or nil when it does not.
@@ -1453,13 +1477,12 @@ is cut off at the left and top."
         (when (and (> shown-cols 0) (> vy1 vy0))
           (list left vy0 shown-cols (- vy1 vy0) cut-cols (- vy0 y)))))))
 
-(defun grid-table-etaf--chart-nodes (state source rows cols)
+(defun grid-table-etaf--chart-nodes (state source frame cols)
   "Return the View nodes of SOURCE's floating charts for STATE's window.
-ROWS and COLS are the model rows and columns shown."
+FRAME is what `grid-table-etaf--chart-frame' returns, and COLS the model
+columns shown."
   (let* ((buffer (grid-table-etaf--state-buffer state))
          (charts (grid-table-charts source))
-         (frame (and charts
-                     (grid-table-etaf--chart-frame state source rows cols)))
          (tick (etaf-value (grid-table-etaf--state-tick state))))
     (cl-loop
      for chart in charts for index from 0
