@@ -883,7 +883,17 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
             (grid-table-persistence--save-to-file source file)
             (let ((back (grid-table-persistence-create-data-source-from-file
                          file)))
-              (should (= (gethash 2 (grid-get-column-widths back)) 20))))
+              (should (= (gethash 2 (grid-get-column-widths back)) 20))
+              ;; The view uses it from the first showing.
+              (let ((shown (generate-new-buffer " *grid-etaf-reopened*")))
+                (unwind-protect
+                    (with-current-buffer shown
+                      (grid-table--show-grid-in-current-buffer back)
+                      (should (= (aref (grid-table-etaf--state-widths
+                                        grid-table-etaf--state)
+                                       2)
+                                 20)))
+                  (kill-buffer shown)))))
         (delete-file file)))
     ;; Deleting the column forgets it.
     (funcall (gethash :delete-column source) source 2)

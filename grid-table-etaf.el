@@ -4003,10 +4003,13 @@ cursor moves to: display column is model column plus one."
                      :model (gethash :model data-source)))))
       (setq grid-table-etaf--state state)
       (puthash :etaf-state state data-source)
-      (when (eq state kept)
-        ;; Other sheets may have changed what this one shows.
-        (grid-table-etaf--track-model state)
-        (grid-table-etaf--apply-filters state)
+      (if (eq state kept)
+          ;; Other sheets may have changed what this one shows.
+          (progn
+            (grid-table-etaf--track-model state)
+            (grid-table-etaf--apply-filters state)
+            (grid-table-etaf--fit-widths state))
+        ;; Widths saved with the grid apply from the first showing.
         (grid-table-etaf--fit-widths state))
       (etaf-mount buffer
                   (etaf-node 'grid-table-etaf-sheet (list :state state) nil)
