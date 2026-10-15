@@ -1,0 +1,114 @@
+// a:ext
+// a:chExt
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use crate::{
+    reader::driver::{
+        get_attribute,
+        set_string_from_xml,
+    },
+    structs::Int64Value,
+    writer::driver::write_start_tag,
+    xml_read_loop,
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct PositiveSize2DType {
+    cx: Int64Value,
+    cy: Int64Value,
+}
+
+impl PositiveSize2DType {
+    #[inline]
+    #[must_use]
+    pub fn cx(&self) -> i64 {
+        self.cx.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use cx()")]
+    pub fn get_cx(&self) -> i64 {
+        self.cx()
+    }
+
+    #[inline]
+    pub fn set_cx(&mut self, value: i64) {
+        self.cx.set_value(value);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn cy(&self) -> i64 {
+        self.cy.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use cy()")]
+    pub fn get_cy(&self) -> i64 {
+        self.cy()
+    }
+
+    #[inline]
+    pub fn set_cy(&mut self, value: i64) {
+        self.cy.set_value(value);
+    }
+
+    #[inline]
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        e: &BytesStart,
+        empty_flg: bool,
+    ) {
+        set_string_from_xml!(self, e, cx, "cx");
+        set_string_from_xml!(self, e, cy, "cy");
+
+        if empty_flg {
+            return;
+        }
+
+        xml_read_loop!(
+            reader,
+            Event::End(ref e) => {
+                match e.name().into_inner() {
+                    b"a:chExt" | b"a:ext" => return,
+                    _ => (),
+                }
+            },
+            Event::Eof => panic!(
+                "Error: Could not find {} end element",
+                "a:ext,a:chExt"
+            )
+        );
+    }
+
+    #[inline]
+    pub(crate) fn write_to_ext(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        self.write_to(writer, "a:ext");
+    }
+
+    #[inline]
+    pub(crate) fn write_to_ch_ext(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        self.write_to(writer, "a:chExt");
+    }
+
+    fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>, tag_name: &str) {
+        let mut attributes: crate::structs::AttrCollection = Vec::new();
+        let cx_str = self.cx.value_string();
+        attributes.push(("cx", &cx_str).into());
+        let cy_str = self.cy.value_string();
+        attributes.push(("cy", &cy_str).into());
+        write_start_tag(writer, tag_name, attributes, true);
+    }
+}

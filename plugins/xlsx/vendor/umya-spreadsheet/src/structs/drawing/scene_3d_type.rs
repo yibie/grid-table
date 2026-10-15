@@ -1,0 +1,118 @@
+// a:scene3d
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    Camera,
+    LightRig,
+};
+use crate::{
+    reader::driver::xml_read_loop,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct Scene3DType {
+    camera:    Option<Camera>,
+    light_rig: Option<LightRig>,
+}
+
+impl Scene3DType {
+    #[inline]
+    #[must_use]
+    pub fn camera(&self) -> Option<&Camera> {
+        self.camera.as_ref()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use camera()")]
+    pub fn get_camera(&self) -> Option<&Camera> {
+        self.camera()
+    }
+
+    #[inline]
+    pub fn set_camera(&mut self, value: Camera) -> &mut Scene3DType {
+        self.camera = Some(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn light_rig(&self) -> Option<&LightRig> {
+        self.light_rig.as_ref()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use light_rig()")]
+    pub fn get_light_rig(&self) -> Option<&LightRig> {
+        self.light_rig()
+    }
+
+    #[inline]
+    pub fn set_light_rig(&mut self, value: LightRig) -> &mut Scene3DType {
+        self.light_rig = Some(value);
+        self
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            ref n @ (Event::Empty(ref e) | Event::Start(ref e)) => {
+                let is_empty = matches!(n, Event::Empty(_));
+                match e.name().into_inner() {
+                    b"a:camera" => {
+                        let mut obj = Camera::default();
+                        obj.set_attributes(reader, e, is_empty);
+                        self.set_camera(obj);
+                    }
+                    b"a:lightRig" => {
+                        let mut obj = LightRig::default();
+                        obj.set_attributes(reader, e, is_empty);
+                        self.set_light_rig(obj);
+                    }
+                    _ => (),
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"a:scene3d" {
+                    return;
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "a:scene3d")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // a:scene3d
+        write_start_tag(writer, "a:scene3d", vec![], false);
+
+        // a:camera
+        if let Some(v) = &self.camera {
+            v.write_to(writer);
+        }
+
+        // a:lightRig
+        if let Some(v) = &self.light_rig {
+            v.write_to(writer);
+        }
+
+        write_end_tag(writer, "a:scene3d");
+    }
+}

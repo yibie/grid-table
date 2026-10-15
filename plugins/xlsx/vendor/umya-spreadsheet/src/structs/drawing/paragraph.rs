@@ -1,0 +1,171 @@
+// a:p
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    ParagraphProperties,
+    Run,
+    RunProperties,
+};
+use crate::{
+    reader::driver::xml_read_loop,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct Paragraph {
+    paragraph_properties:    ParagraphProperties,
+    run:                     Vec<Run>,
+    end_para_run_properties: Option<Box<RunProperties>>,
+}
+
+impl Paragraph {
+    #[inline]
+    #[must_use]
+    pub fn paragraph_properties(&self) -> &ParagraphProperties {
+        &self.paragraph_properties
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use paragraph_properties()")]
+    pub fn get_paragraph_properties(&self) -> &ParagraphProperties {
+        self.paragraph_properties()
+    }
+
+    #[inline]
+    pub fn paragraph_properties_mut(&mut self) -> &mut ParagraphProperties {
+        &mut self.paragraph_properties
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use paragraph_properties_mut()")]
+    pub fn get_paragraph_properties_mut(&mut self) -> &mut ParagraphProperties {
+        self.paragraph_properties_mut()
+    }
+
+    #[inline]
+    pub fn set_paragraph_properties(&mut self, value: ParagraphProperties) -> &mut Self {
+        self.paragraph_properties = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn run(&self) -> &[Run] {
+        &self.run
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use run()")]
+    pub fn get_run(&self) -> &[Run] {
+        self.run()
+    }
+
+    #[inline]
+    pub fn add_run(&mut self, value: Run) {
+        self.run.push(value);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn end_para_run_properties(&self) -> Option<&RunProperties> {
+        self.end_para_run_properties.as_deref()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use end_para_run_properties()")]
+    pub fn get_end_para_run_properties(&self) -> Option<&RunProperties> {
+        self.end_para_run_properties()
+    }
+
+    #[inline]
+    pub fn end_para_run_properties_mut(&mut self) -> Option<&mut RunProperties> {
+        self.end_para_run_properties.as_deref_mut()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use end_para_run_properties_mut()")]
+    pub fn get_end_para_run_properties_mut(&mut self) -> Option<&mut RunProperties> {
+        self.end_para_run_properties_mut()
+    }
+
+    #[inline]
+    pub fn set_end_para_run_properties(&mut self, value: RunProperties) -> &mut Self {
+        self.end_para_run_properties = Some(Box::new(value));
+        self
+    }
+
+    #[inline]
+    pub fn remove_end_para_run_properties(&mut self) {
+        self.end_para_run_properties = None;
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            ref n @ (Event::Empty(ref e) | Event::Start(ref e)) => {
+                let is_empty = matches!(n, Event::Empty(_));
+                match e.name().into_inner() {
+                    b"a:pPr" => {
+                        self.paragraph_properties.set_attributes(reader, e, is_empty);
+                    }
+                    b"a:r" => {
+                        let mut run = Run::default();
+                        run.set_attributes(reader, e);
+                        self.add_run(run);
+                    }
+                    b"a:endParaRPr" => {
+                        let mut run_properties = RunProperties::default();
+                        run_properties.set_attributes(reader, e, is_empty);
+                        self.set_end_para_run_properties(run_properties);
+                    }
+                    _ => (),
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"a:p" {
+                    return;
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "a:p")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // a:p
+        write_start_tag(writer, "a:p", vec![], false);
+
+        // a:pPr
+        self.paragraph_properties.write_to(writer);
+
+        // a:r
+        for run in &self.run {
+            run.write_to(writer);
+        }
+
+        // a:endParaRPr
+        if let Some(v) = &self.end_para_run_properties {
+            v.write_to_end_para_rpr(writer);
+        }
+
+        write_end_tag(writer, "a:p");
+    }
+}

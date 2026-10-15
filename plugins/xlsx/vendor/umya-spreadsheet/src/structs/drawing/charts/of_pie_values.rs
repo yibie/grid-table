@@ -1,0 +1,28 @@
+use std::str::FromStr;
+
+use super::super::super::EnumTrait;
+#[derive(Clone, Debug, Default)]
+pub enum OfPieValues {
+    Bar,
+    #[default]
+    Pie,
+}
+impl EnumTrait for OfPieValues {
+    fn value_string(&self) -> &str {
+        match &self {
+            Self::Bar => "bar",
+            Self::Pie => "pie",
+        }
+    }
+}
+impl FromStr for OfPieValues {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "bar" => Ok(Self::Bar),
+            "pie" => Ok(Self::Pie),
+            _ => Err(()),
+        }
+    }
+}

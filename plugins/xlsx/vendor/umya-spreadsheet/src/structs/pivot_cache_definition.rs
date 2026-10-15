@@ -1,0 +1,386 @@
+// pivotCacheDefinition
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use crate::{
+    helper::const_str::{
+        MC_NS,
+        REL_OFC_NS,
+        SHEET_MAIN_NS,
+        SHEET_MS_REVISION_NS,
+    },
+    reader::driver::{
+        get_attribute,
+        set_string_from_xml,
+        xml_read_loop,
+    },
+    structs::{
+        ByteValue,
+        CacheFields,
+        CacheSource,
+        DoubleValue,
+        StringValue,
+        UInt32Value,
+    },
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct PivotCacheDefinition {
+    id:                      StringValue,
+    refreshed_by:            StringValue,
+    refreshed_date:          DoubleValue,
+    created_version:         ByteValue,
+    refreshed_version:       ByteValue,
+    min_refreshable_version: ByteValue,
+    record_count:            UInt32Value,
+    cache_source:            CacheSource,
+    cache_fields:            CacheFields,
+    /// Raw XML data for pivotCacheRecords (if available from template).
+    /// Written alongside the cache definition as pivotCacheRecordsN.xml.
+    raw_cache_records:       Vec<u8>,
+}
+
+impl PivotCacheDefinition {
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> &str {
+        self.id.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use id()")]
+    pub fn get_id(&self) -> &str {
+        self.id()
+    }
+
+    #[inline]
+    pub fn set_id<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.id.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn refreshed_by(&self) -> &str {
+        self.refreshed_by.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use refreshed_by()")]
+    pub fn get_refreshed_by(&self) -> &str {
+        self.refreshed_by()
+    }
+
+    #[inline]
+    pub fn set_refreshed_by<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.refreshed_by.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn refreshed_date(&self) -> f64 {
+        self.refreshed_date.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use refreshed_date()")]
+    pub fn get_refreshed_date(&self) -> f64 {
+        self.refreshed_date()
+    }
+
+    #[inline]
+    pub fn set_refreshed_date(&mut self, value: f64) -> &mut Self {
+        self.refreshed_date.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn created_version(&self) -> u8 {
+        self.created_version.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use created_version()")]
+    pub fn get_created_version(&self) -> u8 {
+        self.created_version()
+    }
+
+    #[inline]
+    pub fn set_created_version(&mut self, value: u8) -> &mut Self {
+        self.created_version.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn refreshed_version(&self) -> u8 {
+        self.refreshed_version.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use refreshed_version()")]
+    pub fn get_refreshed_version(&self) -> u8 {
+        self.refreshed_version()
+    }
+
+    #[inline]
+    pub fn set_refreshed_version(&mut self, value: u8) -> &mut Self {
+        self.refreshed_version.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn min_refreshable_version(&self) -> u8 {
+        self.min_refreshable_version.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use min_refreshable_version()")]
+    pub fn get_min_refreshable_version(&self) -> u8 {
+        self.min_refreshable_version()
+    }
+
+    #[inline]
+    pub fn set_min_refreshable_version(&mut self, value: u8) -> &mut Self {
+        self.min_refreshable_version.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn record_count(&self) -> u32 {
+        self.record_count.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use record_count()")]
+    pub fn get_record_count(&self) -> u32 {
+        self.record_count()
+    }
+
+    #[inline]
+    pub fn set_record_count(&mut self, value: u32) -> &mut Self {
+        self.record_count.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn cache_source(&self) -> &CacheSource {
+        &self.cache_source
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use cache_source()")]
+    pub fn get_cache_source(&self) -> &CacheSource {
+        self.cache_source()
+    }
+
+    #[inline]
+    pub fn cache_source_mut(&mut self) -> &mut CacheSource {
+        &mut self.cache_source
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cache_source_mut()")]
+    pub fn get_cache_source_mut(&mut self) -> &mut CacheSource {
+        self.cache_source_mut()
+    }
+
+    #[inline]
+    pub fn set_cache_source(&mut self, value: CacheSource) -> &mut Self {
+        self.cache_source = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn cache_fields(&self) -> &CacheFields {
+        &self.cache_fields
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use cache_fields()")]
+    pub fn get_cache_fields(&self) -> &CacheFields {
+        self.cache_fields()
+    }
+
+    #[inline]
+    pub fn cache_fields_mut(&mut self) -> &mut CacheFields {
+        &mut self.cache_fields
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cache_fields_mut()")]
+    pub fn get_cache_fields_mut(&mut self) -> &mut CacheFields {
+        self.cache_fields_mut()
+    }
+
+    #[inline]
+    pub fn set_cache_fields(&mut self, value: CacheFields) -> &mut Self {
+        self.cache_fields = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn raw_cache_records(&self) -> &[u8] {
+        &self.raw_cache_records
+    }
+
+    #[inline]
+    pub fn set_raw_cache_records(&mut self, value: Vec<u8>) -> &mut Self {
+        self.raw_cache_records = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn has_raw_cache_records(&self) -> bool {
+        !self.raw_cache_records.is_empty()
+    }
+
+    /// Create a new minimal pivot cache definition with required fields
+    pub fn new_simple(id: impl Into<String>, cache_source: CacheSource) -> Self {
+        let mut cache_def = Self::default();
+
+        // Set required fields
+        cache_def.set_id(id);
+        cache_def.set_cache_source(cache_source);
+
+        // Set Excel version compatibility (Excel 2007+)
+        cache_def.set_created_version(3);
+        cache_def.set_refreshed_version(3);
+        cache_def.set_min_refreshable_version(3);
+
+        cache_def
+    }
+
+    #[inline]
+    pub(crate) fn hash_code(&self) -> String {
+        crate::helper::utils::md5_hash(format!(
+            "{}{}{}{}{}{}{}{}{}",
+            self.id.value_str(),
+            self.refreshed_by.value_str(),
+            self.refreshed_date.value_string(),
+            self.created_version.value_string(),
+            self.refreshed_version.value_string(),
+            self.min_refreshable_version.value_string(),
+            self.record_count.value_string(),
+            self.cache_source.hash_code(),
+            self.cache_fields.hash_code(),
+        ))
+    }
+
+    #[inline]
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        e: &BytesStart,
+    ) {
+        set_string_from_xml!(self, e, id, "r:id");
+        set_string_from_xml!(self, e, refreshed_by, "refreshedBy");
+        set_string_from_xml!(self, e, refreshed_date, "refreshedDate");
+        set_string_from_xml!(self, e, created_version, "createdVersion");
+        set_string_from_xml!(self, e, refreshed_version, "refreshedVersion");
+        set_string_from_xml!(self, e, min_refreshable_version, "minRefreshableVersion");
+        set_string_from_xml!(self, e, record_count, "recordCount");
+
+        xml_read_loop!(
+            reader,
+            ref n @ (Event::Empty(ref e) | Event::Start(ref e)) => {
+                let is_empty = matches!(n, Event::Empty(_));
+                if e.name().into_inner() == b"cacheSource" {
+                    let mut obj = CacheSource::default();
+                    obj.set_attributes(reader, e, is_empty);
+                    self.set_cache_source(obj);
+                }
+                if e.name().into_inner() == b"cacheFields" {
+                    let mut obj = CacheFields::default();
+                    obj.set_attributes(reader, e);
+                    self.set_cache_fields(obj);
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"pivotCacheDefinition" {
+                    return
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "pivotCacheDefinition")
+        );
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // pivotCacheDefinition
+        let mut attributes: crate::structs::AttrCollection = vec![
+            ("xmlns", SHEET_MAIN_NS).into(),
+            ("xmlns:r", REL_OFC_NS).into(),
+            ("xmlns:mc", MC_NS).into(),
+            ("mc:Ignorable", "xr").into(),
+            ("xmlns:xr", SHEET_MS_REVISION_NS).into(),
+        ];
+
+        if self.id.has_value() {
+            attributes.push(("r:id", self.id.value_str()).into());
+        }
+        if self.refreshed_by.has_value() {
+            attributes.push(("refreshedBy", self.refreshed_by.value_str()).into());
+        }
+        let refreshed_date_str = self.refreshed_date.value_string();
+        if self.refreshed_date.has_value() {
+            attributes.push(("refreshedDate", &refreshed_date_str).into());
+        }
+        let created_version_str = self.created_version.value_string();
+        if self.created_version.has_value() {
+            attributes.push(("createdVersion", &created_version_str).into());
+        }
+        let refreshed_version_str = self.refreshed_version.value_string();
+        if self.refreshed_version.has_value() {
+            attributes.push(("refreshedVersion", &refreshed_version_str).into());
+        }
+        let min_refreshable_version_str = self.min_refreshable_version.value_string();
+        if self.min_refreshable_version.has_value() {
+            attributes.push(("minRefreshableVersion", &min_refreshable_version_str).into());
+        }
+        let record_count_str = self.record_count.value_string();
+        if self.record_count.has_value() {
+            attributes.push(("recordCount", &record_count_str).into());
+        }
+
+        write_start_tag(writer, "pivotCacheDefinition", attributes, false);
+
+        // cacheSource
+        self.cache_source.write_to(writer);
+
+        // cacheFields
+        self.cache_fields.write_to(writer);
+
+        write_end_tag(writer, "pivotCacheDefinition");
+    }
+}

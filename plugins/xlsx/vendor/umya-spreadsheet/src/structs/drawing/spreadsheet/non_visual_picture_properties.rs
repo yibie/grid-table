@@ -1,0 +1,154 @@
+// xdr:nvPicPr
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    NonVisualDrawingProperties,
+    NonVisualPictureDrawingProperties,
+};
+use crate::{
+    reader::driver::xml_read_loop,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct NonVisualPictureProperties {
+    non_visual_drawing_properties:         NonVisualDrawingProperties,
+    non_visual_picture_drawing_properties: NonVisualPictureDrawingProperties,
+}
+
+impl NonVisualPictureProperties {
+    #[inline]
+    #[must_use]
+    pub fn non_visual_drawing_properties(&self) -> &NonVisualDrawingProperties {
+        &self.non_visual_drawing_properties
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use non_visual_drawing_properties()")]
+    pub fn get_non_visual_drawing_properties(&self) -> &NonVisualDrawingProperties {
+        self.non_visual_drawing_properties()
+    }
+
+    #[inline]
+    pub fn non_visual_drawing_properties_mut(&mut self) -> &mut NonVisualDrawingProperties {
+        &mut self.non_visual_drawing_properties
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use non_visual_drawing_properties_mut()")]
+    pub fn get_non_visual_drawing_properties_mut(&mut self) -> &mut NonVisualDrawingProperties {
+        self.non_visual_drawing_properties_mut()
+    }
+
+    #[inline]
+    pub fn set_non_visual_drawing_properties(&mut self, value: NonVisualDrawingProperties) {
+        self.non_visual_drawing_properties = value;
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn non_visual_picture_drawing_properties(&self) -> &NonVisualPictureDrawingProperties {
+        &self.non_visual_picture_drawing_properties
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use non_visual_picture_drawing_properties()")]
+    pub fn get_non_visual_picture_drawing_properties(&self) -> &NonVisualPictureDrawingProperties {
+        self.non_visual_picture_drawing_properties()
+    }
+
+    #[inline]
+    pub fn non_visual_picture_drawing_properties_mut(
+        &mut self,
+    ) -> &mut NonVisualPictureDrawingProperties {
+        &mut self.non_visual_picture_drawing_properties
+    }
+
+    #[inline]
+    #[deprecated(
+        since = "3.0.0",
+        note = "Use non_visual_picture_drawing_properties_mut()"
+    )]
+    pub fn get_non_visual_picture_drawing_properties_mut(
+        &mut self,
+    ) -> &mut NonVisualPictureDrawingProperties {
+        self.non_visual_picture_drawing_properties_mut()
+    }
+
+    #[inline]
+    pub fn set_non_visual_picture_drawing_properties(
+        &mut self,
+        value: NonVisualPictureDrawingProperties,
+    ) {
+        self.non_visual_picture_drawing_properties = value;
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => {
+                match e.name().into_inner() {
+                    b"xdr:cNvPicPr" | b"cNvPicPr" => {
+                        self.non_visual_picture_drawing_properties
+                            .set_attributes(reader, e, false);
+                        }
+                    b"xdr:cNvPr" | b"cNvPr" => {
+                        self.non_visual_drawing_properties
+                            .set_attributes(reader, e, false);
+                        }
+                    _ => (),
+                }
+            },
+            Event::Empty(ref e) => {
+                match e.name().into_inner() {
+                    b"xdr:cNvPicPr" | b"cNvPicPr" => {
+                        self.non_visual_picture_drawing_properties
+                            .set_attributes(reader, e, true);
+                        }
+                    b"xdr:cNvPr" | b"cNvPr" => {
+                        self.non_visual_drawing_properties
+                            .set_attributes(reader, e, true);
+                        }
+                    _ => (),
+                }
+            },
+            Event::End(ref e) => {
+                if matches!(e.name().into_inner(), b"xdr:nvPicPr" | b"nvPicPr") {
+                    return;
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "nvPicPr")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // xdr:nvPicPr
+        write_start_tag(writer, "xdr:nvPicPr", vec![], false);
+
+        // xdr:cNvPr
+        self.non_visual_drawing_properties.write_to(writer, 0);
+
+        // xdr:cNvPicPr
+        self.non_visual_picture_drawing_properties.write_to(writer);
+
+        write_end_tag(writer, "xdr:nvPicPr");
+    }
+}

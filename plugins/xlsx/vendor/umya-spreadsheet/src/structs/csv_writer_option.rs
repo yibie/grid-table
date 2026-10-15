@@ -1,0 +1,67 @@
+use super::EnumValue;
+use crate::structs::CsvEncodeValues;
+
+#[derive(Clone, Default, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct CsvWriterOption {
+    pub(crate) csv_encode_values: EnumValue<CsvEncodeValues>,
+    pub(crate) wrap_with_char:    Box<str>,
+    pub(crate) do_trim:           bool,
+}
+impl CsvWriterOption {
+    #[inline]
+    #[must_use]
+    pub fn csv_encode_value(&self) -> &CsvEncodeValues {
+        self.csv_encode_values.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use csv_encode_value()")]
+    pub fn get_csv_encode_value(&self) -> &CsvEncodeValues {
+        self.csv_encode_value()
+    }
+
+    #[inline]
+    pub fn set_csv_encode_value(&mut self, value: CsvEncodeValues) -> &mut Self {
+        self.csv_encode_values.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn wrap_with_char(&self) -> &str {
+        &self.wrap_with_char
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use wrap_with_char()")]
+    pub fn get_wrap_with_char(&self) -> &str {
+        self.wrap_with_char()
+    }
+
+    #[inline]
+    pub fn set_wrap_with_char<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.wrap_with_char = value.into().into_boxed_str();
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn do_trim(&self) -> bool {
+        self.do_trim
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use do_trim()")]
+    pub fn get_do_trim(&self) -> bool {
+        self.do_trim()
+    }
+
+    #[inline]
+    pub fn set_do_trim(&mut self, value: bool) -> &mut Self {
+        self.do_trim = value;
+        self
+    }
+}

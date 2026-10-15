@@ -1,0 +1,135 @@
+// xdr:cNvPicPr
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::super::PictureLocks;
+use crate::{
+    reader::driver::{
+        get_attribute,
+        set_string_from_xml,
+        xml_read_loop,
+    },
+    structs::BooleanValue,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct NonVisualPictureDrawingProperties {
+    prefer_relative_resize: BooleanValue,
+    picture_locks:          Option<PictureLocks>,
+}
+
+impl NonVisualPictureDrawingProperties {
+    #[inline]
+    #[must_use]
+    pub fn prefer_relative_resize(&self) -> bool {
+        self.prefer_relative_resize.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use prefer_relative_resize()")]
+    pub fn get_prefer_relative_resize(&self) -> bool {
+        self.prefer_relative_resize()
+    }
+
+    #[inline]
+    pub fn set_prefer_relative_resize(&mut self, value: bool) {
+        self.prefer_relative_resize.set_value(value);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn picture_locks(&self) -> Option<&PictureLocks> {
+        self.picture_locks.as_ref()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use picture_locks()")]
+    pub fn get_picture_locks(&self) -> Option<&PictureLocks> {
+        self.picture_locks()
+    }
+
+    #[inline]
+    pub fn picture_locks_mut(&mut self) -> Option<&mut PictureLocks> {
+        self.picture_locks.as_mut()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use picture_locks_mut()")]
+    pub fn get_picture_locks_mut(&mut self) -> Option<&mut PictureLocks> {
+        self.picture_locks_mut()
+    }
+
+    #[inline]
+    pub fn set_picture_locks(&mut self, value: PictureLocks) {
+        self.picture_locks = Some(value);
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        e: &BytesStart,
+        empty_flag: bool,
+    ) {
+        set_string_from_xml!(self, e, prefer_relative_resize, "preferRelativeResize");
+
+        if empty_flag {
+            return;
+        }
+
+        xml_read_loop!(
+            reader,
+            Event::Empty(ref e) => {
+                if e.name().into_inner() == b"a:picLocks" {
+                    let mut obj = PictureLocks::default();
+                    obj.set_attributes(reader, e);
+                    self.set_picture_locks(obj);
+                }
+            },
+            Event::End(ref e) => {
+                if matches!(e.name().into_inner(), b"xdr:cNvPicPr" | b"cNvPicPr") {
+                    return
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "cNvPicPr")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // xdr:cNvPicPr
+        let mut attributes: crate::structs::AttrCollection = Vec::new();
+        if self.prefer_relative_resize.has_value() {
+            attributes.push(
+                (
+                    "preferRelativeResize",
+                    self.prefer_relative_resize.value_string(),
+                )
+                    .into(),
+            );
+        }
+
+        match &self.picture_locks {
+            Some(v) => {
+                write_start_tag(writer, "xdr:cNvPicPr", attributes, false);
+                v.write_to(writer);
+                write_end_tag(writer, "xdr:cNvPicPr");
+            }
+            None => {
+                write_start_tag(writer, "xdr:cNvPicPr", attributes, true);
+            }
+        }
+    }
+}

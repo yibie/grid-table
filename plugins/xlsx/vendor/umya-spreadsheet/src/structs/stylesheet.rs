@@ -1,0 +1,653 @@
+// styleSheet
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    BordersCrate,
+    CellFormat,
+    CellFormats,
+    CellStyleFormats,
+    CellStyles,
+    Colors,
+    DifferentialFormats,
+    Fills,
+    Fonts,
+    NumberingFormats,
+    Style,
+};
+use crate::{
+    helper::const_str::{
+        MC_NS,
+        SHEET_MAIN_NS,
+        SHEET_MS_MAIN_NS,
+        SHEETML_AC_NS,
+    },
+    reader::driver::xml_read_loop,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub(crate) struct Stylesheet {
+    numbering_formats:    NumberingFormats,
+    fonts:                Fonts,
+    fills:                Fills,
+    borders:              BordersCrate,
+    cell_style_formats:   CellStyleFormats,
+    cell_formats:         CellFormats,
+    cell_styles:          CellStyles,
+    differential_formats: DifferentialFormats,
+    colors:               Colors,
+    maked_style_list:     Vec<Style>,
+}
+
+impl Stylesheet {
+    #[inline]
+    pub(crate) fn numbering_formats(&self) -> &NumberingFormats {
+        &self.numbering_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use numbering_formats()")]
+    pub(crate) fn get_numbering_formats(&self) -> &NumberingFormats {
+        self.numbering_formats()
+    }
+
+    #[inline]
+    pub(crate) fn numbering_formats_mut(&mut self) -> &mut NumberingFormats {
+        &mut self.numbering_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use numbering_formats_mut()")]
+    pub(crate) fn get_numbering_formats_mut(&mut self) -> &mut NumberingFormats {
+        self.numbering_formats_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_numbering_formats(&mut self, value: NumberingFormats) -> &mut Self {
+        self.numbering_formats = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn fonts(&self) -> &Fonts {
+        &self.fonts
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use fonts()")]
+    pub(crate) fn get_fonts(&self) -> &Fonts {
+        self.fonts()
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn fonts_mut(&mut self) -> &mut Fonts {
+        &mut self.fonts
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    #[deprecated(since = "3.0.0", note = "Use fonts_mut()")]
+    pub(crate) fn get_fonts_mut(&mut self) -> &mut Fonts {
+        self.fonts_mut()
+    }
+    
+    #[inline]
+    pub(crate) fn set_fonts(&mut self, value: Fonts) -> &mut Self {
+        self.fonts = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn fills(&self) -> &Fills {
+        &self.fills
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use fills()")]
+    pub(crate) fn get_fills(&self) -> &Fills {
+        self.fills()
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn fills_mut(&mut self) -> &mut Fills {
+        &mut self.fills
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    #[deprecated(since = "3.0.0", note = "Use fills_mut()")]
+    pub(crate) fn get_fills_mut(&mut self) -> &mut Fills {
+        self.fills_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_fills(&mut self, value: Fills) -> &mut Self {
+        self.fills = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn borders(&self) -> &BordersCrate {
+        &self.borders
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use borders()")]
+    pub(crate) fn get_borders(&self) -> &BordersCrate {
+        self.borders()
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn borders_mut(&mut self) -> &mut BordersCrate {
+        &mut self.borders
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    #[deprecated(since = "3.0.0", note = "Use borders_mut()")]
+    pub(crate) fn get_borders_mut(&mut self) -> &mut BordersCrate {
+        self.borders_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_borders(&mut self, value: BordersCrate) -> &mut Self {
+        self.borders = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn cell_style_formats(&self) -> &CellStyleFormats {
+        &self.cell_style_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cell_style_formats()")]
+    pub(crate) fn get_cell_style_formats(&self) -> &CellStyleFormats {
+        self.cell_style_formats()
+    }
+
+    #[inline]
+    pub(crate) fn cell_style_formats_mut(&mut self) -> &mut CellStyleFormats {
+        &mut self.cell_style_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cell_style_formats_mut()")]
+    pub(crate) fn get_cell_style_formats_mut(&mut self) -> &mut CellStyleFormats {
+        self.cell_style_formats_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_cell_style_formats(&mut self, value: CellStyleFormats) -> &mut Self {
+        self.cell_style_formats = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn cell_formats(&self) -> &CellFormats {
+        &self.cell_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cell_formats()")]
+    pub(crate) fn get_cell_formats(&self) -> &CellFormats {
+        self.cell_formats()
+    }
+
+    #[inline]
+    pub(crate) fn cell_formats_mut(&mut self) -> &mut CellFormats {
+        &mut self.cell_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cell_formats_mut()")]
+    pub(crate) fn get_cell_formats_mut(&mut self) -> &mut CellFormats {
+        self.cell_formats_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_cell_formats(&mut self, value: CellFormats) -> &mut Self {
+        self.cell_formats = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn cell_styles(&self) -> &CellStyles {
+        &self.cell_styles
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cell_styles()")]
+    pub(crate) fn get_cell_styles(&self) -> &CellStyles {
+        self.cell_styles()
+    }
+
+    #[inline]
+    pub(crate) fn cell_styles_mut(&mut self) -> &mut CellStyles {
+        &mut self.cell_styles
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use cell_styles_mut()")]
+    pub(crate) fn get_cell_styles_mut(&mut self) -> &mut CellStyles {
+        self.cell_styles_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_cell_styles(&mut self, value: CellStyles) -> &mut Self {
+        self.cell_styles = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn differential_formats(&self) -> &DifferentialFormats {
+        &self.differential_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use differential_formats()")]
+    pub(crate) fn get_differential_formats(&self) -> &DifferentialFormats {
+        self.differential_formats()
+    }
+
+    #[inline]
+    pub(crate) fn differential_formats_mut(&mut self) -> &mut DifferentialFormats {
+        &mut self.differential_formats
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use differential_formats_mut()")]
+    pub(crate) fn get_differential_formats_mut(&mut self) -> &mut DifferentialFormats {
+        self.differential_formats_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_differential_formats(&mut self, value: DifferentialFormats) -> &mut Self {
+        self.differential_formats = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn colors(&self) -> &Colors {
+        &self.colors
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use colors()")]
+    pub(crate) fn get_colors(&self) -> &Colors {
+        self.colors()
+    }
+
+    #[inline]
+    pub(crate) fn colors_mut(&mut self) -> &mut Colors {
+        &mut self.colors
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use colors_mut()")]
+    pub(crate) fn get_colors_mut(&mut self) -> &mut Colors {
+        self.colors_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_colors(&mut self, value: Colors) -> &mut Self {
+        self.colors = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn style(&self, id: usize) -> Style {
+        self.maked_style_list.get(id).cloned().unwrap_or_default()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use style()")]
+    pub(crate) fn get_style(&self, id: usize) -> Style {
+        self.style(id)
+    }
+
+    pub(crate) fn make_style(&mut self) -> &mut Self {
+        for cell_format in self.cell_formats.cell_format() {
+            let def_cell_format = self
+                .cell_style_formats
+                .cell_format()
+                .get(cell_format.format_id() as usize)
+                .cloned()
+                .unwrap_or_default();
+
+            let mut style = Style::default();
+            self.style_by_cell_format(&mut style, &def_cell_format, cell_format);
+            self.maked_style_list.push(style);
+        }
+
+        self
+    }
+
+    pub(crate) fn style_by_cell_format(
+        &self,
+        style: &mut Style,
+        def_cell_format: &CellFormat,
+        cell_format: &CellFormat,
+    ) {
+        // number_format
+        let mut apply = true;
+        if def_cell_format.has_apply_number_format() {
+            apply = def_cell_format.apply_number_format();
+        }
+        if cell_format.has_apply_number_format() {
+            apply = cell_format.apply_number_format();
+        }
+        if apply {
+            let id = cell_format.number_format_id();
+            if let Some(obj) = self.numbering_formats.numbering_format().get(&id) {
+                style.set_numbering_format(obj.clone());
+            }
+        }
+
+        // font
+        let mut apply = true;
+        if def_cell_format.has_apply_font() {
+            apply = def_cell_format.apply_font();
+        }
+        if cell_format.has_apply_font() {
+            apply = cell_format.apply_font();
+        }
+        if apply {
+            let id = cell_format.font_id() as usize;
+            if let Some(obj) = self.fonts.font().get(id) {
+                style.set_font(obj.clone());
+            }
+        }
+
+        // fill
+        let mut apply = true;
+        if def_cell_format.has_apply_fill() {
+            apply = def_cell_format.apply_fill();
+        }
+        if cell_format.has_apply_fill() {
+            apply = cell_format.apply_fill();
+        }
+        if apply {
+            let id = cell_format.fill_id() as usize;
+            if let Some(obj) = self.fills.fill().get(id) {
+                style.set_fill(obj.clone());
+            }
+        }
+
+        // borders
+        let mut apply = true;
+        if def_cell_format.has_apply_border() {
+            apply = def_cell_format.apply_border();
+        }
+        if cell_format.has_apply_border() {
+            apply = cell_format.apply_border();
+        }
+        if apply {
+            let id = cell_format.border_id() as usize;
+            if let Some(obj) = self.borders.borders().get(id) {
+                style.set_borders(obj.clone());
+            }
+        }
+
+        // format_id
+        style.set_format_id(cell_format.format_id());
+
+        // alignment
+        let mut apply = true;
+        if def_cell_format.has_apply_alignment() {
+            apply = def_cell_format.apply_alignment();
+        }
+        if cell_format.has_apply_alignment() {
+            apply = cell_format.apply_alignment();
+        }
+        if apply {
+            if let Some(v) = def_cell_format.alignment() {
+                style.set_alignment(v.clone());
+            }
+            if let Some(v) = cell_format.alignment() {
+                style.set_alignment(v.clone());
+            }
+        }
+
+        // protection
+        let mut apply = true;
+        if def_cell_format.has_apply_protection() {
+            apply = def_cell_format.apply_protection();
+        }
+        if cell_format.has_apply_protection() {
+            apply = cell_format.apply_protection();
+        }
+        if !apply {
+            return;
+        }
+
+        if let Some(v) = def_cell_format.protection() {
+            style.set_protection(v.clone());
+        }
+        if let Some(v) = cell_format.protection() {
+            style.set_protection(v.clone());
+        }
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use style_by_cell_format()")]
+    pub(crate) fn get_style_by_cell_format(
+        &self,
+        style: &mut Style,
+        def_cell_format: &CellFormat,
+        cell_format: &CellFormat,
+    ) {
+        self.style_by_cell_format(style, def_cell_format, cell_format);
+    }
+
+    pub(crate) fn set_style(&mut self, style: &Style) -> u32 {
+        let mut index = 0;
+        let def_style = Style::default();
+        if style == &def_style {
+            return index;
+        }
+        for maked_style in &self.maked_style_list {
+            if style == maked_style {
+                return index;
+            }
+            index += 1;
+        }
+        let mut cell_format = CellFormat::default();
+
+        let number_format_id = self.numbering_formats.set_style(style);
+        let font_id = self.fonts.set_style(style);
+        let fill_id = self.fills.set_style(style);
+        let border_id = self.borders.set_style(style);
+        let format_id = 0;
+
+        cell_format.set_number_format_id(number_format_id);
+        cell_format.set_font_id(font_id);
+        cell_format.set_fill_id(fill_id);
+        cell_format.set_border_id(border_id);
+        cell_format.set_format_id(format_id);
+
+        if style.numbering_format().is_some() {
+            cell_format.set_apply_number_format(true);
+        }
+
+        if style.font().is_some() {
+            cell_format.set_apply_font(true);
+        }
+
+        if style.fill().is_some() {
+            cell_format.set_apply_fill(true);
+        }
+
+        if style.borders().is_some() {
+            cell_format.set_apply_border(true);
+        }
+
+        if let Some(v) = style.alignment() {
+            cell_format.set_alignment(v.clone());
+            cell_format.set_apply_alignment(true);
+        }
+
+        if let Some(v) = style.protection() {
+            cell_format.set_protection(v.clone());
+            cell_format.set_apply_protection(true);
+        }
+
+        self.maked_style_list.push(style.clone());
+        self.cell_formats.set_cell_format(cell_format);
+        index
+    }
+
+    pub(crate) fn set_defalut_value(&mut self) -> &mut Self {
+        let style = Style::default_value();
+        self.set_style(&style);
+        let style = Style::default_value_2();
+        self.set_style(&style);
+        self
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        self.numbering_formats.build_in_formats();
+
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => {
+                match e.name().into_inner() {
+                    b"numFmts" => {
+                        self.numbering_formats.set_attributes(reader, e);
+                    }
+                    b"fonts" => {
+                        self.fonts.set_attributes(reader, e);
+                    }
+                    b"fills" => {
+                        self.fills.set_attributes(reader, e);
+                    }
+                    b"borders" => {
+                        self.borders.set_attributes(reader, e);
+                    }
+                    b"cellStyleXfs" => {
+                        self.cell_style_formats.set_attributes(reader, e);
+                    }
+                    b"cellXfs" => {
+                        self.cell_formats.set_attributes(reader, e);
+                    }
+                    b"cellStyles" => {
+                        self.cell_styles.set_attributes(reader, e);
+                    }
+                    b"dxfs" => {
+                        self.differential_formats.set_attributes(reader, e);
+                    }
+                    b"colors" => {
+                        self.colors.set_attributes(reader, e);
+                    }
+                    _ => (),
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"styleSheet" {
+                    return
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "styleSheet")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // styleSheet
+        write_start_tag(
+            writer,
+            "styleSheet",
+            vec![
+                ("xmlns", SHEET_MAIN_NS).into(),
+                ("xmlns:mc", MC_NS).into(),
+                ("mc:Ignorable", "x14ac").into(),
+                ("xmlns:x14ac", SHEETML_AC_NS).into(),
+            ],
+            false,
+        );
+
+        // numFmts
+        self.numbering_formats.write_to(writer);
+
+        // fonts
+        self.fonts.write_to(writer);
+
+        // fills
+        self.fills.write_to(writer);
+
+        // borders
+        self.borders.write_to(writer);
+
+        // cellStyleXfs
+        self.cell_style_formats.write_to(writer);
+
+        // cellXfs
+        self.cell_formats.write_to(writer);
+
+        // cellStyles
+        self.cell_styles.write_to(writer);
+
+        // dxfs
+        self.differential_formats.write_to(writer);
+
+        // colors
+        self.colors.write_to(writer);
+
+        // tableStyles
+        write_start_tag(
+            writer,
+            "tableStyles",
+            vec![
+                ("count", "0").into(),
+                ("defaultTableStyle", "TableStyleMedium2").into(),
+                ("defaultPivotStyle", "PivotStyleMedium9").into(),
+            ],
+            true,
+        );
+
+        // extLst
+        write_start_tag(writer, "extLst", vec![], false);
+
+        // ext
+        write_start_tag(
+            writer,
+            "ext",
+            vec![
+                ("uri", "{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}").into(),
+                ("xmlns:x14", SHEET_MS_MAIN_NS).into(),
+            ],
+            false,
+        );
+
+        // x14:slicerStyles
+        write_start_tag(
+            writer,
+            "x14:slicerStyles",
+            vec![("defaultSlicerStyle", "SlicerStyleLight1").into()],
+            true,
+        );
+
+        write_end_tag(writer, "ext");
+
+        write_end_tag(writer, "extLst");
+
+        write_end_tag(writer, "styleSheet");
+    }
+}

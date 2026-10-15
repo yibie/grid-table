@@ -1,0 +1,38 @@
+use std::str::FromStr;
+
+use super::super::super::EnumTrait;
+#[derive(Clone, Debug)]
+pub enum EditAsValues {
+    Absolute,
+    OneCell,
+    TwoCell,
+}
+impl Default for EditAsValues {
+    #[inline]
+    fn default() -> Self {
+        Self::TwoCell
+    }
+}
+impl EnumTrait for EditAsValues {
+    #[inline]
+    fn value_string(&self) -> &str {
+        match &self {
+            Self::Absolute => "absolute",
+            Self::OneCell => "oneCell",
+            Self::TwoCell => "twoCell",
+        }
+    }
+}
+impl FromStr for EditAsValues {
+    type Err = ();
+
+    #[inline]
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "absolute" => Ok(Self::Absolute),
+            "oneCell" => Ok(Self::OneCell),
+            "twoCell" => Ok(Self::TwoCell),
+            _ => Err(()),
+        }
+    }
+}

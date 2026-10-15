@@ -1,0 +1,141 @@
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::BytesStart,
+};
+
+// c:f
+use super::super::super::Address;
+use super::super::super::StringValue;
+use crate::{
+    helper::address::is_address,
+    traits::AdjustmentCoordinateWithSheet,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+        write_text_node,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct Formula {
+    address:      Address,
+    string_value: StringValue,
+}
+
+impl Formula {
+    #[must_use]
+    pub fn address(&self) -> &Address {
+        &self.address
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use address()")]
+    pub fn get_address(&self) -> &Address {
+        self.address()
+    }
+
+    pub fn address_mut(&mut self) -> &mut Address {
+        &mut self.address
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use address_mut()")]
+    pub fn get_address_mut(&mut self) -> &mut Address {
+        self.address_mut()
+    }
+
+    #[must_use]
+    pub fn address_str(&self) -> String {
+        if self.string_value.has_value() {
+            return self.string_value.value_str().to_string();
+        }
+        self.address.address()
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use address_str()")]
+    pub fn get_address_str(&self) -> String {
+        self.address_str()
+    }
+
+    pub fn set_address(&mut self, value: Address) -> &mut Self {
+        self.address = value;
+        self.string_value.remove_value();
+        self
+    }
+
+    pub fn set_string_value<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.address = Address::default();
+        self.string_value.set_value(value);
+        self
+    }
+
+    pub(crate) fn has_string_value(&self) -> bool {
+        self.string_value.has_value()
+    }
+
+    pub fn set_address_str<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        let value = value.into();
+        if is_address(&value) {
+            self.address.set_address(value);
+        } else {
+            self.set_string_value(value);
+        }
+        self
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        e: &BytesStart,
+    ) {
+        let mut buf = Vec::new();
+        let text = reader.read_text_into(e.name(), &mut buf).unwrap();
+        self.set_address_str(crate::helper::utils::unescape_xml_text(&text));
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // c:f
+        write_start_tag(writer, "c:f", vec![], false);
+        // grid-table: a name such as Sheet&8 is escaped like any text.
+        write_text_node(writer, self.address_str());
+        write_end_tag(writer, "c:f");
+    }
+}
+impl AdjustmentCoordinateWithSheet for Formula {
+    fn adjustment_insert_coordinate_with_sheet(
+        &mut self,
+        sheet_name: &str,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.address.adjustment_insert_coordinate_with_sheet(
+            sheet_name,
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        );
+    }
+
+    fn adjustment_remove_coordinate_with_sheet(
+        &mut self,
+        sheet_name: &str,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.address.adjustment_remove_coordinate_with_sheet(
+            sheet_name,
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        );
+    }
+}

@@ -1,0 +1,228 @@
+// c:doughnutChart
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    AreaChartSeries,
+    AreaChartSeriesList,
+    DataLabels,
+    FirstSliceAngle,
+    HoleSize,
+    VaryColors,
+};
+use crate::{
+    reader::driver::xml_read_loop,
+    structs::Workbook,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct DoughnutChart {
+    vary_colors:            VaryColors,
+    area_chart_series_list: AreaChartSeriesList,
+    data_labels:            DataLabels,
+    first_slice_angle:      FirstSliceAngle,
+    hole_size:              HoleSize,
+}
+
+impl DoughnutChart {
+    #[must_use]
+    pub fn vary_colors(&self) -> &VaryColors {
+        &self.vary_colors
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use vary_colors()")]
+    pub fn get_vary_colors(&self) -> &VaryColors {
+        self.vary_colors()
+    }
+
+    pub fn vary_colors_mut(&mut self) -> &mut VaryColors {
+        &mut self.vary_colors
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use vary_colors_mut()")]
+    pub fn get_vary_colors_mut(&mut self) -> &mut VaryColors {
+        self.vary_colors_mut()
+    }
+
+    pub fn set_vary_colors(&mut self, value: VaryColors) -> &mut DoughnutChart {
+        self.vary_colors = value;
+        self
+    }
+
+    #[must_use]
+    pub fn area_chart_series_list(&self) -> &AreaChartSeriesList {
+        &self.area_chart_series_list
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use vaarea_chart_series_listl()")]
+    pub fn get_area_chart_series_list(&self) -> &AreaChartSeriesList {
+        self.area_chart_series_list()
+    }
+
+    pub fn area_chart_series_list_mut(&mut self) -> &mut AreaChartSeriesList {
+        &mut self.area_chart_series_list
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use area_chart_series_list_mut()")]
+    pub fn get_area_chart_series_list_mut(&mut self) -> &mut AreaChartSeriesList {
+        self.area_chart_series_list_mut()
+    }
+
+    pub fn set_area_chart_series_list(&mut self, value: AreaChartSeriesList) -> &mut Self {
+        self.area_chart_series_list = value;
+        self
+    }
+
+    #[must_use]
+    pub fn data_labels(&self) -> &DataLabels {
+        &self.data_labels
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use data_labels()")]
+    pub fn get_data_labels(&self) -> &DataLabels {
+        self.data_labels()
+    }
+
+    pub fn data_labels_mut(&mut self) -> &mut DataLabels {
+        &mut self.data_labels
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use data_labels_mut()")]
+    pub fn get_data_labels_mut(&mut self) -> &mut DataLabels {
+        self.data_labels_mut()
+    }
+
+    pub fn set_data_labels(&mut self, value: DataLabels) -> &mut DoughnutChart {
+        self.data_labels = value;
+        self
+    }
+
+    #[must_use]
+    pub fn first_slice_angle(&self) -> &FirstSliceAngle {
+        &self.first_slice_angle
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use first_slice_angle()")]
+    pub fn get_first_slice_angle(&self) -> &FirstSliceAngle {
+        self.first_slice_angle()
+    }
+
+    pub fn first_slice_angle_mut(&mut self) -> &mut FirstSliceAngle {
+        &mut self.first_slice_angle
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use first_slice_angle_mut()")]
+    pub fn get_first_slice_angle_mut(&mut self) -> &mut FirstSliceAngle {
+        self.first_slice_angle_mut()
+    }
+
+    pub fn set_first_slice_angle(&mut self, value: FirstSliceAngle) -> &mut DoughnutChart {
+        self.first_slice_angle = value;
+        self
+    }
+
+    #[must_use]
+    pub fn hole_size(&self) -> &HoleSize {
+        &self.hole_size
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use hole_size()")]
+    pub fn get_hole_size(&self) -> &HoleSize {
+        self.hole_size()
+    }
+
+    pub fn hole_size_mut(&mut self) -> &mut HoleSize {
+        &mut self.hole_size
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use hole_size_mut()")]
+    pub fn get_hole_size_mut(&mut self) -> &mut HoleSize {
+        self.hole_size_mut()
+    }
+
+    pub fn set_hole_size(&mut self, value: HoleSize) -> &mut DoughnutChart {
+        self.hole_size = value;
+        self
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => match e.name().into_inner() {
+                b"c:ser" => {
+                    let mut obj = AreaChartSeries::default();
+                    obj.set_attributes(reader, e);
+                    self.area_chart_series_list_mut()
+                        .add_area_chart_series(obj);
+                }
+                b"c:dLbls" => {
+                    self.data_labels.set_attributes(reader, e);
+                }
+                _ => (),
+            },
+            Event::Empty(ref e) => match e.name().into_inner() {
+                b"c:varyColors" => {
+                    self.vary_colors.set_attributes(reader, e);
+                }
+                b"c:firstSliceAng" => {
+                    self.first_slice_angle.set_attributes(reader, e);
+                }
+                b"c:holeSize" => {
+                    self.hole_size.set_attributes(reader, e);
+                }
+                _ => (),
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"c:doughnutChart" {
+                    return;
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "c:doughnutChart")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>, wb: &Workbook) {
+        // c:doughnutChart
+        write_start_tag(writer, "c:doughnutChart", vec![], false);
+
+        // c:varyColors
+        self.vary_colors.write_to(writer);
+
+        // c:ser
+        for v in self.area_chart_series_list.area_chart_series() {
+            v.write_to(writer, wb);
+        }
+
+        // c:dLbls
+        self.data_labels.write_to(writer);
+
+        // c:firstSliceAng
+        self.first_slice_angle.write_to(writer);
+
+        // c:holeSize
+        self.hole_size.write_to(writer);
+
+        write_end_tag(writer, "c:doughnutChart");
+    }
+}

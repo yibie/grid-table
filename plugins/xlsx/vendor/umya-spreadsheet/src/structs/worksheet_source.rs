@@ -1,0 +1,104 @@
+// worksheetSource
+use std::io::Cursor;
+use quick_xml::{
+    Reader,
+    Writer,
+    events::BytesStart,
+};
+
+use crate::{
+    StringValue, reader::driver::get_attribute, set_string_from_xml, structs::Address, writer::driver::write_start_tag
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct WorksheetSource {
+    address: Address,
+    name: StringValue,
+}
+
+impl WorksheetSource {
+    #[must_use]
+    pub fn address(&self) -> &Address {
+        &self.address
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use address()")]
+    pub fn get_address(&self) -> &Address {
+        self.address()
+    }
+    
+    pub fn address_mut(&mut self) -> &mut Address {
+        &mut self.address
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use address_mut()")]
+    pub fn get_address_mut(&mut self) -> &mut Address {
+        self.address_mut()
+    }
+
+    pub fn set_address(&mut self, value: Address) -> &mut Self {
+        self.address = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.name.value_str()
+    }
+
+    #[inline]
+    pub fn set_name<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.name.set_value(value);
+        self
+    }
+
+    /// Create a new worksheet source with sheet name and range
+    pub fn new_simple(sheet: impl Into<String>, reference: impl Into<String>) -> Self {
+        let mut ws_source = Self::default();
+        let mut address = Address::default();
+        address.set_sheet_name(sheet);
+        address.range_mut().set_range(reference);
+        ws_source.set_address(address);
+        ws_source
+    }
+
+    #[inline]
+    pub(crate) fn hash_code(&self) -> String {
+        crate::helper::utils::md5_hash(format!("{}{}", self.address.address(), self.name.value_str()))
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        _reader: &mut Reader<R>,
+        e: &BytesStart,
+    ) {
+        let mut address = Address::default();
+        if let Some(v) = get_attribute(e, b"ref") {
+            address.range_mut().set_range(v);
+        }
+        if let Some(v) = get_attribute(e, b"sheet") {
+            address.set_sheet_name(v);
+        }
+        self.set_address(address);
+        
+        set_string_from_xml!(self, e, name, "name");
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // worksheetSource
+        let mut attributes: crate::structs::AttrCollection = Vec::new();
+        let ref_str = self.address.range().range();
+        if !ref_str.is_empty() {
+            attributes.push(("ref", &ref_str).into());
+        }
+        if self.address.sheet_name() != "" {
+            attributes.push(("sheet", self.address.sheet_name()).into());
+        }
+        if self.name.has_value() {
+            attributes.push(("name", self.name.value_str()).into());
+        }
+        write_start_tag(writer, "worksheetSource", attributes, true);
+    }
+}

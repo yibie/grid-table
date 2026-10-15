@@ -1,0 +1,701 @@
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use crate::{
+    helper::const_str::{
+        COREPROPS_NS,
+        DCMITYPE_NS,
+        DCORE_NS,
+        DCTERMS_NS,
+        VTYPES_NS,
+        XPROPS_NS,
+        XSI_NS,
+    },
+    reader::driver::xml_read_loop,
+    structs::{
+        StringValue,
+        Worksheet,
+        custom_properties::Properties as CustomProperties,
+    },
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+        write_text_node,
+    },
+};
+
+#[derive(Clone, Debug)]
+pub struct Properties {
+    creator:           StringValue,
+    last_modified_by:  StringValue,
+    created:           StringValue,
+    modified:          StringValue,
+    title:             StringValue,
+    description:       StringValue,
+    subject:           StringValue,
+    keywords:          StringValue,
+    category:          StringValue,
+    manager:           StringValue,
+    company:           StringValue,
+    revision:          StringValue,
+    version:           StringValue,
+    custom_properties: CustomProperties,
+}
+impl Default for Properties {
+    #[inline]
+    fn default() -> Self {
+        let mut created = StringValue::default();
+        let mut modified = StringValue::default();
+        created.set_value("2006-09-16T00:00:00Z");
+        modified.set_value("2006-09-16T00:00:00Z");
+        Self {
+            creator: StringValue::default(),
+            last_modified_by: StringValue::default(),
+            created,
+            modified,
+            title: StringValue::default(),
+            description: StringValue::default(),
+            subject: StringValue::default(),
+            keywords: StringValue::default(),
+            category: StringValue::default(),
+            manager: StringValue::default(),
+            company: StringValue::default(),
+            revision: StringValue::default(),
+            version: StringValue::default(),
+            custom_properties: CustomProperties::default(),
+        }
+    }
+}
+impl Properties {
+    #[inline]
+    #[must_use]
+    pub fn creator(&self) -> &str {
+        self.creator.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use creator()")]
+    pub fn get_creator(&self) -> &str {
+        self.creator()
+    }
+
+    #[inline]
+    pub fn set_creator<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.creator.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn last_modified_by(&self) -> &str {
+        self.last_modified_by.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use last_modified_by()")]
+    pub fn get_last_modified_by(&self) -> &str {
+        self.last_modified_by()
+    }
+
+    #[inline]
+    pub fn set_last_modified_by<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.last_modified_by.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn created(&self) -> &str {
+        self.created.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use created()")]
+    pub fn get_created(&self) -> &str {
+        self.created()
+    }
+
+    #[inline]
+    pub fn set_created<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.created.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn modified(&self) -> &str {
+        self.modified.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use modified()")]
+    pub fn get_modified(&self) -> &str {
+        self.modified()
+    }
+
+    #[inline]
+    pub fn set_modified<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.modified.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn title(&self) -> &str {
+        self.title.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use title()")]
+    pub fn get_title(&self) -> &str {
+        self.title()
+    }
+
+    #[inline]
+    pub fn set_title<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.title.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn description(&self) -> &str {
+        self.description.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use description()")]
+    pub fn get_description(&self) -> &str {
+        self.description()
+    }
+
+    #[inline]
+    pub fn set_description<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.description.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn subject(&self) -> &str {
+        self.subject.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use subject()")]
+    pub fn get_subject(&self) -> &str {
+        self.subject()
+    }
+
+    #[inline]
+    pub fn set_subject<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.subject.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn keywords(&self) -> &str {
+        self.keywords.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use keywords()")]
+    pub fn get_keywords(&self) -> &str {
+        self.keywords()
+    }
+
+    #[inline]
+    pub fn set_keywords<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.keywords.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        self.revision.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use revision()")]
+    pub fn get_revision(&self) -> &str {
+        self.revision()
+    }
+
+    #[inline]
+    pub fn set_revision<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.revision.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn category(&self) -> &str {
+        self.category.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use category()")]
+    pub fn get_category(&self) -> &str {
+        self.category()
+    }
+
+    #[inline]
+    pub fn set_category<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.category.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn version(&self) -> &str {
+        self.version.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use version()")]
+    pub fn get_version(&self) -> &str {
+        self.version()
+    }
+
+    #[inline]
+    pub fn set_version<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.version.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn manager(&self) -> &str {
+        self.manager.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use manager()")]
+    pub fn get_manager(&self) -> &str {
+        self.manager()
+    }
+
+    #[inline]
+    pub fn set_manager<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.manager.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn company(&self) -> &str {
+        self.company.value_str()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use company()")]
+    pub fn get_company(&self) -> &str {
+        self.company()
+    }
+
+    #[inline]
+    pub fn set_company<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.company.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn custom_properties(&self) -> &CustomProperties {
+        &self.custom_properties
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use custom_properties()")]
+    pub fn get_custom_properties(&self) -> &CustomProperties {
+        self.custom_properties()
+    }
+
+    #[inline]
+    pub fn custom_properties_mut(&mut self) -> &mut CustomProperties {
+        &mut self.custom_properties
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use custom_properties_mut()")]
+    pub fn get_custom_properties_mut(&mut self) -> &mut CustomProperties {
+        self.custom_properties_mut()
+    }
+
+    #[inline]
+    pub fn set_custom_properties(&mut self, value: CustomProperties) -> &mut Self {
+        self.custom_properties = value;
+        self
+    }
+
+    pub(crate) fn set_attributes_core<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => match e.name().into_inner() {
+                b"dc:title" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_title(text);
+                },
+                b"dc:subject" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_subject(text);
+                },
+                b"dc:creator" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_creator(text);
+                },
+                b"cp:keywords" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_keywords(text);
+                },
+                b"dc:description" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_description(text);
+                },
+                b"cp:lastModifiedBy" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_last_modified_by(text);
+                },
+                b"cp:revision" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_revision(text);
+                },
+                b"dcterms:created" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_created(text);
+                },
+                b"dcterms:modified" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_modified(text);
+                },
+                b"cp:category" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_category(text);
+                },
+                b"cp:version" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_version(text);
+                },
+                b"Manager" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_manager(text);
+                },
+                b"Company" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_company(text);
+                },
+                _ => {}
+            },
+            Event::Eof => return,
+        );
+    }
+
+    pub(crate) fn set_attributes_app<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => match e.name().into_inner() {
+                b"Manager" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_manager(text);
+                }
+                b"Company" => {
+                    let mut buf = Vec::new();
+                    let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                    self.set_company(text);
+                }
+                _ =>{}
+            },
+            Event::Eof => return,
+        );
+    }
+
+    #[inline]
+    pub(crate) fn set_attributes_custom<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        e: &BytesStart,
+    ) {
+        let mut obj = CustomProperties::default();
+        obj.set_attributes(reader, e);
+        self.set_custom_properties(obj);
+    }
+
+    pub(crate) fn write_to_core(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // cp:coreProperties
+        write_start_tag(
+            writer,
+            "cp:coreProperties",
+            vec![
+                ("xmlns:cp", COREPROPS_NS).into(),
+                ("xmlns:dc", DCORE_NS).into(),
+                ("xmlns:dcterms", DCTERMS_NS).into(),
+                ("xmlns:dcmitype", DCMITYPE_NS).into(),
+                ("xmlns:xsi", XSI_NS).into(),
+            ],
+            false,
+        );
+
+        // dc:title
+        if self.title.has_value() {
+            write_start_tag(writer, "dc:title", vec![], false);
+            write_text_node(writer, self.title.value_str());
+            write_end_tag(writer, "dc:title");
+        }
+
+        // dc:subject
+        if self.subject.has_value() {
+            write_start_tag(writer, "dc:subject", vec![], false);
+            write_text_node(writer, self.subject.value_str());
+            write_end_tag(writer, "dc:subject");
+        }
+
+        // dc:creator
+        if self.creator.has_value() {
+            write_start_tag(writer, "dc:creator", vec![], false);
+            write_text_node(writer, self.creator.value_str());
+            write_end_tag(writer, "dc:creator");
+        }
+
+        // cp:keywords
+        if self.keywords.has_value() {
+            write_start_tag(writer, "cp:keywords", vec![], false);
+            write_text_node(writer, self.keywords.value_str());
+            write_end_tag(writer, "cp:keywords");
+        }
+
+        // dc:description
+        if self.description.has_value() {
+            write_start_tag(writer, "dc:description", vec![], false);
+            write_text_node(writer, self.description.value_str());
+            write_end_tag(writer, "dc:description");
+        }
+
+        // cp:lastModifiedBy
+        if self.last_modified_by.has_value() {
+            write_start_tag(writer, "cp:lastModifiedBy", vec![], false);
+            write_text_node(writer, self.last_modified_by.value_str());
+            write_end_tag(writer, "cp:lastModifiedBy");
+        }
+
+        // cp:revision
+        if self.revision.has_value() {
+            write_start_tag(writer, "cp:revision", vec![], false);
+            write_text_node(writer, self.revision.value_str());
+            write_end_tag(writer, "cp:revision");
+        }
+
+        // dcterms:created
+        if self.created.has_value() {
+            write_start_tag(
+                writer,
+                "dcterms:created",
+                vec![("xsi:type", "dcterms:W3CDTF").into()],
+                false,
+            );
+            write_text_node(writer, self.created.value_str());
+            write_end_tag(writer, "dcterms:created");
+        }
+
+        // dcterms:modified
+        if self.modified.has_value() {
+            write_start_tag(
+                writer,
+                "dcterms:modified",
+                vec![("xsi:type", "dcterms:W3CDTF").into()],
+                false,
+            );
+            write_text_node(writer, self.modified.value_str());
+            write_end_tag(writer, "dcterms:modified");
+        }
+
+        // cp:category
+        if self.category.has_value() {
+            write_start_tag(writer, "cp:category", vec![], false);
+            write_text_node(writer, self.category.value_str());
+            write_end_tag(writer, "cp:category");
+        }
+
+        // cp:version
+        if self.version.has_value() {
+            write_start_tag(writer, "cp:version", vec![], false);
+            write_text_node(writer, self.version.value_str());
+            write_end_tag(writer, "cp:version");
+        }
+
+        write_end_tag(writer, "cp:coreProperties");
+    }
+
+    pub(crate) fn write_to_app(
+        &self,
+        writer: &mut Writer<Cursor<Vec<u8>>>,
+        work_sheet_collection: &[Worksheet],
+    ) {
+        let sheet_count_str = work_sheet_collection.len().to_string();
+
+        // Properties
+        write_start_tag(
+            writer,
+            "Properties",
+            vec![("xmlns", XPROPS_NS).into(), ("xmlns:vt", VTYPES_NS).into()],
+            false,
+        );
+
+        // Application
+        write_start_tag(writer, "Application", vec![], false);
+        write_text_node(writer, "Microsoft Excel");
+        write_end_tag(writer, "Application");
+
+        // DocSecurity
+        write_start_tag(writer, "DocSecurity", vec![], false);
+        write_text_node(writer, "0");
+        write_end_tag(writer, "DocSecurity");
+
+        // ScaleCrop
+        write_start_tag(writer, "ScaleCrop", vec![], false);
+        write_text_node(writer, "false");
+        write_end_tag(writer, "ScaleCrop");
+
+        // HeadingPairs
+        write_start_tag(writer, "HeadingPairs", vec![], false);
+
+        // vt:vector
+        write_start_tag(
+            writer,
+            "vt:vector",
+            vec![("size", "2").into(), ("baseType", "variant").into()],
+            false,
+        );
+
+        // vt:variant
+        write_start_tag(writer, "vt:variant", vec![], false);
+
+        // vt:i4
+        write_start_tag(writer, "vt:lpstr", vec![], false);
+        write_text_node(writer, "Worksheets");
+        write_end_tag(writer, "vt:lpstr");
+
+        write_end_tag(writer, "vt:variant");
+
+        // vt:variant
+        write_start_tag(writer, "vt:variant", vec![], false);
+
+        // vt:i4
+        write_start_tag(writer, "vt:i4", vec![], false);
+        write_text_node(writer, &sheet_count_str);
+        write_end_tag(writer, "vt:i4");
+
+        write_end_tag(writer, "vt:variant");
+
+        write_end_tag(writer, "vt:vector");
+
+        write_end_tag(writer, "HeadingPairs");
+
+        // TitlesOfParts
+        write_start_tag(writer, "TitlesOfParts", vec![], false);
+
+        // vt:vector
+        write_start_tag(
+            writer,
+            "vt:vector",
+            vec![
+                ("size", &sheet_count_str).into(),
+                ("baseType", "lpstr").into(),
+            ],
+            false,
+        );
+
+        for workseet in work_sheet_collection {
+            // vt:lpstr
+            write_start_tag(writer, "vt:lpstr", vec![], false);
+            write_text_node(writer, workseet.name());
+            write_end_tag(writer, "vt:lpstr");
+        }
+
+        write_end_tag(writer, "vt:vector");
+
+        write_end_tag(writer, "TitlesOfParts");
+
+        // Manager
+        write_start_tag(writer, "Manager", vec![], false);
+        write_text_node(writer, self.manager());
+        write_end_tag(writer, "Manager");
+
+        // Company
+        write_start_tag(writer, "Company", vec![], false);
+        write_text_node(writer, self.company());
+        write_end_tag(writer, "Company");
+
+        // LinksUpToDate
+        write_start_tag(writer, "LinksUpToDate", vec![], false);
+        write_text_node(writer, "false");
+        write_end_tag(writer, "LinksUpToDate");
+
+        // SharedDoc
+        write_start_tag(writer, "SharedDoc", vec![], false);
+        write_text_node(writer, "false");
+        write_end_tag(writer, "SharedDoc");
+
+        // HyperlinksChanged
+        write_start_tag(writer, "HyperlinksChanged", vec![], false);
+        write_text_node(writer, "false");
+        write_end_tag(writer, "HyperlinksChanged");
+
+        // AppVersion
+        write_start_tag(writer, "AppVersion", vec![], false);
+        write_text_node(writer, "14.0300");
+        write_end_tag(writer, "AppVersion");
+
+        write_end_tag(writer, "Properties");
+    }
+
+    #[inline]
+    pub(crate) fn write_to_custom(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        self.custom_properties.write_to(writer);
+    }
+}

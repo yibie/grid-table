@@ -1,0 +1,192 @@
+// to
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use crate::writer::driver::{
+    write_end_tag,
+    write_start_tag,
+    write_text_node,
+};
+
+use crate::reader::driver::xml_read_loop;
+
+#[derive(Clone, Default, Debug)]
+pub struct ToMarker {
+    col:     usize,
+    col_off: usize,
+    row:     usize,
+    row_off: usize,
+}
+impl ToMarker {
+    #[inline]
+    #[must_use]
+    pub fn col(&self) -> usize {
+        self.col
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use col()")]
+    pub fn get_col(&self) -> usize {
+        self.col()
+    }
+
+    #[inline]
+    pub fn set_col(&mut self, value: usize) -> &mut ToMarker {
+        self.col = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn col_off(&self) -> usize {
+        self.col_off
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use col_off()")]
+    pub fn get_col_off(&self) -> usize {
+        self.col_off()
+    }
+
+    #[inline]
+    pub fn set_col_off(&mut self, value: usize) -> &mut ToMarker {
+        self.col_off = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn row(&self) -> usize {
+        self.row
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use row()")]
+    pub fn get_row(&self) -> usize {
+        self.row()
+    }
+
+    #[inline]
+    pub fn set_row(&mut self, value: usize) -> &mut ToMarker {
+        self.row = value;
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn row_off(&self) -> usize {
+        self.row_off
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use row_off()")]
+    pub fn get_row_off(&self) -> usize {
+        self.row_off()
+    }
+
+    #[inline]
+    pub fn set_row_off(&mut self, value: usize) -> &mut ToMarker {
+        self.row_off = value;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn adjustment_insert_row(&mut self, num_rows: usize) {
+        self.row += num_rows;
+    }
+
+    #[inline]
+    pub(crate) fn adjustment_insert_column(&mut self, num_cols: usize) {
+        self.col += num_cols;
+    }
+
+    #[inline]
+    pub(crate) fn adjustment_remove_row(&mut self, num_rows: usize) {
+        self.row = self.row.saturating_sub(num_rows).max(1);
+    }
+
+    #[inline]
+    pub(crate) fn adjustment_remove_column(&mut self, num_cols: usize) {
+        self.col = self.col.saturating_sub(num_cols).max(1);
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => {
+                match e.name().into_inner() {
+                    b"xdr:col" => {
+                        let mut buf = Vec::new();
+                        let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                        self.col = text.parse::<usize>().unwrap();
+                    }
+                    b"xdr:colOff" => {
+                        let mut buf = Vec::new();
+                        let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                        self.col_off = text.parse::<usize>().unwrap();
+                    }
+                    b"xdr:row" => {
+                        let mut buf = Vec::new();
+                        let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                        self.row = text.parse::<usize>().unwrap();
+                    }
+                    b"xdr:rowOff" => {
+                        let mut buf = Vec::new();
+                        let text = crate::helper::utils::unescape_xml_text(&reader.read_text_into(e.name(), &mut buf).unwrap());
+                        self.row_off = text.parse::<usize>().unwrap();
+                    }
+                    _ => (),
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"to" {
+                    return
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "to")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // to
+        write_start_tag(writer, "to", vec![], false);
+
+        // xdr:col
+        write_start_tag(writer, "xdr:col", vec![], false);
+        write_text_node(writer, self.col.to_string());
+        write_end_tag(writer, "xdr:col");
+
+        // xdr:colOff
+        write_start_tag(writer, "xdr:colOff", vec![], false);
+        write_text_node(writer, self.col_off.to_string());
+        write_end_tag(writer, "xdr:colOff");
+
+        // xdr:row
+        write_start_tag(writer, "xdr:row", vec![], false);
+        write_text_node(writer, self.row.to_string());
+        write_end_tag(writer, "xdr:row");
+
+        // xdr:rowOff
+        write_start_tag(writer, "xdr:rowOff", vec![], false);
+        write_text_node(writer, self.row_off.to_string());
+        write_end_tag(writer, "xdr:rowOff");
+
+        write_end_tag(writer, "to");
+    }
+}

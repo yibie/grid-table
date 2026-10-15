@@ -1,0 +1,363 @@
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+// c:chartSpace
+use super::Chart;
+use super::{
+    Date1904,
+    EditingLanguage,
+    PrintSettings,
+    RoundedCorners,
+    ShapeProperties,
+};
+use crate::{
+    helper::const_str::{
+        DRAWING_CHART_2015_NS,
+        DRAWINGML_CHART_NS,
+        DRAWINGML_MAIN_NS,
+        REL_OFC_NS,
+    },
+    structs::{
+        Workbook,
+        office2010::drawing::charts::Style,
+    },
+    traits::AdjustmentCoordinateWithSheet,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+    xml_read_loop,
+};
+
+#[derive(Clone, Default, Debug)]
+pub struct ChartSpace {
+    date1904:         Option<Date1904>,
+    editing_language: EditingLanguage,
+    rounded_corners:  RoundedCorners,
+    style:            Option<Style>,
+    chart:            Chart,
+    shape_properties: Option<ShapeProperties>,
+    print_settings:   Option<PrintSettings>,
+}
+
+impl ChartSpace {
+    #[must_use]
+    pub fn date1904(&self) -> Option<&Date1904> {
+        self.date1904.as_ref()
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use date1904()")]
+    pub fn get_date1904(&self) -> Option<&Date1904> {
+        self.date1904()
+    }
+
+    pub fn date1904_mut(&mut self) -> Option<&mut Date1904> {
+        self.date1904.as_mut()
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use date1904_mut()")]
+    pub fn get_date1904_mut(&mut self) -> Option<&mut Date1904> {
+        self.date1904_mut()
+    }
+
+    pub fn set_date1904(&mut self, value: Date1904) -> &mut Self {
+        self.date1904 = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn editing_language(&self) -> &EditingLanguage {
+        &self.editing_language
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use editing_language()")]
+    pub fn get_editing_language(&self) -> &EditingLanguage {
+        self.editing_language()
+    }
+
+    pub fn editing_language_mut(&mut self) -> &mut EditingLanguage {
+        &mut self.editing_language
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use editing_language_mut()")]
+    pub fn get_editing_language_mut(&mut self) -> &mut EditingLanguage {
+        self.editing_language_mut()
+    }
+
+    pub fn set_editing_language(&mut self, value: EditingLanguage) -> &mut Self {
+        self.editing_language = value;
+        self
+    }
+
+    #[must_use]
+    pub fn rounded_corners(&self) -> &RoundedCorners {
+        &self.rounded_corners
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use rounded_corners()")]
+    pub fn get_rounded_corners(&self) -> &RoundedCorners {
+        self.rounded_corners()
+    }
+
+    pub fn rounded_corners_mut(&mut self) -> &mut RoundedCorners {
+        &mut self.rounded_corners
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use rounded_corners_mut()")]
+    pub fn get_rounded_corners_mut(&mut self) -> &mut RoundedCorners {
+        self.rounded_corners_mut()
+    }
+
+    pub fn set_rounded_corners(&mut self, value: RoundedCorners) -> &mut Self {
+        self.rounded_corners = value;
+        self
+    }
+
+    #[must_use]
+    pub fn style(&self) -> Option<&Style> {
+        self.style.as_ref()
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use style()")]
+    pub fn get_style(&self) -> Option<&Style> {
+        self.style()
+    }
+
+    pub fn style_mut(&mut self) -> Option<&mut Style> {
+        self.style.as_mut()
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use style_mut()")]
+    pub fn get_style_mut(&mut self) -> Option<&mut Style> {
+        self.style_mut()
+    }
+
+    pub fn set_style(&mut self, value: Style) -> &mut Self {
+        self.style = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn chart(&self) -> &Chart {
+        &self.chart
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use chart()")]
+    pub fn get_chart(&self) -> &Chart {
+        self.chart()
+    }
+
+    pub fn chart_mut(&mut self) -> &mut Chart {
+        &mut self.chart
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use chart_mut()")]
+    pub fn get_chart_mut(&mut self) -> &mut Chart {
+        self.chart_mut()
+    }
+
+    pub fn set_chart(&mut self, value: Chart) -> &mut Self {
+        self.chart = value;
+        self
+    }
+
+    #[must_use]
+    pub fn shape_properties(&self) -> Option<&ShapeProperties> {
+        self.shape_properties.as_ref()
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use shape_properties()")]
+    pub fn get_shape_properties(&self) -> Option<&ShapeProperties> {
+        self.shape_properties()
+    }
+
+    pub fn shape_properties_mut(&mut self) -> Option<&mut ShapeProperties> {
+        self.shape_properties.as_mut()
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use shape_properties_mut()")]
+    pub fn get_shape_properties_mut(&mut self) -> Option<&mut ShapeProperties> {
+        self.shape_properties_mut()
+    }
+
+    pub fn set_shape_properties(&mut self, value: ShapeProperties) -> &mut Self {
+        self.shape_properties = Some(value);
+        self
+    }
+
+    #[must_use]
+    pub fn print_settings(&self) -> Option<&PrintSettings> {
+        self.print_settings.as_ref()
+    }
+
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use print_settings()")]
+    pub fn get_print_settings(&self) -> Option<&PrintSettings> {
+        self.print_settings()
+    }
+
+    pub fn print_settings_mut(&mut self) -> Option<&mut PrintSettings> {
+        self.print_settings.as_mut()
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use print_settings_mut()")]
+    pub fn get_print_settings_mut(&mut self) -> Option<&mut PrintSettings> {
+        self.print_settings_mut()
+    }
+
+    pub fn set_print_settings(&mut self, value: PrintSettings) -> &mut Self {
+        self.print_settings = Some(value);
+        self
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => match e.name().into_inner() {
+                b"mc:AlternateContent" => {
+                    let mut obj = Style::default();
+                    obj.set_attributes(reader, e, true);
+                    self.set_style(obj);
+                }
+                b"c:chart" => {
+                    self.chart.set_attributes(reader, e);
+                }
+                b"c:printSettings" => {
+                    let mut obj = PrintSettings::default();
+                    obj.set_attributes(reader, e);
+                    self.set_print_settings(obj);
+                }
+                b"c:spPr" => {
+                    let mut obj = ShapeProperties::default();
+                    obj.set_attributes(reader, e);
+                    self.set_shape_properties(obj);
+                }
+                _ => (),
+            },
+            Event::Empty(ref e) => match e.name().into_inner() {
+                b"c:date1904" => {
+                    let mut obj = Date1904::default();
+                    obj.set_attributes(reader, e);
+                    self.set_date1904(obj);
+                }
+                b"c:lang" => {
+                    self.editing_language.set_attributes(reader, e);
+                }
+                b"c:roundedCorners" => {
+                    self.rounded_corners.set_attributes(reader, e);
+                }
+                b"c:style" => {
+                    let mut obj = Style::default();
+                    obj.set_attributes(reader, e, false);
+                    self.set_style(obj);
+                }
+                _ => (),
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"c:chartSpace" {
+                    return;
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "c:chartSpace"),
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>, wb: &Workbook) {
+        // c:chartSpace
+        write_start_tag(
+            writer,
+            "c:chartSpace",
+            vec![
+                ("xmlns:c", DRAWINGML_CHART_NS).into(),
+                ("xmlns:a", DRAWINGML_MAIN_NS).into(),
+                ("xmlns:r", REL_OFC_NS).into(),
+                ("xmlns:c16r2", DRAWING_CHART_2015_NS).into(),
+            ],
+            false,
+        );
+
+        // c:date1904
+        if let Some(v) = &self.date1904 {
+            v.write_to(writer);
+        }
+
+        // c:lang
+        self.editing_language.write_to(writer);
+
+        // c:roundedCorners
+        self.rounded_corners.write_to(writer);
+
+        // c:style
+        if let Some(v) = &self.style {
+            v.write_to(writer);
+        }
+
+        // c:chart
+        self.chart.write_to(writer, wb);
+
+        // c:spPr
+        if let Some(v) = &self.shape_properties {
+            v.write_to(writer);
+        }
+
+        // c:printSettings
+        if let Some(v) = &self.print_settings {
+            v.write_to(writer);
+        }
+
+        write_end_tag(writer, "c:chartSpace");
+    }
+}
+impl AdjustmentCoordinateWithSheet for ChartSpace {
+    fn adjustment_insert_coordinate_with_sheet(
+        &mut self,
+        sheet_name: &str,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.chart.adjustment_insert_coordinate_with_sheet(
+            sheet_name,
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        );
+    }
+
+    fn adjustment_remove_coordinate_with_sheet(
+        &mut self,
+        sheet_name: &str,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.chart.adjustment_remove_coordinate_with_sheet(
+            sheet_name,
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        );
+    }
+}

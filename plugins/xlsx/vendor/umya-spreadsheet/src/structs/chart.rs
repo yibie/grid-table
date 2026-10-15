@@ -1,0 +1,2375 @@
+use crate::{
+    drawing::charts::{NumericValue, RichText}, office2010::drawing::charts::Style, structs::{
+        drawing::{
+            charts::{
+                Area3DChart,
+                AreaChart,
+                AreaChartSeries,
+                AreaChartSeriesList,
+                AxisId,
+                AxisPositionValues,
+                Bar3DChart,
+                BarChart,
+                BarDirectionValues,
+                Bubble3D,
+                BubbleChart,
+                BubbleSize,
+                CategoryAxis,
+                CategoryAxisData,
+                ChartSpace,
+                ChartText,
+                CrossBetweenValues,
+                DisplayBlanksAsValues,
+                DoughnutChart,
+                GroupingValues,
+                InvertIfNegative,
+                Layout,
+                LegendPositionValues,
+                Line3DChart,
+                LineChart,
+                MajorGridlines,
+                OfPieChart,
+                OfPieValues,
+                OrientationValues,
+                Pie3DChart,
+                PieChart,
+                PlotArea,
+                PrintSettings,
+                RadarChart,
+                RightAngleAxes,
+                RotateX,
+                RotateY,
+                ScatterChart,
+                ShapeValues,
+                ShowLeaderLines,
+                Smooth,
+                StringLiteral,
+                StringPoint,
+                StringReference,
+                TextProperties,
+                TickLabelPositionValues,
+                TickMarkValues,
+                Title,
+                ValueAxis,
+                Values,
+                View3D,
+                XValues,
+                YValues,
+            }, spreadsheet::{
+                GraphicFrame,
+                MarkerType,
+                TwoCellAnchor,
+            }, Paragraph, Run, RunProperties
+        }, ChartType
+    }, traits::{
+        AdjustmentCoordinate,
+        AdjustmentCoordinateWithSheet,
+    }
+};
+
+/// ## Supported chart types
+/// * `AreaChart`
+/// * `Area3DChart`
+/// * `BarChart`
+/// * `Bar3DChart`
+/// * `BubbleChart`
+/// * `DoughnutChart`
+/// * `LineChart`
+/// * `Line3DChart`
+/// * `OfPieChart`
+/// * `PieChart`
+/// * `RadarChart`
+/// * `ScatterChart`
+///
+/// Other types will be supported sequentially.
+///
+/// ## Example
+/// ![Result Image](https://github.com/MathNya/umya-spreadsheet/raw/master/images/chart/chart_title.png)
+/// ```rust
+/// extern crate umya_spreadsheet;
+/// let mut book = umya_spreadsheet::new_file();
+///
+/// // Add Chart
+/// let mut from_marker = umya_spreadsheet::structs::drawing::spreadsheet::MarkerType::default();
+/// let mut to_marker = umya_spreadsheet::structs::drawing::spreadsheet::MarkerType::default();
+/// from_marker.set_coordinate("C1");
+/// to_marker.set_coordinate("D11");
+/// let area_chart_series_list = vec!["Sheet1!$A$1:$A$10", "Sheet1!$B$1:$B$10"];
+/// let mut chart = umya_spreadsheet::structs::Chart::default();
+/// chart.new_chart(
+///     &umya_spreadsheet::structs::ChartType::LineChart,
+///     from_marker,
+///     to_marker,
+///     area_chart_series_list,
+/// );
+/// book.sheet_by_name_mut("Sheet1").unwrap().add_chart(chart);
+///
+/// // Get Chart by Worksheet.
+/// let mut worksheet = book.sheet_by_name_mut("Sheet1").unwrap();
+/// let chart = worksheet.chart("C1");
+/// let chart = worksheet.chart_mut("C1");
+///
+/// // Use this if there are multiple Charts in a given cell.
+/// let charts = worksheet.charts("C1");
+/// let charts = worksheet.charts_mut("C1");
+///
+/// // Set Chart Title, Series Title, Horizontal Title and Vertical Title.
+/// let mut chart = book
+///     .sheet_by_name_mut("Sheet1")
+///     .unwrap()
+///     .chart_mut("C1")
+///     .unwrap();
+/// chart
+///     .set_series_title(vec!["Line1", "Line2"])
+///     .set_series_point_title(vec!["Point1", "Point2", "Point3", "Point4"])
+///     .set_title("Chart Title")
+///     .set_horizontal_title("Horizontal Title")
+///     .set_vertical_title("Vertical Title");
+///
+/// // line chart is a stack line chart by default.
+/// // To change it to an actual line chart, configure as follows
+/// chart.set_grouping(umya_spreadsheet::drawing::charts::GroupingValues::Standard);
+/// ```
+#[derive(Clone, Debug)]
+pub struct Chart {
+    two_cell_anchor:  Box<TwoCellAnchor>,
+    default_language: String,
+}
+
+impl Default for Chart {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            two_cell_anchor:  Box::new(TwoCellAnchor::default()),
+            default_language: "en-GB".into(),
+        }
+    }
+}
+impl Chart {
+    #[inline]
+    pub fn set_title<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        let title = self.make_title(value);
+        self.chart_space_mut().chart_mut().set_title(title);
+        self
+    }
+
+    #[inline]
+    pub fn set_grouping(&mut self, value: GroupingValues) -> &mut Self {
+        self.plot_area_mut().set_grouping(value);
+        self
+    }
+
+    pub fn set_vertical_title<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        let title = self.make_title(value);
+        let plot_area = self.plot_area_mut();
+        match plot_area.value_axis_mut().len() {
+            1 => {
+                if let Some(v) = plot_area.value_axis_mut().get_mut(0) {
+                    v.set_title(title);
+                }
+            }
+            2 => {
+                if let Some(v) = plot_area.value_axis_mut().get_mut(1) {
+                    v.set_title(title);
+                }
+            }
+            _ => {}
+        }
+        self
+    }
+
+    pub fn set_horizontal_title<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        let title = self.make_title(value);
+        let plot_area = self.plot_area_mut();
+        match plot_area.value_axis_mut().len() {
+            1 => {
+                if let Some(v) = plot_area.category_axis_mut().get_mut(0) {
+                    v.set_title(title);
+                }
+            }
+            2 => {
+                if let Some(v) = plot_area.value_axis_mut().get_mut(0) {
+                    v.set_title(title);
+                }
+            }
+            _ => {}
+        }
+        self
+    }
+
+    pub fn set_series_title<S: Into<String>>(&mut self, value: Vec<S>) -> &mut Self {
+        let mut value_iter = value.into_iter().map(Into::into);
+        for series in self.area_chart_series_list_mut().area_chart_series_mut() {
+            let value_raw = value_iter.next();
+            if let Some(v) = value_raw {
+                let mut chart_text = ChartText::default();
+                let mut numeric_value = NumericValue::default();
+                numeric_value.set_text(v);
+                chart_text.set_numeric_value(numeric_value);
+                series.set_chart_text(chart_text);
+            }
+        }
+        self
+    }
+
+    pub fn set_series_point_title<S: Into<String>>(&mut self, value: Vec<S>) -> &mut Self {
+        let mut string_literal = StringLiteral::default();
+        for v in value {
+            let mut string_point = StringPoint::default();
+            string_point.numeric_value_mut().set_text(v);
+            string_literal.add_string_point_list(string_point);
+        }
+        for series in self.area_chart_series_list_mut().area_chart_series_mut() {
+            if let Some(v) = series.category_axis_data_mut() {
+                v.remove_string_reference();
+                v.set_string_literal(string_literal.clone());
+            } else {
+                let mut obj = CategoryAxisData::default();
+                obj.set_string_literal(string_literal.clone());
+                series.set_category_axis_data(obj);
+            }
+        }
+        self
+    }
+
+    #[inline]
+    pub fn plot_area_mut(&mut self) -> &mut PlotArea {
+        self.chart_space_mut().chart_mut().plot_area_mut()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use plot_area_mut()")]
+    pub fn get_plot_area_mut(&mut self) -> &mut PlotArea {
+        self.plot_area_mut()
+    }
+
+    #[inline]
+    pub fn area_chart_series_list_mut(&mut self) -> &mut AreaChartSeriesList {
+        self.chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .area_chart_series_list_mut()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use area_chart_series_list_mut()")]
+    pub fn get_area_chart_series_list_mut(&mut self) -> &mut AreaChartSeriesList {
+        self.area_chart_series_list_mut()
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn two_cell_anchor(&self) -> &TwoCellAnchor {
+        &self.two_cell_anchor
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use two_cell_anchor()")]
+    pub fn get_two_cell_anchor(&self) -> &TwoCellAnchor {
+        self.two_cell_anchor()
+    }
+
+    #[inline]
+    pub fn two_cell_anchor_mut(&mut self) -> &mut TwoCellAnchor {
+        &mut self.two_cell_anchor
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use two_cell_anchor_mut()")]
+    pub fn get_two_cell_anchor_mut(&mut self) -> &mut TwoCellAnchor {
+        self.two_cell_anchor_mut()
+    }
+
+    #[inline]
+    pub fn set_two_cell_anchor(&mut self, value: TwoCellAnchor) -> &mut Self {
+        *self.two_cell_anchor = value;
+        self
+    }
+
+    #[inline]
+    pub fn set_default_language<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.default_language = value.into();
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn chart_space(&self) -> &ChartSpace {
+        self.two_cell_anchor
+            .graphic_frame()
+            .expect("Non-ChartSpace.")
+            .graphic()
+            .graphic_data()
+            .chart_space()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use chart_space()")]
+    pub fn get_chart_space(&self) -> &ChartSpace {
+        self.chart_space()
+    }
+
+    #[inline]
+    pub fn chart_space_mut(&mut self) -> &mut ChartSpace {
+        self.two_cell_anchor
+            .graphic_frame_mut()
+            .expect("Non-ChartSpace.")
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use chart_space_mut()")]
+    pub fn get_chart_space_mut(&mut self) -> &mut ChartSpace {
+        self.chart_space_mut()
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn new_chart(
+        &mut self,
+        chart_type: &ChartType,
+        from_marker: MarkerType,
+        to_marker: MarkerType,
+        area_chart_series_list: Vec<&str>,
+    ) -> &mut Self {
+        self.two_cell_anchor.set_from_marker(from_marker);
+        self.two_cell_anchor.set_to_marker(to_marker);
+
+        match chart_type {
+            ChartType::LineChart => {
+                self.new_chart_line_chart(&area_chart_series_list);
+            }
+            ChartType::Line3DChart => {
+                self.new_chart_line_3d_chart(&area_chart_series_list);
+            }
+            ChartType::PieChart => {
+                self.new_chart_pie_chart(&area_chart_series_list);
+            }
+            ChartType::Pie3DChart => {
+                self.new_chart_pie_3d_chart(&area_chart_series_list);
+            }
+            ChartType::DoughnutChart => {
+                self.new_chart_doughnut_chart(&area_chart_series_list);
+            }
+            ChartType::AreaChart => {
+                self.new_chart_area_chart(&area_chart_series_list);
+            }
+            ChartType::Area3DChart => {
+                self.new_chart_area_3d_chart(&area_chart_series_list);
+            }
+            ChartType::BarChart => {
+                self.new_chart_bar_chart(&area_chart_series_list);
+            }
+            ChartType::Bar3DChart => {
+                self.new_chart_bar_3d_chart(&area_chart_series_list);
+            }
+            ChartType::OfPieChart => {
+                self.new_chart_of_pie_chart(&area_chart_series_list);
+            }
+            ChartType::BubbleChart => {
+                self.new_chart_bubble_chart(&area_chart_series_list);
+            }
+            ChartType::RadarChart => {
+                self.new_chart_radar_chart(&area_chart_series_list);
+            }
+            ChartType::ScatterChart => {
+                self.new_chart_scatter_chart(&area_chart_series_list);
+            }
+        }
+
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn coordinate(&self) -> String {
+        self.two_cell_anchor.from_marker().coordinate()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use coordinate()")]
+    pub fn get_coordinate(&self) -> String {
+        self.coordinate()
+    }
+
+    #[inline]
+    pub(crate) fn col(&self) -> u32 {
+        self.two_cell_anchor.from_marker().col()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use col()")]
+    pub(crate) fn get_col(&self) -> u32 {
+        self.col()
+    }
+
+    #[inline]
+    pub(crate) fn row(&self) -> u32 {
+        self.two_cell_anchor.from_marker().row()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use row()")]
+    pub(crate) fn get_row(&self) -> u32 {
+        self.row()
+    }
+
+    #[inline]
+    fn convert_series(area_chart_series_list: &[&str], smooth: bool) -> AreaChartSeriesList {
+        let mut acsl_obj = AreaChartSeriesList::default();
+        area_chart_series_list
+            .iter()
+            .enumerate()
+            .for_each(|(idx, area_chart_series)| {
+                let mut values = Values::default();
+                values
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                values
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+
+                let mut acs_object = AreaChartSeries::default();
+                acs_object.index_mut().set_val(u32::try_from(idx).unwrap());
+                acs_object.order_mut().set_val(u32::try_from(idx).unwrap());
+                acs_object.set_values(values);
+                if smooth {
+                    acs_object.set_smooth(Smooth::default());
+                } else {
+                    let mut invert_if_negative = InvertIfNegative::default();
+                    invert_if_negative.set_val(0f64);
+                    acs_object.set_invert_if_negative(invert_if_negative);
+                }
+                acsl_obj.add_area_chart_series(acs_object);
+            });
+        acsl_obj
+    }
+
+    pub(crate) fn new_chart_line_chart(&mut self, area_chart_series_list: &[&str]) {
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut line_chart = LineChart::default();
+        line_chart.grouping_mut().set_val(GroupingValues::Stacked);
+        line_chart.set_area_chart_series_list(acsl_obj);
+        line_chart.show_marker_mut().set_val(true);
+        line_chart.add_axis_id(axis_id1);
+        line_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_line_chart(line_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Zero);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_line_3d_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut rotate_x = RotateX::default();
+        let mut rotate_y = RotateY::default();
+        let mut right_angle_axes = RightAngleAxes::default();
+        rotate_x.set_val(15);
+        rotate_y.set_val(10);
+        right_angle_axes.set_val(true);
+        let mut view_3d = View3D::default();
+        view_3d.set_rotate_x(rotate_x);
+        view_3d.set_rotate_y(rotate_y);
+        view_3d.set_right_angle_axes(right_angle_axes);
+
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut line_3d_chart = Line3DChart::default();
+        line_3d_chart
+            .grouping_mut()
+            .set_val(GroupingValues::Stacked);
+        line_3d_chart.set_area_chart_series_list(acsl_obj);
+        line_3d_chart.add_axis_id(axis_id1);
+        line_3d_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .set_view_3d(view_3d);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_line_3d_chart(line_3d_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Zero);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_pie_chart(&mut self, area_chart_series_list: &[&str]) {
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut show_leader_lines = ShowLeaderLines::default();
+        show_leader_lines.set_val(true);
+
+        let mut pie_chart = PieChart::default();
+        pie_chart.vary_colors_mut().set_val(true);
+        pie_chart.set_area_chart_series_list(acsl_obj);
+        pie_chart
+            .data_labels_mut()
+            .set_show_leader_lines(show_leader_lines);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let default_run_properties = RunProperties::default();
+        let mut end_paragraph_run_properties = RunProperties::default();
+        end_paragraph_run_properties.set_language(&self.default_language);
+        let mut paragraph = Paragraph::default();
+        paragraph.paragraph_properties_mut().set_right_to_left("0");
+        paragraph
+            .paragraph_properties_mut()
+            .set_default_run_properties(default_run_properties);
+        paragraph.set_end_para_run_properties(end_paragraph_run_properties);
+
+        let mut text_properties = TextProperties::default();
+        text_properties.add_paragraph(paragraph);
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_pie_chart(pie_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_text_properties(text_properties);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_pie_3d_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut rotate_x = RotateX::default();
+        let mut rotate_y = RotateY::default();
+        let mut right_angle_axes = RightAngleAxes::default();
+        rotate_x.set_val(15);
+        rotate_y.set_val(10);
+        right_angle_axes.set_val(true);
+        let mut view_3d = View3D::default();
+        view_3d.set_rotate_x(rotate_x);
+        view_3d.set_rotate_y(rotate_y);
+        view_3d.set_right_angle_axes(right_angle_axes);
+
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut show_leader_lines = ShowLeaderLines::default();
+        show_leader_lines.set_val(true);
+
+        let mut pie_3d_chart = Pie3DChart::default();
+        pie_3d_chart.vary_colors_mut().set_val(true);
+        pie_3d_chart.set_area_chart_series_list(acsl_obj);
+        pie_3d_chart
+            .data_labels_mut()
+            .set_show_leader_lines(show_leader_lines);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let default_run_properties = RunProperties::default();
+        let mut end_paragraph_run_properties = RunProperties::default();
+        end_paragraph_run_properties.set_language(&self.default_language);
+        let mut paragraph = Paragraph::default();
+        paragraph.paragraph_properties_mut().set_right_to_left("0");
+        paragraph
+            .paragraph_properties_mut()
+            .set_default_run_properties(default_run_properties);
+        paragraph.set_end_para_run_properties(end_paragraph_run_properties);
+
+        let mut text_properties = TextProperties::default();
+        text_properties.add_paragraph(paragraph);
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .set_view_3d(view_3d);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_pie_3d_chart(pie_3d_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_text_properties(text_properties);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_doughnut_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut acsl_obj = AreaChartSeriesList::default();
+        let mut acs_object = AreaChartSeries::default();
+        let mut idx = 0;
+        let mut ptn = 0;
+        for area_chart_series in area_chart_series_list {
+            if ptn == 0 {
+                let mut string_reference = StringReference::default();
+                string_reference
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+
+                let mut category_axis_data = CategoryAxisData::default();
+                category_axis_data.set_string_reference(string_reference);
+                acs_object.set_category_axis_data(category_axis_data);
+
+                ptn += 1;
+            } else if ptn == 1 {
+                let mut values = Values::default();
+                values
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                values
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+                acs_object.set_values(values);
+
+                acs_object.index_mut().set_val(idx);
+                acs_object.order_mut().set_val(idx);
+                acsl_obj.add_area_chart_series(acs_object);
+
+                acs_object = AreaChartSeries::default();
+                idx += 1;
+                ptn = 0;
+            }
+        }
+
+        let mut show_leader_lines = ShowLeaderLines::default();
+        show_leader_lines.set_val(true);
+
+        let mut doughnut_chart = DoughnutChart::default();
+        doughnut_chart.vary_colors_mut().set_val(true);
+        doughnut_chart.set_area_chart_series_list(acsl_obj);
+        doughnut_chart
+            .data_labels_mut()
+            .set_show_leader_lines(show_leader_lines);
+        doughnut_chart.hole_size_mut().set_val(50);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_doughnut_chart(doughnut_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_area_chart(&mut self, area_chart_series_list: &[&str]) {
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut area_chart = AreaChart::default();
+        area_chart.grouping_mut().set_val(GroupingValues::Standard);
+        area_chart.set_area_chart_series_list(acsl_obj);
+        area_chart.add_axis_id(axis_id1);
+        area_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+        value_axis
+            .cross_between_mut()
+            .set_val(CrossBetweenValues::MidpointCategory);
+
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_area_chart(area_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Zero);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_area_3d_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut rotate_x = RotateX::default();
+        let mut rotate_y = RotateY::default();
+        let mut right_angle_axes = RightAngleAxes::default();
+        rotate_x.set_val(15);
+        rotate_y.set_val(10);
+        right_angle_axes.set_val(true);
+        let mut view_3d = View3D::default();
+        view_3d.set_rotate_x(rotate_x);
+        view_3d.set_rotate_y(rotate_y);
+        view_3d.set_right_angle_axes(right_angle_axes);
+
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut area_3d_chart = Area3DChart::default();
+        area_3d_chart
+            .grouping_mut()
+            .set_val(GroupingValues::Standard);
+        area_3d_chart.set_area_chart_series_list(acsl_obj);
+        area_3d_chart.add_axis_id(axis_id1);
+        area_3d_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+        value_axis
+            .cross_between_mut()
+            .set_val(CrossBetweenValues::MidpointCategory);
+
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .set_view_3d(view_3d);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_area_3d_chart(area_3d_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Zero);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_bar_chart(&mut self, area_chart_series_list: &[&str]) {
+        let acsl_obj = Self::convert_series(area_chart_series_list, false);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut bar_chart = BarChart::default();
+        bar_chart
+            .bar_direction_mut()
+            .set_val(BarDirectionValues::Column);
+        bar_chart.grouping_mut().set_val(GroupingValues::Stacked);
+        bar_chart.set_area_chart_series_list(acsl_obj);
+        bar_chart.gap_width_mut().set_val(150);
+        bar_chart.overlap_mut().set_val(100);
+        bar_chart.add_axis_id(axis_id1);
+        bar_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Bottom);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_bar_chart(bar_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_bar_3d_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut rotate_x = RotateX::default();
+        let mut rotate_y = RotateY::default();
+        let mut right_angle_axes = RightAngleAxes::default();
+        rotate_x.set_val(15);
+        rotate_y.set_val(10);
+        right_angle_axes.set_val(true);
+        let mut view_3d = View3D::default();
+        view_3d.set_rotate_x(rotate_x);
+        view_3d.set_rotate_y(rotate_y);
+        view_3d.set_right_angle_axes(right_angle_axes);
+
+        let acsl_obj = Self::convert_series(area_chart_series_list, false);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut bar_3d_chart = Bar3DChart::default();
+        bar_3d_chart
+            .bar_direction_mut()
+            .set_val(BarDirectionValues::Column);
+        bar_3d_chart.grouping_mut().set_val(GroupingValues::Stacked);
+        bar_3d_chart.set_area_chart_series_list(acsl_obj);
+        bar_3d_chart.gap_width_mut().set_val(150);
+        bar_3d_chart.shape_mut().set_val(ShapeValues::Box);
+        bar_3d_chart.add_axis_id(axis_id1);
+        bar_3d_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Bottom);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .set_view_3d(view_3d);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_bar_3d_chart(bar_3d_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_of_pie_chart(&mut self, area_chart_series_list: &[&str]) {
+        let acsl_obj = Self::convert_series(area_chart_series_list, false);
+
+        let mut show_leader_lines = ShowLeaderLines::default();
+        show_leader_lines.set_val(true);
+
+        let mut of_pie_chart = OfPieChart::default();
+        of_pie_chart.of_pie_type_mut().set_val(OfPieValues::Bar);
+        of_pie_chart.vary_colors_mut().set_val(true);
+        of_pie_chart.set_area_chart_series_list(acsl_obj);
+        of_pie_chart
+            .data_labels_mut()
+            .set_show_leader_lines(show_leader_lines);
+
+        let default_run_properties = RunProperties::default();
+        let mut end_paragraph_run_properties = RunProperties::default();
+        end_paragraph_run_properties.set_language(&self.default_language);
+        let mut paragraph = Paragraph::default();
+        paragraph.paragraph_properties_mut().set_right_to_left("0");
+        paragraph
+            .paragraph_properties_mut()
+            .set_default_run_properties(default_run_properties);
+        paragraph.set_end_para_run_properties(end_paragraph_run_properties);
+
+        let mut text_properties = TextProperties::default();
+        text_properties.add_paragraph(paragraph);
+
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_of_pie_chart(of_pie_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_text_properties(text_properties);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_bubble_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut acsl_obj = AreaChartSeriesList::default();
+        let mut acs_object = AreaChartSeries::default();
+        let mut idx = 0;
+        let mut ptn = 0;
+        for area_chart_series in area_chart_series_list {
+            if ptn == 0 {
+                let mut x_values = XValues::default();
+                x_values
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                x_values
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+                acs_object.set_x_values(x_values);
+
+                ptn += 1;
+            } else if ptn == 1 {
+                let mut y_values = YValues::default();
+                y_values
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                y_values
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+                acs_object.set_y_values(y_values);
+
+                ptn += 1;
+            } else if ptn == 2 {
+                let mut bubble_size = BubbleSize::default();
+                bubble_size
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                bubble_size
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+                acs_object.set_bubble_size(bubble_size);
+
+                let mut invert_if_negative = InvertIfNegative::default();
+                invert_if_negative.set_val(0f64);
+
+                let bubble_3d = Bubble3D::default();
+
+                acs_object.index_mut().set_val(idx);
+                acs_object.order_mut().set_val(idx);
+                acs_object.set_invert_if_negative(invert_if_negative);
+                acs_object.set_bubble_3d(bubble_3d);
+                acsl_obj.add_area_chart_series(acs_object);
+
+                acs_object = AreaChartSeries::default();
+                ptn = 0;
+                idx += 1;
+            }
+        }
+
+        let mut show_leader_lines = ShowLeaderLines::default();
+        show_leader_lines.set_val(true);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut bubble_chart = BubbleChart::default();
+        bubble_chart.vary_colors_mut().set_val(false);
+        bubble_chart.set_area_chart_series_list(acsl_obj);
+        bubble_chart.bubble_scale_mut().set_val(100);
+        bubble_chart.add_axis_id(axis_id1);
+        bubble_chart.add_axis_id(axis_id2);
+        bubble_chart
+            .data_labels_mut()
+            .set_show_leader_lines(show_leader_lines);
+
+        let mut value_axis_1 = ValueAxis::default();
+        value_axis_1.axis_id_mut().set_val(213_468_160);
+        value_axis_1
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis_1
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Bottom);
+        value_axis_1
+            .numbering_format_mut()
+            .set_format_code("General");
+        value_axis_1.numbering_format_mut().set_source_linked(true);
+        value_axis_1
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis_1
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis_1
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis_1.tick_crossing_axis_mut().set_val(169_590_080);
+        value_axis_1
+            .cross_between_mut()
+            .set_val(CrossBetweenValues::MidpointCategory);
+
+        let major_gridlines = MajorGridlines::default();
+        let mut value_axis_2 = ValueAxis::default();
+        value_axis_2.axis_id_mut().set_val(169_590_080);
+        value_axis_2
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis_2
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis_2.set_major_gridlines(major_gridlines);
+        value_axis_2
+            .numbering_format_mut()
+            .set_format_code("General");
+        value_axis_2.numbering_format_mut().set_source_linked(true);
+        value_axis_2
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis_2
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis_2
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis_2.tick_crossing_axis_mut().set_val(213_468_160);
+        value_axis_2
+            .cross_between_mut()
+            .set_val(CrossBetweenValues::MidpointCategory);
+
+        let default_run_properties = RunProperties::default();
+        let mut end_paragraph_run_properties = RunProperties::default();
+        end_paragraph_run_properties.set_language(&self.default_language);
+        let mut paragraph = Paragraph::default();
+        paragraph.paragraph_properties_mut().set_right_to_left("0");
+        paragraph
+            .paragraph_properties_mut()
+            .set_default_run_properties(default_run_properties);
+        paragraph.set_end_para_run_properties(end_paragraph_run_properties);
+
+        let mut text_properties = TextProperties::default();
+        text_properties.add_paragraph(paragraph);
+
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_bubble_chart(bubble_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis_1);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis_2);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_text_properties(text_properties);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Gap);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_radar_chart(&mut self, area_chart_series_list: &[&str]) {
+        let acsl_obj = Self::convert_series(area_chart_series_list, true);
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut radar_chart = RadarChart::default();
+        radar_chart.set_area_chart_series_list(acsl_obj);
+        radar_chart.add_axis_id(axis_id1);
+        radar_chart.add_axis_id(axis_id2);
+
+        let mut category_axis = CategoryAxis::default();
+        category_axis.axis_id_mut().set_val(213_468_160);
+        category_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        category_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        category_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        category_axis.tick_crossing_axis_mut().set_val(169_590_080);
+        category_axis.auto_labeled_mut().set_val(true);
+        category_axis.label_offset_mut().set_val(100);
+
+        let major_gridlines = MajorGridlines::default();
+
+        let mut value_axis = ValueAxis::default();
+        value_axis.axis_id_mut().set_val(169_590_080);
+        value_axis
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis.set_major_gridlines(major_gridlines);
+        value_axis.numbering_format_mut().set_format_code("General");
+        value_axis.numbering_format_mut().set_source_linked(true);
+        value_axis
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis.tick_crossing_axis_mut().set_val(213_468_160);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_radar_chart(radar_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_category_axis(category_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Zero);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    pub(crate) fn new_chart_scatter_chart(&mut self, area_chart_series_list: &[&str]) {
+        let mut acsl_obj = AreaChartSeriesList::default();
+        let mut acs_object = AreaChartSeries::default();
+        let mut idx = 0;
+        let mut ptn = 0;
+        for area_chart_series in area_chart_series_list {
+            if ptn == 0 {
+                let mut x_values = XValues::default();
+                x_values
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                x_values
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+                acs_object.set_x_values(x_values);
+
+                ptn += 1;
+            } else if ptn == 1 {
+                let mut y_values = YValues::default();
+                y_values
+                    .number_reference_mut()
+                    .formula_mut()
+                    .set_address_str(*area_chart_series);
+                y_values
+                    .number_reference_mut()
+                    .numbering_cache_mut()
+                    .format_code_mut()
+                    .set_text("General");
+                acs_object.set_y_values(y_values);
+
+                let mut invert_if_negative = InvertIfNegative::default();
+                invert_if_negative.set_val(0f64);
+
+                acs_object.index_mut().set_val(idx);
+                acs_object.order_mut().set_val(idx);
+                acs_object.set_invert_if_negative(invert_if_negative);
+                acsl_obj.add_area_chart_series(acs_object);
+
+                acs_object = AreaChartSeries::default();
+                ptn = 0;
+                idx += 1;
+            }
+        }
+
+        let mut axis_id1 = AxisId::default();
+        axis_id1.set_val(213_468_160);
+
+        let mut axis_id2 = AxisId::default();
+        axis_id2.set_val(169_590_080);
+
+        let mut scatter_chart = ScatterChart::default();
+        scatter_chart.set_area_chart_series_list(acsl_obj);
+        scatter_chart.add_axis_id(axis_id1);
+        scatter_chart.add_axis_id(axis_id2);
+
+        let mut value_axis_1 = ValueAxis::default();
+        value_axis_1.axis_id_mut().set_val(213_468_160);
+        value_axis_1
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis_1
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Bottom);
+        value_axis_1
+            .numbering_format_mut()
+            .set_format_code("General");
+        value_axis_1.numbering_format_mut().set_source_linked(true);
+        value_axis_1
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis_1
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis_1
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis_1.tick_crossing_axis_mut().set_val(169_590_080);
+        value_axis_1
+            .cross_between_mut()
+            .set_val(CrossBetweenValues::MidpointCategory);
+
+        let major_gridlines = MajorGridlines::default();
+        let mut value_axis_2 = ValueAxis::default();
+        value_axis_2.axis_id_mut().set_val(169_590_080);
+        value_axis_2
+            .scaling_mut()
+            .orientation_mut()
+            .set_val(OrientationValues::MinMax);
+        value_axis_2
+            .axis_position_mut()
+            .set_val(AxisPositionValues::Left);
+        value_axis_2.set_major_gridlines(major_gridlines);
+        value_axis_2
+            .numbering_format_mut()
+            .set_format_code("General");
+        value_axis_2.numbering_format_mut().set_source_linked(true);
+        value_axis_2
+            .major_tick_mark_mut()
+            .set_val(TickMarkValues::Outside);
+        value_axis_2
+            .minor_tick_mark_mut()
+            .set_val(TickMarkValues::None);
+        value_axis_2
+            .tick_label_position_mut()
+            .set_val(TickLabelPositionValues::NextTo);
+        value_axis_2.tick_crossing_axis_mut().set_val(213_468_160);
+        value_axis_2
+            .cross_between_mut()
+            .set_val(CrossBetweenValues::MidpointCategory);
+
+        let layout = Layout::default();
+        let mut style = Style::default();
+        style.set_val('2');
+
+        let mut graphic_frame = GraphicFrame::default();
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .editing_language_mut()
+            .set_val(&self.default_language);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .set_scatter_chart(scatter_chart);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis_1);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_area_mut()
+            .add_value_axis(value_axis_2);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .legend_position_mut()
+            .set_val(LegendPositionValues::Right);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .legend_mut()
+            .set_layout(layout);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .plot_visible_only_mut()
+            .set_val(true);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .chart_mut()
+            .display_blanks_as_mut()
+            .set_val(DisplayBlanksAsValues::Zero);
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_print_settings(Self::make_print_settings());
+        graphic_frame
+            .graphic_mut()
+            .graphic_data_mut()
+            .chart_space_mut()
+            .set_style(style);
+        self.two_cell_anchor.set_graphic_frame(graphic_frame);
+    }
+
+    #[inline]
+    pub(crate) fn make_print_settings() -> PrintSettings {
+        let mut obj = PrintSettings::default();
+        obj.page_margins_mut()
+            .set_bottom(0.75)
+            .set_left(0.7)
+            .set_right(0.7)
+            .set_top(0.75)
+            .set_header(0.3)
+            .set_footer(0.3);
+        obj
+    }
+
+    pub(crate) fn make_title<S: Into<String>>(&self, value: S) -> Title {
+        let mut run_properties = RunProperties::default();
+        run_properties.set_language(&self.default_language);
+        run_properties.set_alternative_language("en-US");
+
+        let mut run = Run::default();
+        run.set_run_properties(run_properties);
+        run.set_text(value);
+
+        let default_run_properties = RunProperties::default();
+
+        let mut paragraph = Paragraph::default();
+        paragraph
+            .paragraph_properties_mut()
+            .set_default_run_properties(default_run_properties);
+        paragraph.add_run(run);
+
+        let mut chart_text = ChartText::default();
+
+        let mut rich_text = RichText::default();
+        rich_text.add_paragraph(paragraph);
+        chart_text.set_rich_text(rich_text);
+
+        let mut title = Title::default();
+        title.set_chart_text(chart_text);
+
+        title
+    }
+}
+impl AdjustmentCoordinate for Chart {
+    #[inline]
+    fn adjustment_insert_coordinate(
+        &mut self,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.two_cell_anchor.as_mut().adjustment_insert_coordinate(
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        );
+    }
+
+    #[inline]
+    fn adjustment_remove_coordinate(
+        &mut self,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.two_cell_anchor.as_mut().adjustment_remove_coordinate(
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        );
+    }
+
+    #[inline]
+    fn is_remove_coordinate(
+        &self,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) -> bool {
+        self.two_cell_anchor.as_ref().is_remove_coordinate(
+            root_col_num,
+            offset_col_num,
+            root_row_num,
+            offset_row_num,
+        )
+    }
+}
+impl AdjustmentCoordinateWithSheet for Chart {
+    #[inline]
+    fn adjustment_insert_coordinate_with_sheet(
+        &mut self,
+        sheet_name: &str,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.two_cell_anchor
+            .as_mut()
+            .adjustment_insert_coordinate_with_sheet(
+                sheet_name,
+                root_col_num,
+                offset_col_num,
+                root_row_num,
+                offset_row_num,
+            );
+    }
+
+    #[inline]
+    fn adjustment_remove_coordinate_with_sheet(
+        &mut self,
+        sheet_name: &str,
+        root_col_num: u32,
+        offset_col_num: u32,
+        root_row_num: u32,
+        offset_row_num: u32,
+    ) {
+        self.two_cell_anchor
+            .as_mut()
+            .adjustment_insert_coordinate_with_sheet(
+                sheet_name,
+                root_col_num,
+                offset_col_num,
+                root_row_num,
+                offset_row_num,
+            );
+    }
+}

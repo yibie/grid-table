@@ -1,0 +1,204 @@
+// numFmts
+use std::{
+    collections::HashMap,
+    io::Cursor,
+};
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    NumberingFormat,
+    Style,
+};
+use crate::{
+    reader::driver::xml_read_loop,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug)]
+pub(crate) struct NumberingFormats {
+    numbering_format: HashMap<u32, NumberingFormat>,
+}
+
+impl NumberingFormats {
+    #[inline]
+    pub(crate) fn numbering_format(&self) -> &HashMap<u32, NumberingFormat> {
+        &self.numbering_format
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use numbering_format()")]
+    pub(crate) fn get_numbering_format(&self) -> &HashMap<u32, NumberingFormat> {
+        self.numbering_format()
+    }
+
+    #[inline]
+    pub(crate) fn numbering_format_mut(&mut self) -> &mut HashMap<u32, NumberingFormat> {
+        &mut self.numbering_format
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use numbering_format_mut()")]
+    pub(crate) fn get_numbering_format_mut(&mut self) -> &mut HashMap<u32, NumberingFormat> {
+        self.numbering_format_mut()
+    }
+
+    #[inline]
+    pub(crate) fn set_numbering_format(&mut self, value: NumberingFormat) -> &mut Self {
+        let number_format_id = value.number_format_id();
+        self.numbering_format.insert(number_format_id, value);
+        self
+    }
+
+    #[inline]
+    pub(crate) fn init_setup(&mut self) -> &mut Self {
+        self.build_in_formats();
+        self
+    }
+
+    pub(crate) fn build_in_formats(&mut self) {
+        for (index, code) in super::numbering_format::FILL_BUILT_IN_FORMAT_CODES.entries() {
+            let mut obj = NumberingFormat::default();
+            obj.set_number_format_id_crate(*index)
+                .set_format_code_crate(code.to_owned());
+            self.set_numbering_format(obj);
+        }
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use build_in_formats()")]
+    pub(crate) fn get_build_in_formats(&mut self) {
+        self.build_in_formats();
+    }
+
+    pub(crate) fn set_style(&mut self, style: &Style) -> u32 {
+        match style.numbering_format() {
+            Some(v) => {
+                if v.is_build_in() {
+                    return v.number_format_id();
+                }
+
+                let hash_code = v.hash_code();
+
+                let mut id = 175;
+                for (index, numbering_format) in &self.numbering_format {
+                    if numbering_format.hash_code() == hash_code {
+                        return *index;
+                    }
+                    if &id < index {
+                        id = *index;
+                    }
+                }
+                id += 1;
+                let mut num = v.clone();
+                num.set_number_format_id_crate(id);
+                self.set_numbering_format(num);
+                id
+            }
+            None => 0,
+        }
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Empty(ref e) => {
+                if e.name().into_inner() == b"numFmt" {
+                    let mut obj = NumberingFormat::default();
+                    obj.set_attributes(reader, e);
+                    self.set_numbering_format(obj);
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"numFmts" {
+                    return
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "numFmts")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        let formats_to_write: HashMap<_, _> = self
+            .numbering_format
+            .iter()
+            .filter(|(_, v)| !v.is_build_in())
+            .collect();
+        if formats_to_write.is_empty() {
+            return;
+        }
+
+        let cnt = formats_to_write.len();
+        let cnt_str = cnt.to_string();
+        write_start_tag(writer, "numFmts", vec![("count", &cnt_str).into()], false);
+
+        for (index, numbering_format) in formats_to_write {
+            numbering_format.write_to(writer, *index);
+        }
+
+        write_end_tag(writer, "numFmts");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_style() {
+        let mut obj = NumberingFormats::default();
+
+        let mut style = Style::default();
+        style
+            .number_format_mut()
+            .set_format_code(NumberingFormat::FORMAT_TEXT);
+        assert_eq!(obj.set_style(&style), 49);
+
+        let mut style = Style::default();
+        style
+            .number_format_mut()
+            .set_format_code("test-yyyy-mm-dd");
+        assert_eq!(obj.set_style(&style), 176);
+
+        let mut style = Style::default();
+        style
+            .number_format_mut()
+            .set_format_code("test-yyyy/mm/dd");
+        assert_eq!(obj.set_style(&style), 177);
+
+        let mut style = Style::default();
+        style
+            .number_format_mut()
+            .set_format_code("test-yyyy-mm-dd");
+        assert_eq!(obj.set_style(&style), 176);
+
+        let mut style = Style::default();
+        style.number_format_mut().set_format_code("m/d/yy");
+        assert_eq!(obj.set_style(&style), 30);
+
+        let mut style = Style::default();
+        style
+            .number_format_mut()
+            .set_format_code(NumberingFormat::FORMAT_TEXT);
+        assert_eq!(obj.set_style(&style), 49);
+
+        let mut style = Style::default();
+        style
+            .number_format_mut()
+            .set_format_code(NumberingFormat::FORMAT_DATE_TIME5);
+        assert_eq!(obj.set_style(&style), 45);
+    }
+}

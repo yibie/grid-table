@@ -1,0 +1,193 @@
+// r
+use std::io::Cursor;
+
+use quick_xml::{
+    Reader,
+    Writer,
+    events::{
+        BytesStart,
+        Event,
+    },
+};
+
+use super::{
+    Font,
+    Text,
+};
+use crate::{
+    reader::driver::xml_read_loop,
+    writer::driver::{
+        write_end_tag,
+        write_start_tag,
+    },
+};
+
+#[derive(Clone, Default, Debug, PartialEq, PartialOrd)]
+pub struct TextElement {
+    text:           Text,
+    run_properties: Option<Box<Font>>,
+}
+
+impl TextElement {
+    #[inline]
+    #[must_use]
+    pub fn text(&self) -> &str {
+        self.text.value()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use text()")]
+    pub fn get_text(&self) -> &str {
+        self.text()
+    }
+
+    #[inline]
+    pub fn set_text<S: Into<String>>(&mut self, value: S) -> &mut Self {
+        self.text.set_value(value);
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn run_properties(&self) -> Option<&Font> {
+        self.run_properties.as_deref()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use run_properties()")]
+    pub fn get_run_properties(&self) -> Option<&Font> {
+        self.run_properties()
+    }
+
+    #[inline]
+    #[allow(clippy::unnecessary_unwrap)]
+    pub fn run_properties_mut(&mut self) -> &mut Font {
+        if self.run_properties.is_some() {
+            return self.run_properties.as_mut().unwrap();
+        }
+        self.set_run_properties(Font::default_value());
+        self.run_properties.as_mut().unwrap()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use run_properties_mut()")]
+    pub fn get_run_properties_mut(&mut self) -> &mut Font {
+        self.run_properties_mut()
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub(crate) fn run_properties_crate(&mut self) -> Option<&mut Font> {
+        self.run_properties.as_deref_mut()
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    #[deprecated(since = "3.0.0", note = "Use run_properties_crate()")]
+    pub(crate) fn get_run_properties_crate(&mut self) -> Option<&mut Font> {
+        self.run_properties_crate()
+    }
+
+    #[inline]
+    pub fn set_run_properties(&mut self, value: Font) -> &mut Self {
+        self.run_properties = Some(Box::new(value));
+        self
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn font(&self) -> Option<&Font> {
+        self.run_properties()
+    }
+
+    #[inline]
+    #[must_use]
+    #[deprecated(since = "3.0.0", note = "Use font()")]
+    pub fn get_font(&self) -> Option<&Font> {
+        self.font()
+    }
+
+    #[inline]
+    pub fn font_mut(&mut self) -> &mut Font {
+        self.run_properties_mut()
+    }
+
+    #[inline]
+    #[deprecated(since = "3.0.0", note = "Use font_mut()")]
+    pub fn get_font_mut(&mut self) -> &mut Font {
+        self.font_mut()
+    }
+
+    #[inline]
+    pub fn set_font(&mut self, value: Font) -> &mut Self {
+        self.set_run_properties(value)
+    }
+
+    pub(crate) fn hash_code(&self) -> String {
+        crate::helper::utils::md5_hash(format!(
+            "{}{}",
+            self.text.value(),
+            match &self.run_properties {
+                Some(v) => {
+                    v.hash_code()
+                }
+                None => {
+                    "None".into()
+                }
+            },
+        ))
+    }
+
+    #[deprecated(since = "3.0.0", note = "Use hash_code()")]
+    pub(crate) fn get_hash_code(&self) -> String {
+        self.hash_code()
+    }
+
+    pub(crate) fn set_attributes<R: std::io::BufRead>(
+        &mut self,
+        reader: &mut Reader<R>,
+        _e: &BytesStart,
+    ) {
+        xml_read_loop!(
+            reader,
+            Event::Start(ref e) => {
+                match e.name().into_inner() {
+                    b"t" => {
+                        let mut obj = Text::default();
+                        obj.set_attributes(reader, e);
+                        self.text = obj;
+                    }
+                    b"rPr" => {
+                        let mut obj = Font::default();
+                        obj.set_attributes(reader, e);
+                        self.set_run_properties(obj);
+                    }
+                    _ => (),
+                }
+            },
+            Event::End(ref e) => {
+                if e.name().into_inner() == b"r" {
+                    return
+                }
+            },
+            Event::Eof => panic!("Error: Could not find {} end element", "r")
+        );
+    }
+
+    pub(crate) fn write_to(&self, writer: &mut Writer<Cursor<Vec<u8>>>) {
+        // r
+        write_start_tag(writer, "r", vec![], false);
+
+        // rPr
+        if let Some(v) = &self.run_properties {
+            v.write_to_rpr(writer);
+        }
+
+        // t
+        self.text.write_to(writer);
+
+        write_end_tag(writer, "r");
+    }
+}

@@ -1,0 +1,34 @@
+use std::str::FromStr;
+
+use super::EnumTrait;
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd, Default)]
+pub enum SourceValues {
+    Consolidation,
+    External,
+    Scenario,
+    #[default]
+    Worksheet,
+}
+impl EnumTrait for SourceValues {
+    fn value_string(&self) -> &str {
+        match &self {
+            Self::Consolidation => "consolidation",
+            Self::External => "external",
+            Self::Scenario => "scenario",
+            Self::Worksheet => "worksheet",
+        }
+    }
+}
+impl FromStr for SourceValues {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "consolidation" => Ok(Self::Consolidation),
+            "external" => Ok(Self::External),
+            "scenario" => Ok(Self::Scenario),
+            "worksheet" => Ok(Self::Worksheet),
+            _ => Err(()),
+        }
+    }
+}

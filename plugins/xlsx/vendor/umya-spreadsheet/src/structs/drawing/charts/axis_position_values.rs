@@ -1,0 +1,34 @@
+use std::str::FromStr;
+
+use super::super::super::EnumTrait;
+#[derive(Clone, Debug, Default)]
+pub enum AxisPositionValues {
+    #[default]
+    Bottom,
+    Left,
+    Right,
+    Top,
+}
+impl EnumTrait for AxisPositionValues {
+    fn value_string(&self) -> &str {
+        match &self {
+            Self::Bottom => "b",
+            Self::Left => "l",
+            Self::Right => "r",
+            Self::Top => "t",
+        }
+    }
+}
+impl FromStr for AxisPositionValues {
+    type Err = ();
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        match input {
+            "b" => Ok(Self::Bottom),
+            "l" => Ok(Self::Left),
+            "r" => Ok(Self::Right),
+            "t" => Ok(Self::Top),
+            _ => Err(()),
+        }
+    }
+}
