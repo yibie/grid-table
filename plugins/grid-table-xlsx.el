@@ -145,14 +145,69 @@ meant it to be used."
   (car (read-from-string
         (grid-table-xlsx-module-sheets (expand-file-name file)))))
 
+(defconst grid-table-xlsx--future-functions
+  '(("XLOOKUP" . "_xlfn.") ("IFS" . "_xlfn.") ("UNIQUE" . "_xlfn.")
+    ("DAYS" . "_xlfn.") ("FILTER" . "_xlfn._xlws.") ("SORT" . "_xlfn._xlws."))
+  "Functions a workbook names with a prefix, as Excel 2007 did not know them.
+Excel and LibreOffice read the bare name as an unknown function.")
+
+(defun grid-table-xlsx--outside-strings (formula function)
+  "Return FORMULA with FUNCTION applied to each part outside its strings.
+A string is in double quotes, with a doubled quote inside it."
+  (let ((parts nil) (start 0))
+    (while (string-match "\"\\(?:[^\"]\\|\"\"\\)*\"" formula start)
+      ;; FUNCTION may match too, so the string's bounds are taken first.
+      (let ((from (match-beginning 0)) (to (match-end 0)))
+        (push (funcall function (substring formula start from)) parts)
+        (push (substring formula from to) parts)
+        (setq start to)))
+    (push (funcall function (substring formula start)) parts)
+    (apply #'concat (nreverse parts))))
+
+(defun grid-table-xlsx--prefix-functions (formula)
+  "Return FORMULA, without its =, naming newer functions as a workbook does."
+  (let ((case-fold-search t))
+    (grid-table-xlsx--outside-strings
+     formula
+     (lambda (text)
+       (let ((pattern (concat "\\("
+                              (regexp-opt (mapcar #'car grid-table-xlsx--future-functions))
+                              "\\)("))
+             (parts nil) (start 0))
+         (while (string-match pattern text start)
+           (let* ((at (match-beginning 1))
+                  (name (match-string 1 text))
+                  ;; A name only stands alone, not inside a longer one
+                  ;; or after a prefix it already has.
+                  (alone (or (= at 0)
+                             (not (string-match-p "[A-Za-z0-9_.]"
+                                                  (substring text (1- at) at))))))
+             (push (substring text start at) parts)
+             (when alone
+               (push (cdr (assoc (upcase name) grid-table-xlsx--future-functions))
+                     parts))
+             (push name parts)
+             (setq start (match-end 1))))
+         (push (substring text start) parts)
+         (apply #'concat (nreverse parts)))))))
+
+(defun grid-table-xlsx--unprefix-functions (formula)
+  "Return FORMULA with a workbook's function prefixes taken off."
+  (let ((case-fold-search t))
+    (grid-table-xlsx--outside-strings
+     formula
+     (lambda (text)
+       (replace-regexp-in-string "_xlfn\\.\\(?:_xlws\\.\\)?" "" text t t)))))
+
 (defun grid-table-xlsx--raw (cell)
   "Return the raw input for CELL, a (ROW COL VALUE . PROPERTIES) entry.
 Text that reads as a number is marked with an apostrophe, so it stays
-text."
+text.  A formula loses the prefixes a workbook gives newer functions."
   (let ((value (nth 2 cell)))
-    (if (plist-get (nthcdr 3 cell) :text)
-        (concat "'" value)
-      value)))
+    (cond ((plist-get (nthcdr 3 cell) :text) (concat "'" value))
+          ((and (stringp value) (string-prefix-p "=" value))
+           (grid-table-xlsx--unprefix-functions value))
+          (t value))))
 
 (defun grid-table-xlsx--style (properties)
   "Return the grid-table style for the module's cell PROPERTIES.
@@ -464,7 +519,8 @@ RAW is its raw input and STYLE its style."
                 ((and (string-prefix-p "=" text) (> (length text) 1)
                       (not (string-match-p
                             grid-table-xlsx--own-formula-regexp text)))
-                 (setq text (substring text 1))
+                 (setq text (grid-table-xlsx--prefix-functions
+                             (substring text 1)))
                  "f")
                 ((string-match-p grid-table-xlsx--number-regexp text) "n")
                 ((member text '("TRUE" "FALSE")) "b")

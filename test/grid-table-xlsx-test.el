@@ -235,6 +235,35 @@
         (should-not (grid-model-get-style back-model 2 2))
         (should (equal (grid-model-get-conditionals back-model) rules))))))
 
+(ert-deftest grid-table-xlsx-test-newer-functions-carry-their-prefix ()
+  "XLOOKUP, FILTER and their kind are written as a workbook names them.
+Excel and LibreOffice read them only with the _xlfn. prefix, and the
+grid reads them back without it."
+  (should (equal (grid-table-xlsx--prefix-functions
+                  "COUNTA(UNIQUE(SORT(A1:A3)))+LEN(\"FILTER(\")")
+                 "COUNTA(_xlfn.UNIQUE(_xlfn._xlws.SORT(A1:A3)))+LEN(\"FILTER(\")"))
+  (should (equal (grid-table-xlsx--prefix-functions "MYXLOOKUP(1)") "MYXLOOKUP(1)"))
+  (should (equal (grid-table-xlsx--unprefix-functions
+                  "=_xlfn.XLOOKUP(1,A:A,B:B)+SUM(_xlfn._xlws.FILTER(B:B,A:A=1))")
+                 "=XLOOKUP(1,A:A,B:B)+SUM(FILTER(B:B,A:A=1))"))
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((rows '(("Key" "Value" "Found" "Sum")
+                   ("a" "1" "=XLOOKUP(\"b\",A2:A3,B2:B3)" "=SUM(FILTER(B2:B3,A2:A3=\"a\"))")
+                   ("b" "2" "" "")))
+           (source (make-default-data-source (copy-sequence (car rows)) rows "Keys")))
+      (grid-table-xlsx-write-data-source source file)
+      (should (string-match-p
+               "_xlfn\\.XLOOKUP(.*_xlfn\\._xlws\\.FILTER("
+               (shell-command-to-string
+                (format "unzip -p %s xl/worksheets/sheet1.xml"
+                        (shell-quote-argument file)))))
+      (let ((back (grid-table-xlsx-create-data-source file)))
+        (should (equal (grid-get-raw-value-at back 1 2) "=XLOOKUP(\"b\",A2:A3,B2:B3)"))
+        (should (equal (grid-get-raw-value-at back 1 3) "=SUM(FILTER(B2:B3,A2:A3=\"a\"))"))
+        (should (equal (grid-get-display-value-at back 1 2) "2"))
+        (should (equal (grid-get-display-value-at back 1 3) "1"))))))
+
 (ert-deftest grid-table-xlsx-test-widths-and-frozen-panes ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file
