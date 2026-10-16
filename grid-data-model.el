@@ -71,8 +71,8 @@ CONDITIONALS a list of conditional format rules."
           ;; Array formulas: ((ROW . COL) . RANGE), RANGE the cells each
           ;; fills, as text such as B2:C3
           nil
-          ;; Non-nil when the formulas are read as a workbook file holds
-          ;; them; see `grid-calc-legacy-arrays'
+          ;; The formulas read as a workbook file holds them, a hash
+          ;; table of (ROW . COL); see `grid-calc-legacy-arrays'
           nil))
 
 (defun grid-data-model-rows (model) (aref model 0))
@@ -328,9 +328,12 @@ cell of a range in its own row or column."
   (and (> (length model) 11) (aref model 11)))
 
 (defun grid-model-set-arrays (model arrays)
-  "Make ARRAYS, as `grid-data-model-arrays' gives them, MODEL's own."
+  "Make ARRAYS, as `grid-data-model-arrays' gives them, MODEL's own.
+The formulas fill other cells now, so every cell is computed again at
+the next recalculation."
   (when (> (length model) 11)
-    (aset model 11 (copy-tree arrays)))
+    (aset model 11 (copy-tree arrays))
+    (grid-calc-forget model))
   arrays)
 
 (defun grid-model-array-at (model row col)
@@ -343,15 +346,31 @@ cell of a range in its own row or column."
     (aset model 11 (cl-remove (cons row col) (aref model 11)
                               :key #'car :test #'equal))))
 
-(defun grid-data-model-legacy-p (model)
-  "Return non-nil when MODEL's formulas read as a workbook file holds them.
-See `grid-calc-legacy-arrays'."
-  (and (> (length model) 12) (aref model 12)))
+(defun grid-model-legacy-at (model row col)
+  "Return non-nil when the formula at ROW and COL of MODEL reads as a
+workbook file holds it.  See `grid-calc-legacy-arrays'."
+  (and (> (length model) 12) (aref model 12)
+       (gethash (cons row col) (aref model 12))))
 
-(defun grid-model-set-legacy (model legacy)
-  "Make MODEL read its formulas as a workbook file holds them when LEGACY."
+(defun grid-model-set-legacy (model cells)
+  "Make the formulas at CELLS of MODEL read as a workbook file holds them.
+CELLS is a list of (ROW . COL)."
   (when (> (length model) 12)
-    (aset model 12 legacy)))
+    (let ((table (make-hash-table :test 'equal)))
+      (dolist (cell cells) (puthash cell t table))
+      (aset model 12 (and cells table)))))
+
+(defun grid-model-forget-legacy (model row col)
+  "Make the formula at ROW and COL of MODEL read as one typed in the grid."
+  (when (and (> (length model) 12) (aref model 12))
+    (remhash (cons row col) (aref model 12))))
+
+(defun grid-model--legacy-cells (model)
+  "Return the cells of MODEL whose formulas read as a file holds them."
+  (let (cells)
+    (when (and (> (length model) 12) (aref model 12))
+      (maphash (lambda (cell _) (push cell cells)) (aref model 12)))
+    cells))
 
 (defun grid-model-carry-arrays (old new &optional axis at delta)
   "Give model NEW the array formulas of OLD and how it reads them.
@@ -359,7 +378,18 @@ AXIS, AT and DELTA are as for `grid-model-carry-frozen'.  An array
 formula stays one only while its cell still holds a formula; one whose
 line is deleted goes."
   (unless (eq old new)
-    (grid-model-set-legacy new (grid-data-model-legacy-p old))
+    (grid-model-set-legacy
+     new
+     (delq nil
+           (mapcar
+            (pcase-lambda (`(,row . ,col))
+              (let ((row (if (eq axis 'row) (grid-model--shift-index row at delta) row))
+                    (col (if (eq axis 'col) (grid-model--shift-index col at delta) col)))
+                (and row col
+                     (< row (grid-data-model-rows new))
+                     (< col (grid-data-model-cols new))
+                     (cons row col))))
+            (grid-model--legacy-cells old))))
     (grid-model-set-arrays
      new
      (delq nil
@@ -713,7 +743,8 @@ Returns the modified cell, or nil if the cell does not exist."
                                 (= col (nth 1 merge)))))))
       (signal 'grid-model-covered-cell (list row col)))
     (unless (equal raw-value (grid-cell-raw-input cell))
-      (grid-model-forget-array model row col))
+      (grid-model-forget-array model row col)
+      (grid-model-forget-legacy model row col))
     (set-grid-cell-raw-input cell raw-value)
     ;; Use grid-table-calc to set formula and trigger recalculation
     (grid-table-calc-set-cell-formula model (cons row col) raw-value)

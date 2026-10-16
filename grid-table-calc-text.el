@@ -236,12 +236,14 @@ no such delimiter."
                               (instance integer 1) (mode integer 0) (_end integer 0)
                               (missing any))
   "TEXT before the INSTANCEth DELIMITER; MODE 1 ignores case."
+  :empty t
   (grid-calc--text-around text delimiter instance (= mode 1) missing nil))
 
 (grid-calc-define textafter ((text text) (delimiter values) &optional
                              (instance integer 1) (mode integer 0) (_end integer 0)
                              (missing any))
   "TEXT after the INSTANCEth DELIMITER; MODE 1 ignores case."
+  :empty t
   (grid-calc--text-around text delimiter instance (= mode 1) missing t))
 
 ;;;----------------------------------------------------------------------

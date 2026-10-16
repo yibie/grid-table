@@ -116,15 +116,66 @@ With WILDCARDS, text WANTED is a pattern; see `grid-calc-wildcard-regexp'."
                (let ((case-fold-search t)) (string-match-p regexp value)))))
     (lambda (value) (eql (grid-calc--lookup-order value wanted) 0))))
 
-(defun grid-calc--find-exact (wanted length getter &optional from-end wildcards)
+(defvar grid-calc--exact-indexes (make-hash-table :test 'eq :weakness 'key)
+  "Where each value stands in a range or array searched more than once.
+Keyed by the range or array, as one formula reads it; a value is an
+alist from how it is read: `line', `column' or `row'.  There it is the
+symbol `seen' after the first search, then a table from what
+`grid-calc--exact-key' makes of a value to its first and last position.")
+
+(defun grid-calc--exact-key (value)
+  "Return what VALUE is filed under for an exact search, or nil.
+Text without regard to case, a number to 15 digits, TRUE and FALSE."
+  (cond ((numberp value) (format "%.14e" value))
+        ((stringp value) (and (not (string-empty-p value))
+                              (cons 'text (downcase value))))
+        ((grid-calc-boolean-p value) value)))
+
+(defun grid-calc--exact-index (source length getter)
+  "Return the table of where the LENGTH values of SOURCE stand, or nil.
+SOURCE is (OBJECT . READING), as `grid-calc--find-exact' takes it.  Nil
+the first time it is searched: one search reads it as quickly."
+  (let* ((readings (gethash (car source) grid-calc--exact-indexes))
+         (known (alist-get (cdr source) readings)))
+    (cond
+     ((hash-table-p known) known)
+     ((not known)
+      (puthash (car source) (cons (cons (cdr source) 'seen) readings)
+               grid-calc--exact-indexes)
+      nil)
+     (t
+      (let ((index (make-hash-table :test 'equal :size length)))
+        (dotimes (i length)
+          (when-let* ((key (grid-calc--exact-key (funcall getter i))))
+            (if-let* ((place (gethash key index)))
+                (setcdr place i)
+              (puthash key (cons i i) index))))
+        (setf (alist-get (cdr source) readings) index)
+        (puthash (car source) readings grid-calc--exact-indexes)
+        index)))))
+
+(defun grid-calc--find-exact (wanted length getter &optional from-end wildcards
+                                     source)
   "Return the first position from 0 whose value equals WANTED, or nil.
-LENGTH values are read with GETTER; FROM-END searches from the last."
-  (let ((match (grid-calc--matcher wanted wildcards)))
-    (if from-end
-        (cl-loop for i downfrom (1- length) to 0
-                 when (funcall match (funcall getter i)) return i)
-      (cl-loop for i below length
-               when (funcall match (funcall getter i)) return i))))
+LENGTH values are read with GETTER; FROM-END searches from the last.
+SOURCE, (OBJECT . READING) for the range or array they come from and
+how GETTER reads it, lets a formula searching it for many values, as
+MATCH(A1:A900,A1:A900,0) does, read it once."
+  (let* ((pattern (and wildcards (stringp wanted) (grid-calc-wildcard-p wanted)))
+         (key (and source (not pattern) (grid-calc--exact-key wanted)))
+         (index (and key (grid-calc--exact-index source length getter)))
+         (place (and index (gethash key index))))
+    (cond
+     (place (if from-end (cdr place) (car place)))
+     ;; A number only nearly equal may still be filed under another key.
+     ((and index (not (numberp wanted))) nil)
+     (t
+      (let ((match (grid-calc--matcher wanted wildcards)))
+        (if from-end
+            (cl-loop for i downfrom (1- length) to 0
+                     when (funcall match (funcall getter i)) return i)
+          (cl-loop for i below length
+                   when (funcall match (funcall getter i)) return i)))))))
 
 (defun grid-calc--find-sorted (wanted length getter &optional descending)
   "Return the position of WANTED among LENGTH sorted values, or nil.
@@ -174,20 +225,22 @@ values sorted down.  #N/A when there is none."
   (when (grid-calc-blank-p wanted) (grid-calc-raise "#N/A"))
   (pcase-let ((`(,length . ,getter) (grid-calc--line-of values)))
     (let ((found (cond ((= type 0)
-                        (grid-calc--find-exact wanted length getter nil t))
+                        (grid-calc--find-exact wanted length getter nil t
+                                               (cons values 'line)))
                        ((> type 0) (grid-calc--find-sorted wanted length getter))
                        (t (grid-calc--find-sorted wanted length getter t)))))
       (if found (1+ found) (grid-calc-err "#N/A")))))
 
-(defun grid-calc--xfind (wanted length getter mode search)
+(defun grid-calc--xfind (wanted length getter mode search &optional source)
   "Return the position XMATCH and XLOOKUP find for WANTED, or nil.
-MODE and SEARCH are their match_mode and search_mode."
+MODE and SEARCH are their match_mode and search_mode; SOURCE is as
+`grid-calc--find-exact' takes it."
   (unless (memq mode '(0 -1 1 2)) (grid-calc-raise "#VALUE!"))
   (unless (memq search '(1 -1 2 -2)) (grid-calc-raise "#VALUE!"))
   (let ((from-end (memq search '(-1 -2))))
     (pcase mode
-      (0 (grid-calc--find-exact wanted length getter from-end))
-      (2 (grid-calc--find-exact wanted length getter from-end t))
+      (0 (grid-calc--find-exact wanted length getter from-end nil source))
+      (2 (grid-calc--find-exact wanted length getter from-end t source))
       (_ (grid-calc--find-nearest wanted length getter mode from-end)))))
 
 (grid-calc-define xmatch ((wanted any) (values values)
@@ -196,8 +249,10 @@ MODE and SEARCH are their match_mode and search_mode."
 MODE 0 matches exactly, -1 takes the next smaller value too, 1 the next
 larger, 2 matches text with wildcards.  SEARCH 1 starts at the first
 value, -1 at the last."
+  :empty t
   (pcase-let ((`(,length . ,getter) (grid-calc--line-of values)))
-    (let ((found (grid-calc--xfind wanted length getter mode search)))
+    (let ((found (grid-calc--xfind wanted length getter mode search
+                                   (cons values 'line))))
       (if found (1+ found) (grid-calc-err "#N/A")))))
 
 (defun grid-calc--table-lookup (wanted table index approximate across)
@@ -214,7 +269,8 @@ does.  APPROXIMATE takes the last value not above WANTED."
                      (lambda (i) (grid-calc--table-at table i 0))))
            (found (if approximate
                       (grid-calc--find-sorted wanted length getter)
-                    (grid-calc--find-exact wanted length getter nil t))))
+                    (grid-calc--find-exact wanted length getter nil t
+                                           (cons table (if across 'row 'column))))))
       (cond ((null found) (grid-calc-err "#N/A"))
             (across (grid-calc--table-at table (1- index) found))
             (t (grid-calc--table-at table found (1- index)))))))
@@ -261,11 +317,13 @@ last column."
 VALUES is one row or column; RESULTS as tall gives that row of it, as
 wide that column.  MISSING is given when nothing matches, else #N/A.
 MODE and SEARCH are as XMATCH's."
+  :empty t
   (pcase-let ((`(,length . ,getter) (grid-calc--line-of values))
               (`(,r-rows . ,r-cols) (grid-calc--table-full-size results))
               (`(,v-rows . ,_) (grid-calc--table-full-size values)))
     (let ((down (> v-rows 1))
-          (found (grid-calc--xfind wanted length getter mode search)))
+          (found (grid-calc--xfind wanted length getter mode search
+                                   (cons values 'line))))
       (cond
        ((null found)
         (if (and missing (not (equal missing '(MISSING))))
@@ -376,9 +434,12 @@ own row or column, as from any range."
          (col (grid-calc-ref-left reference))
          (raw (grid-calc--raw-at reference)))
     ;; Only one cell, holding a formula, is a corner things spill from.
+    ;; A formula whose values cannot spill names no cells.
     (if (not (and (= (grid-calc-ref-rows reference) 1)
                   (= (grid-calc-ref-cols reference) 1)
-                  (grid-calc--formula-p raw)))
+                  (grid-calc--formula-p raw)
+                  (not (grid-calc--spill-blocked-p
+                        model (+ (* row (grid-data-model-cols model)) col)))))
         (grid-calc-err "#REF!")
       (let* ((value (let ((grid-calc--here (list model row col))
                           (grid-calc--array-context t)
@@ -514,6 +575,7 @@ number counts from the last."
 (grid-calc-define sequence ((rows integer) &optional (cols integer 1)
                             (start number 1) (step number 1))
   "ROWS by COLS numbers from START, each STEP more than the one before."
+  :empty t
   (unless (and (> rows 0) (> cols 0)) (grid-calc-raise "#CALC!"))
   (grid-calc-array rows cols
                    (lambda (row col)
@@ -539,6 +601,7 @@ number counts from the last."
                         (order integer 1) (by-col bool))
   "ARRAY with its rows sorted by their INDEXth value, or its columns with
 BY-COL.  ORDER 1 sorts up, -1 down."
+  :empty t
   (unless (memq order '(1 -1)) (grid-calc-raise "#VALUE!"))
   (let ((lines (grid-calc--lines array by-col)))
     (unless (<= 1 index (length (car lines))) (grid-calc-raise "#VALUE!"))

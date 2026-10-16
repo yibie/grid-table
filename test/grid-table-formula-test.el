@@ -130,9 +130,10 @@
       ;; Comparisons and arithmetic go element by element.
       (should (equal (value "=SUM((A2:A6=\"x\")*B2:B6)") 16))
       (should (equal (value "=MAX(SORT(B2:B6))") 20))
-      ;; Only one row or one column; a cell shows one value.
-      (should (equal (value "=UNIQUE(A2:B6)") "#VALUE!"))
-      (should (equal (value "=B2:B4") "#VALUE!"))
+      ;; Several values spill over the cells below and to the right;
+      ;; here the data is in the way.
+      (should (equal (value "=UNIQUE(A2:B6)") "#SPILL!"))
+      (should (equal (value "=B2:B4") "#SPILL!"))
       (should (equal (value "=B3:B3") 20))
       (should (equal (value "=UNIQUE(A2:A2)") "x")))))
 
@@ -808,11 +809,11 @@
                   '(("1" "2" "3" "=INDEX(A1:A2,3)" "=INDEX(A1:C1,2)")
                     ("4" "5" "6" "=INDEX(A1:C3,2,3)" "=INDEX(A1:A3,3)")
                     ("7" "8" "9" "=INDEX(A1:C3,0,1)" "=INDEX(A1:C3,2,4)")))
-                 ;; A formula that comes to several values, as a whole
-                 ;; column of INDEX does, is #VALUE! in a cell.
+                 ;; A whole column of INDEX is several values, which
+                 ;; would spill past the bottom of the sheet.
                  '(("1" "2" "3" "#REF!" 2)
                    ("4" "5" "6" 6 7)
-                   ("7" "8" "9" "#VALUE!" "#REF!")))))
+                   ("7" "8" "9" "#SPILL!" "#REF!")))))
 
 (ert-deftest grid-table-formula-match-compares-numbers-by-value ()
   (should (equal (grid-table-formula-test--values
@@ -1003,6 +1004,123 @@
     (grid-set-raw-value-at data 0 0 "1")
     (should (equal (grid-get-computed-value-at sums 0 0) 103))
     (should (equal (grid-get-computed-value-at sums 1 0) 2))))
+
+;;;----------------------------------------------------------------------
+;;; Spilling
+;;;----------------------------------------------------------------------
+
+(ert-deftest grid-table-formula-several-values-spill ()
+  (let ((model (grid-model-create 6 3)))
+    (cl-flet ((column (col)
+                (cl-loop for row below 6
+                         collect (grid-model-get-computed-value model row col))))
+      ;; The values go down the cells below, which stay empty.
+      (grid-model-set-raw-value model 0 0 "=SEQUENCE(3)")
+      (should (equal (column 0) '(1 2 3 "" "" "")))
+      (should (equal (nth 0 (nth 1 (grid-model-get-all-raw-values model))) ""))
+      ;; A formula reads a spilled cell, and a spill as a whole.
+      (grid-model-set-raw-value model 5 1 "=SUM(A1:A3)")
+      (grid-model-set-raw-value model 4 1 "=ROWS(A1#)")
+      (should (equal (column 1) '("" "" "" "" 3 6)))
+      ;; Something in the way: #SPILL!, and the readers follow.
+      (grid-model-set-raw-value model 2 0 "x")
+      (should (equal (column 0) '("#SPILL!" "" "x" "" "" "")))
+      (should (equal (column 1) '("" "" "" "" "#REF!" "#SPILL!")))
+      ;; Out of the way again.
+      (grid-model-set-raw-value model 2 0 "")
+      (should (equal (column 0) '(1 2 3 "" "" "")))
+      ;; Fewer values leave the cells they no longer reach empty.
+      (grid-model-set-raw-value model 0 0 "=SEQUENCE(2)")
+      (should (equal (column 0) '(1 2 "" "" "" "")))
+      (should (equal (column 1) '("" "" "" "" 2 3)))
+      ;; Past the bottom of the sheet.
+      (grid-model-set-raw-value model 3 2 "=SEQUENCE(4)")
+      (should (equal (column 2) '("" "" "" "#SPILL!" "" ""))))))
+
+(ert-deftest grid-table-formula-array-formula-fills-its-range ()
+  (let ((model (grid-model-create
+                3 4 '(("1" "=A1:A2*10" "=A1:A3+1" "=7")
+                      ("2" "" "" "")
+                      ("x" "" "" "")))))
+    (grid-model-set-arrays model '(((0 . 1) . "B1:B3") ((0 . 2) . "C1:C2")
+                                   ((0 . 3) . "D1:D3")))
+    (grid-model-set-raw-value model 1 2 "own")
+    (cl-flet ((column (col)
+                (cl-loop for row below 3
+                         collect (grid-model-get-computed-value model row col))))
+      ;; Past its values an array formula shows #N/A; a single value
+      ;; fills every cell; a cell holding something keeps it.
+      (should (equal (column 1) '(10 20 "#N/A")))
+      (should (equal (column 2) '(2 "own" "")))
+      (should (equal (column 3) '(7 7 7)))
+      ;; A one-cell array formula that comes out FALSE shows FALSE.
+      (grid-model-set-raw-value model 2 2 "=1>2")
+      (grid-model-set-arrays model '(((2 . 2) . "C3")))
+      (should (equal (grid-model-get-computed-value model 2 2) nil)))))
+
+(ert-deftest grid-table-formula-empty-arguments-and-isformula-ranges ()
+  (let ((model (grid-model-create 3 3 '(("=1" "" "") ("2" "" "") ("=3" "" "")))))
+    (cl-flet ((value (formula)
+                (grid-model-set-raw-value model 0 2 formula)
+                (grid-model-get-computed-value model 0 2)))
+      ;; A dynamic-array function takes its default for an empty
+      ;; argument; an older one takes it as 0.
+      (should (equal (value "=INDEX(SORT(A1:A3,,-1),1)") 3))
+      (should (equal (value "=ROWS(SEQUENCE(2,,5))") 2))
+      (should (equal (value "=ROUND(2.5,)") 3))
+      ;; ISFORMULA over a range answers for each cell.
+      (should (equal (value "=INDEX(ISFORMULA(A1:A3),1)") t))
+      (should (equal (value "=INDEX(ISFORMULA(A1:A3),2)") nil))
+      (should (equal (value "=ISFORMULA(A3)") t))
+      ;; A number joined into text loses every trailing zero.
+      (should (equal (value "=8.4&\"!\"") "8.4!"))
+      (should (equal (value "=0.125&\"\"") "0.125"))
+      ;; IFERROR over several values replaces each error on its own.
+      (should (equal (value "=INDEX(IFERROR({1;2}/{0;1},{8;9}),1)") 8))
+      (should (equal (value "=INDEX(IFERROR({1;2}/{0;1},{8;9}),2)") 2))
+      (should (equal (value "=IFNA(1/0,3)") "#DIV/0!"))
+      ;; A spill reference followed by a space intersects what comes next.
+      (grid-model-set-raw-value model 0 1 "=SEQUENCE(3)")
+      (should (equal (value "=B1# B2") 2)))))
+
+(ert-deftest grid-table-formula-spill-read-before-its-formula ()
+  ;; A1 comes before B4 in the sheet but reads what B4 spills.
+  (let ((model (grid-model-create
+                6 2 '(("=B5*10" "") ("" "") ("" "") ("" "=SEQUENCE(2)")
+                      ("" "") ("" "")))))
+    (should (equal (grid-model-get-computed-value model 0 0) 20))))
+
+(ert-deftest grid-table-formula-spill-moves-with-its-formula ()
+  (let* ((model (grid-model-create
+                 5 2 '(("" "=SUM(A3:A5)") ("" "") ("=SEQUENCE(3)" "")
+                       ("" "") ("" ""))))
+         (moved (grid-model-delete-row model 0)))
+    (should (equal (cl-loop for row below 4
+                            collect (grid-model-get-computed-value moved row 0))
+                   '("" 1 2 3)))
+    (should (equal (grid-model-get-computed-value moved 0 1) 6))))
+
+(ert-deftest grid-table-edits-give-what-computing-everything-gives-with-spills ()
+  (let* ((rows 10) (cols 5)
+         (formulas '("=SEQUENCE(2)" "=SEQUENCE(3,2)" "=A1:A3" "=SORT(B1:B4)"
+                     "=SUM(A1:B6)" "=A2+1" "=C4*2" "=COUNT(C1:C10)"
+                     "=ROWS(A1#)" "=B3" "=TRANSPOSE(A1:A3)"))
+         (pick (lambda ()
+                 (pcase (random 5)
+                   (0 (number-to-string (random 20)))
+                   ((or 1 2) (nth (random (length formulas)) formulas))
+                   (_ ""))))
+         model)
+    (random "grid-table-spills")
+    (setq model (grid-model-create
+                 rows cols
+                 (cl-loop repeat rows collect
+                          (cl-loop repeat cols collect (funcall pick)))))
+    (dotimes (_ 300)
+      (grid-model-set-raw-value model (random rows) (random cols)
+                                (funcall pick))
+      (should (equal (grid-table-formula-test--all-values model)
+                     (grid-table-formula-test--fresh-values model))))))
 
 (ert-deftest grid-table-edits-give-what-computing-everything-gives ()
   (let* ((rows 12) (cols 6)
@@ -1368,7 +1486,7 @@
       (should (= (value "=SUM((A1,B1:B2))") 7))
       (should (equal (value "=(A1,B1)") "#VALUE!"))
       ;; A# is the cells the formula in A spills over; only a formula
-      ;; spills.  (The grid doesn't show the spilled values yet.)
+      ;; spills.
       (should (= (value "=ROWS(C1#)") 3))
       (should (= (value "=ROWS(C1:C2 C1#)") 2))
       (should (equal (value "=ROWS(A1#)") "#REF!"))

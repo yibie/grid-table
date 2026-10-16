@@ -45,18 +45,32 @@ A CONDITION of several values chooses for each of them."
           (throw 'found (grid-calc-arg value 'values)))))
     (grid-calc-err "#N/A")))
 
-(grid-calc-define iferror ((value any) (fallback lazy))
-  "VALUE, or FALLBACK when VALUE is an error value."
-  :errors t
-  (if (grid-calc-err-p value) (grid-calc--first (grid-calc--branch fallback))
-    value))
+(defun grid-calc--unless-error (value fallback errorp)
+  "The lazy VALUE, or the lazy FALLBACK where it is an error ERRORP takes.
+For several values, each error among them is swapped for the value of
+FALLBACK at its place."
+  (let ((value (grid-calc--scalar-or-array (grid-calc-arg value 'values))))
+    (cond
+     ((grid-calc-array-p value)
+      (if (not (cl-loop for row below (grid-calc-array-rows value)
+                        thereis (cl-loop for col below (grid-calc-array-cols value)
+                                         thereis (funcall errorp
+                                                          (grid-calc-aref value row col)))))
+          value
+        (grid-calc--broadcast
+         (lambda (one other) (if (funcall errorp one) other one))
+         (list value (grid-calc--deref (grid-calc--branch fallback))))))
+     ((funcall errorp value) (grid-calc--first (grid-calc--branch fallback)))
+     (t value))))
 
-(grid-calc-define ifna ((value any) (fallback lazy))
+(grid-calc-define iferror ((value lazy) (fallback lazy))
+  "VALUE, or FALLBACK when VALUE is an error value."
+  (grid-calc--unless-error value fallback #'grid-calc-err-p))
+
+(grid-calc-define ifna ((value lazy) (fallback lazy))
   "VALUE, or FALLBACK when VALUE is #N/A."
-  :errors t
-  (if (eq value (grid-calc-err "#N/A"))
-      (grid-calc--first (grid-calc--branch fallback))
-    value))
+  (grid-calc--unless-error value fallback
+                           (lambda (one) (eq one (grid-calc-err "#N/A")))))
 
 (grid-calc-define switch ((value any) &rest (cases lazy))
   "The result after the first case equal to VALUE, or the last argument.
@@ -187,8 +201,21 @@ as an argument must be TRUE or FALSE.  None at all is #VALUE!."
                 (+ (* row (grid-data-model-cols model)) col))))))
 
 (grid-calc-define isformula ((reference ref))
-  "TRUE when the cell REFERENCE names holds a formula."
-  (grid-calc-bool (grid-calc--formula-p (grid-calc--raw-at reference))))
+  "TRUE when the cell REFERENCE names holds a formula; for a range, as
+many values, one for each cell."
+  (if (and (= (grid-calc-ref-rows reference) 1)
+           (= (grid-calc-ref-cols reference) 1))
+      (grid-calc-bool (grid-calc--formula-p (grid-calc--raw-at reference)))
+    (let ((model (grid-calc-ref-model reference))
+          (top (grid-calc-ref-top reference))
+          (left (grid-calc-ref-left reference)))
+      (grid-calc-array (grid-calc-ref-rows reference) (grid-calc-ref-cols reference)
+                       (lambda (row col)
+                         (grid-calc-bool
+                          (grid-calc--formula-p
+                           (grid-calc--raw-at
+                            (grid-calc-ref--make model (+ top row) (+ left col)
+                                                 (+ top row) (+ left col))))))))))
 
 (defun grid-calc-closing-paren (text open)
   "Return where the parenthesis at OPEN in TEXT closes, or nil.

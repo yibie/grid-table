@@ -103,11 +103,14 @@ starts by computing a date, such as =TODAY()+7, is shown as a date."
 
 (defun grid-table-false-value-p (source row col value)
   "Return non-nil when VALUE, computed at ROW and COL of SOURCE, is FALSE.
-A formula that comes out false computes nil, as an empty cell does not."
+A formula that comes out false computes nil, as an empty cell does not;
+so does a cell showing a FALSE that a formula spills."
   (and (null value)
        (gethash :get-raw-value-at source)
-       (let ((raw (grid-get-raw-value-at source row col)))
-         (and (stringp raw) (string-prefix-p "=" raw)))))
+       (let ((raw (grid-get-raw-value-at source row col))
+             (model (gethash :model source)))
+         (or (and (stringp raw) (string-prefix-p "=" raw))
+             (and model (grid-calc-spilled-p model row col))))))
 
 (defun grid-get-display-value-at (source row col)
   "Return what the cell at ROW and COL of SOURCE shows.

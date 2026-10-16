@@ -10,7 +10,7 @@
 (defvar grid-cell--reads)
 (declare-function grid-data-model-styles "grid-data-model")
 (declare-function grid-data-model-cols "grid-data-model")
-(declare-function grid-data-model-legacy-p "grid-data-model")
+(declare-function grid-model-legacy-at "grid-data-model")
 (declare-function grid-model-array-at "grid-data-model")
 
 ;;;----------------------------------------------------------------------
@@ -33,6 +33,23 @@ with one entry per cell: nil when the cell has not been computed yet,
 One table serves all the sheets of a workbook, so that a formula reading
 another sheet has that cell computed first and a cycle through several
 sheets is found.")
+
+(declare-function grid-model-find-merge "grid-data-model")
+
+(defvar grid-calc--spills (make-hash-table :test 'eq :weakness 'key)
+  "For each model, the formulas whose values spill over the cells below
+and to the right of them: a vector [ANCHORS LIVE WANTS].  ANCHORS maps
+the index of such a formula's cell to (ROWS COLS BLOCKED), the size of
+its values and whether a cell in the way keeps them from spilling, when
+its formula shows #SPILL!.  LIVE maps each cell showing a spilled value
+to the index of the formula it comes from.  WANTS maps each cell the
+values would cover to the formulas that would spill into it, spilling
+or blocked, so that a change to it computes them again.")
+
+(defvar grid-calc--spill-changed nil
+  "Non-nil when the recalculation in progress moved a spill.
+A cell may then have read a spilled cell before the value it shows
+now was there, and the cells are computed again.")
 
 (defvar grid-calc-sheets nil
   "Function that returns the model of the sheet with a given name, or nil.
@@ -202,9 +219,26 @@ instead of stopping the recalculation."
       ;; The signal names the cell the cycle comes back to.
       ('visiting (signal 'grid-calc-cycle (list model index)))
       (_
-       (if (vectorp pass)
-           (aset pass index 'visiting)
-         (puthash index 'visiting pass))
+       ;; A blank cell may show what a formula above or to the left of
+       ;; it spills; that formula is computed first, and writes it.
+       (when (equal (grid-cell-raw-input cell) "")
+         (dolist (anchor (grid-calc--spill-wanted model index))
+           (grid-calc--compute-cell model anchor)))
+       (unless (eq (grid-calc--pass-state pass index) 'done)
+         (grid-calc--compute-own-cell model index cell pass))))))
+
+(defun grid-calc--pass-state (pass index)
+  "Return the state of the cell at INDEX in PASS, a model's pass state."
+  (if (vectorp pass) (aref pass index) (gethash index pass 'done)))
+
+(defun grid-calc--set-pass-state (pass index state)
+  "Make STATE the state of the cell at INDEX in PASS."
+  (if (vectorp pass) (aset pass index state) (puthash index state pass)))
+
+(defun grid-calc--compute-own-cell (model index cell pass)
+  "Compute the cell CELL at INDEX of MODEL from what it holds.
+PASS is MODEL's state in the recalculation in progress."
+  (grid-calc--set-pass-state pass index 'visiting)
        (let ((raw (grid-cell-raw-input cell))
              cycle-head)
          (set-grid-cell-computed-value
@@ -217,18 +251,33 @@ instead of stopping the recalculation."
                          (row (/ index cols))
                          (col (% index cols))
                          (grid-calc-legacy-arrays
-                          (or (grid-data-model-legacy-p model)
+                          (or (grid-model-legacy-at model row col)
                               grid-calc-legacy-arrays))
                          (grid-calc--array-formula
-                          (and (grid-model-array-at model row col) t)))
-                    (grid-calc--eval-formula model (grid-calc--parsed cell raw)
-                                             row col))
-                (grid-calc-cycle (setq cycle-head (cdr err)) "#CYCLE!")
-                (error (grid-calc--error-value err)))
+                          (and (grid-model-array-at model row col) t))
+                         (range (grid-model-array-at model row col))
+                         (ast (grid-calc--parsed cell raw))
+                         ;; Unstored, as the formula computed it
+                         (raw-value (and (or range (not grid-calc-legacy-arrays))
+                                         (not (eq (car-safe ast) 'ELISP-CODE))))
+                         (value (grid-calc--eval-formula
+                                 model ast row col raw-value)))
+                    (cond
+                     (range (grid-calc--spill
+                             model index
+                             (grid-calc--array-fill value range row col)
+                             t))
+                     ((grid-calc-array-p value)
+                      (grid-calc--spill model index value))
+                     (t (grid-calc--spill-retract model index)
+                        (if raw-value (grid-calc--store value) value))))
+                (grid-calc-cycle (grid-calc--spill-retract model index)
+                                 (setq cycle-head (cdr err)) "#CYCLE!")
+                (error (grid-calc--spill-retract model index)
+                       (grid-calc--error-value err)))
+            (grid-calc--spill-retract model index)
             (grid-calc--typed-value raw)))
-         (if (vectorp pass)
-             (aset pass index 'done)
-           (puthash index 'done pass))
+         (grid-calc--set-pass-state pass index 'done)
          ;; Every formula on a cycle is part of it, not only the one that
          ;; closed it: the signal goes on up to the cell the cycle comes
          ;; back to.  A formula that only reads that cell, from outside
@@ -236,7 +285,181 @@ instead of stopping the recalculation."
          ;; them is computed first.
          (when (and cycle-head (> grid-calc--depth 0)
                     (not (equal cycle-head (list model index))))
-           (signal 'grid-calc-cycle cycle-head)))))))
+           (signal 'grid-calc-cycle cycle-head))))
+
+;;;----------------------------------------------------------------------
+;;; Spilling
+;;;----------------------------------------------------------------------
+;;
+;; A formula typed in the grid that gives several values shows the first
+;; and spills the others over the cells below and to the right of it, as
+;; =SEQUENCE(3) fills A1:A3.  Those cells stay empty, showing the values;
+;; a cell in the way that holds something, a merged cell, another spill
+;; or the sheet's edge makes the formula #SPILL! instead.  Formulas read
+;; from a workbook file, and array formulas, do not spill.
+
+(defun grid-calc--spill-state (model)
+  "Return MODEL's spills, a vector [ANCHORS LIVE WANTS]."
+  (or (gethash model grid-calc--spills)
+      (puthash model (vector (make-hash-table) (make-hash-table)
+                             (make-hash-table))
+               grid-calc--spills)))
+
+(defun grid-calc--spill-wanted (model index)
+  "Return the formulas of MODEL that would spill into the cell at INDEX."
+  (when-let* ((state (gethash model grid-calc--spills)))
+    (gethash index (aref state 2))))
+
+(defun grid-calc-spilled-p (model row col)
+  "Return non-nil when the cell at ROW and COL of MODEL shows a spilled value."
+  (and (grid-calc--spill-source
+        model (+ (* row (grid-data-model-cols model)) col))
+       t))
+
+(defun grid-calc-spill-range (model row col)
+  "Return the cells the formula at ROW and COL of MODEL spills over, or nil.
+A range such as \"A1:B3\"; nil when it spills nothing or is blocked."
+  (when-let* ((state (gethash model grid-calc--spills))
+              (spill (gethash (+ (* row (grid-data-model-cols model)) col)
+                              (aref state 0))))
+    (pcase-let ((`(,rows ,cols ,blocked) spill))
+      (unless blocked
+        (format "%s%d:%s%d"
+                (grid-calc-col-number-to-letter col) (1+ row)
+                (grid-calc-col-number-to-letter (+ col cols -1)) (+ row rows))))))
+
+(defun grid-calc--spill-blocked-p (model index)
+  "Return non-nil when the formula at INDEX of MODEL shows #SPILL!."
+  (when-let* ((state (gethash model grid-calc--spills)))
+    (nth 2 (gethash index (aref state 0)))))
+
+(defun grid-calc--spill-source (model index)
+  "Return the formula whose value the cell at INDEX of MODEL shows, or nil."
+  (when-let* ((state (gethash model grid-calc--spills)))
+    (gethash index (aref state 1))))
+
+(defun grid-calc--spill-cells (model anchor rows cols)
+  "Return the cells of MODEL a spill of ROWS by COLS from ANCHOR covers.
+Only those on the sheet, and not ANCHOR itself."
+  (let* ((width (grid-data-model-cols model))
+         (top (/ anchor width))
+         (left (% anchor width))
+         cells)
+    (dotimes (row (min rows (- (grid-data-model-rows model) top)))
+      (dotimes (col (min cols (- width left)))
+        (unless (and (= row 0) (= col 0))
+          (push (+ (* (+ top row) width) left col) cells))))
+    (nreverse cells)))
+
+(defun grid-calc--spill-clear (model index state)
+  "Take the spill of the formula at INDEX of MODEL off its cells.
+STATE is MODEL's spill state.  The cells it covered show what they hold."
+  (pcase (gethash index (aref state 0))
+    (`(,rows ,cols ,_)
+     (let ((pass (and grid-calc--pass (grid-calc--pass-of model)))
+           (cells (grid-data-model-cells model)))
+       (dolist (at (grid-calc--spill-cells model index rows cols))
+         (puthash at (delq index (gethash at (aref state 2))) (aref state 2))
+         (unless (gethash at (aref state 2)) (remhash at (aref state 2)))
+         (when (eql (gethash at (aref state 1)) index)
+           (remhash at (aref state 1))
+           (let ((cell (aref cells at)))
+             (when (and pass (eq (grid-calc--pass-state pass at) 'done)
+                        (not (equal (grid-cell-computed-value cell)
+                                    (grid-cell-raw-input cell))))
+               (setq grid-calc--spill-changed t))
+             (set-grid-cell-computed-value
+              cell (grid-calc--typed-value (grid-cell-raw-input cell)))))))
+     (remhash index (aref state 0)))))
+
+(defun grid-calc--spill-retract (model index)
+  "Note that the cell at INDEX of MODEL spills nothing."
+  (when-let* ((state (gethash model grid-calc--spills)))
+    (when (gethash index (aref state 0))
+      (grid-calc--spill-clear model index state)
+      (setq grid-calc--spill-changed t))))
+
+(defun grid-calc--array-fill (value range row col)
+  "Return VALUE as the array formula at ROW and COL fills RANGE with it.
+RANGE, such as \"A1:B3\", is the cells the formula was entered over.  A
+single value fills them all, a single row or column repeats down or
+across, and a cell past the values shows #N/A, as in a spreadsheet."
+  (let* ((corner (and (string-match "\\`\\$?[A-Z]+\\$?[0-9]+:\\(\\$?[A-Z]+\\$?[0-9]+\\)\\'"
+                                    range)
+                      (grid-calc-parse-cell-ref (match-string 1 range))))
+         (rows (if corner (1+ (- (plist-get corner :row) row)) 1))
+         (cols (if corner (1+ (- (plist-get corner :col) col)) 1))
+         (value (if (grid-calc-array-p value) value
+                  (grid-calc-array--make 1 1 (vector value))))
+         (have-rows (grid-calc-array-rows value))
+         (have-cols (grid-calc-array-cols value))
+         (data (make-vector (* (max rows 1) (max cols 1)) nil)))
+    (setq rows (max rows 1) cols (max cols 1))
+    (dotimes (r rows)
+      (dotimes (c cols)
+        (let ((r* (if (= have-rows 1) 0 r))
+              (c* (if (= have-cols 1) 0 c)))
+          (aset data (+ (* r cols) c)
+                (if (and (< r* have-rows) (< c* have-cols))
+                    (grid-calc-aref value r* c*)
+                  (grid-calc-err "#N/A"))))))
+    (grid-calc-array--make rows cols data)))
+
+(defun grid-calc--spill (model index array &optional fixed)
+  "Spill ARRAY, the values of the formula at INDEX of MODEL.
+Return the value the formula's own cell shows: the first of them, or
+#SPILL! when they cannot spill.  FIXED, for an array formula, fills
+the cells of ARRAY's size that hold nothing and is never blocked."
+  (let* ((rows (grid-calc-array-rows array))
+         (cols (grid-calc-array-cols array))
+         (state (grid-calc--spill-state model))
+         (width (grid-data-model-cols model))
+         (top (/ index width))
+         (left (% index width))
+         (cells (grid-calc--spill-cells model index rows cols))
+         (all-cells (grid-data-model-cells model))
+         (old (gethash index (aref state 0)))
+         (blocked
+          (and
+           (not fixed)
+           (or (> (+ top rows) (grid-data-model-rows model))
+              (> (+ left cols) width)
+              (cl-some (lambda (at)
+                         (or (not (equal (grid-cell-raw-input (aref all-cells at)) ""))
+                             (let ((source (gethash at (aref state 1))))
+                               (and source (/= source index)))
+                             (grid-model-find-merge model (/ at width) (% at width))))
+                       cells)
+              (and (grid-model-find-merge model top left) t))))
+         (new (list rows cols (and blocked t))))
+    (if (and (= rows 1) (= cols 1) (not fixed))
+        (progn (grid-calc--spill-retract model index)
+               (grid-calc--store (grid-calc-aref array 0 0)))
+      (unless (equal old new)
+        (grid-calc--spill-clear model index state)
+        (setq grid-calc--spill-changed t))
+      (puthash index new (aref state 0))
+      (dolist (at cells)
+        (cl-pushnew index (gethash at (aref state 2))))
+      (if blocked
+          "#SPILL!"
+        (let ((pass (grid-calc--pass-of model)))
+          (dolist (at cells)
+            (let* ((cell (aref all-cells at))
+                   (taken (or (not (equal (grid-cell-raw-input cell) ""))
+                              (let ((source (gethash at (aref state 1))))
+                                (and source (/= source index)))))
+                   (value (grid-calc--store
+                           (grid-calc-aref array (- (/ at width) top)
+                                           (- (% at width) left)))))
+              (unless taken
+                (when (and (eq (grid-calc--pass-state pass at) 'done)
+                           (not (equal value (grid-cell-computed-value cell))))
+                  (setq grid-calc--spill-changed t))
+                (puthash at index (aref state 1))
+                (set-grid-cell-computed-value cell value)
+                (grid-calc--set-pass-state pass at 'done)))))
+        (grid-calc--store (grid-calc-aref array 0 0))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Recalculating only what an edit reaches
@@ -531,6 +754,17 @@ would take longer than computing them all."
                                         (throw 'everything nil))))
                   (when (eq (gethash index state 'clean) 'clean)
                     (puthash index nil state)
+                    ;; A cell a formula spills into, or would, has that
+                    ;; formula computed again; a formula that spills, the
+                    ;; cells showing its values.
+                    (when-let* ((spills (gethash model grid-calc--spills)))
+                      (dolist (anchor (gethash index (aref spills 2)))
+                        (push (cons model anchor) queue))
+                      (pcase (gethash index (aref spills 0))
+                        (`(,rows ,cols nil)
+                         (dolist (at (grid-calc--spill-cells model index rows cols))
+                           (when (eql (gethash at (aref spills 1)) index)
+                             (push (cons model at) queue))))))
                     (let* ((graph (gethash model grid-calc--graphs))
                            (cols (grid-data-model-cols model))
                            (row (/ index cols))
@@ -560,7 +794,11 @@ would take longer than computing them all."
             (maphash (lambda (index _state) (push index indices)) state)
             (dolist (index indices)
               (grid-calc--compute-cell model index))))
-        t))))
+        ;; A spill that moved may cover cells whose readers were not
+        ;; computed: compute everything.
+        (not grid-calc--spill-changed)))))
+
+(defvar grid-calc--exact-indexes)
 
 (defun grid-table-calc-evaluate-models (models &optional everything)
   "Evaluate the formulas of MODELS, the sheets of one workbook.
@@ -570,13 +808,23 @@ since the last time and the formulas they reach are computed, unless
 EVERYTHING is non-nil or a model has no record of who reads what; then
 every cell is, once."
   (let ((grid-calc--pass (make-hash-table :test 'eq))
-        (grid-calc--depth 0))
+        (grid-calc--depth 0)
+        (grid-calc--spill-changed nil)
+        (grid-calc--exact-indexes (make-hash-table :test 'eq :weakness 'key)))
     (unless (and grid-calc-incremental (not everything)
                  (grid-calc--evaluate-dirty models))
-      (clrhash grid-calc--pass)
-      (dolist (model models)
-        (dotimes (i (length (grid-data-model-cells model)))
-          (grid-calc--compute-cell model i)))
+      ;; A cell read before a spill reached it is computed again, with
+      ;; the spills now known; twice is enough unless spills chase each
+      ;; other.
+      (let ((passes 0))
+        (while (progn
+                 (setq grid-calc--spill-changed nil)
+                 (clrhash grid-calc--pass)
+                 (clrhash grid-calc--exact-indexes)
+                 (dolist (model models)
+                   (dotimes (i (length (grid-data-model-cells model)))
+                     (grid-calc--compute-cell model i)))
+                 (and grid-calc--spill-changed (< (cl-incf passes) 3)))))
       (if grid-calc-incremental
           (grid-calc--build-graphs models)
         (mapc #'grid-calc-forget models)))))
@@ -814,7 +1062,8 @@ never read stale.  A cell past the sheet's edge is blank."
         (grid-calc--compute-cell model index))
       (let* ((cell (aref (grid-data-model-cells model) index))
              (raw (grid-cell-raw-input cell)))
-        (if (grid-calc--formula-p raw)
+        (if (or (grid-calc--formula-p raw)
+                (and (equal raw "") (grid-calc--spill-source model index)))
             (grid-calc--from-result (grid-cell-computed-value cell))
           (grid-calc--from-constant raw))))))
 
@@ -1109,7 +1358,7 @@ Blank is 0, TRUE 1 and FALSE 0; text is the number it reads as."
       (string-match "\\`\\(-?\\)\\([0-9]\\)\\.\\([0-9]*\\)e\\([-+][0-9]+\\)\\'" text)
       (let* ((sign (match-string 1 text))
              (digits (string-trim-right
-                      (concat (match-string 2 text) (match-string 3 text)) "0"))
+                      (concat (match-string 2 text) (match-string 3 text)) "0+"))
              (exponent (string-to-number (match-string 4 text))))
         (if (or (>= exponent 15) (< exponent -9)
                 (and (< exponent 0) (> (- (length digits) exponent) 20)))
@@ -1602,18 +1851,22 @@ A reference stays a `grid-calc-ref'; see `grid-calc--scalar-or-array'."
        (error "Elisp disabled: see `grid-table-allow-elisp'")))
     (_ (error "Unknown AST node type: %s" ast))))
 
-(defun grid-calc--eval-formula (model ast &optional row col)
+(defun grid-calc--eval-formula (model ast &optional row col spill)
   "Return what the formula AST at ROW and COL of MODEL comes to.
-The value is in the form a cell stores; see `grid-calc--store'."
+The value is in the form a cell stores; see `grid-calc--store'.  With
+SPILL it is returned as the formula computed it, an array of several
+values included, for `grid-calc--spill' to store."
   (let* ((grid-calc--here (list model row col))
-         (grid-calc--array-context grid-calc--array-formula)
+         (grid-calc--array-context (or grid-calc--array-formula spill))
          (value (grid-calc--eval model ast)))
     (if (eq (car-safe ast) 'ELISP-CODE)
         value
-      (grid-calc--store
-       (if (grid-calc-ref-p value)
-           (grid-calc--scalar-or-array value)
-         value)))))
+      (let ((value (if (grid-calc-ref-p value)
+                       (grid-calc--scalar-or-array value)
+                     value)))
+        (if spill
+            value
+          (grid-calc--store value))))))
 
 (defun grid-calc-eval-ast (model ast)
   "Return the value of the parsed formula AST on MODEL's sheet.
@@ -1667,8 +1920,10 @@ of them, row after row."
 KINDS lists the kind of each argument and REST the kind of those past
 them, or nil; MIN is how many must be given.  ERRORS non-nil takes error
 values in as arguments.  BODY is the Lisp function.  LEGACY marks one
-defined with `grid-calc-defun'."
-  name kinds rest min errors body legacy)
+defined with `grid-calc-defun'.  EMPTY, when non-nil, lists the default
+of each argument, which then also stands in for one left empty, as in
+SORT(A1:A3,,-1); otherwise an empty argument is blank, so 0 or FALSE."
+  name kinds rest min errors body legacy empty)
 
 (defvar grid-calc-functions (make-hash-table :test 'equal)
   "The functions formulas can call, by their names in capitals.")
@@ -1707,22 +1962,25 @@ Each element is NAME, of kind any, or (NAME KIND [DEFAULT]), with
 (defmacro grid-calc-define (name arglist &rest body)
   "Define NAME as a function formulas can call, taking ARGLIST.
 See the commentary above for ARGLIST's kinds.  BODY may start with a
-docstring and with :errors t, to take error values as arguments.  It
+docstring and with :errors t, to take error values as arguments, and
+with :empty t, for an empty argument to take its default.  It
 returns a value as a formula has it, or signals one with
 `grid-calc-raise'; for TRUE and FALSE see `grid-calc-bool'."
   (declare (indent 2) (doc-string 3))
   (pcase-let ((`(,names ,kinds ,rest ,min ,defaults)
                (grid-calc--parse-arglist arglist))
-              (errors nil))
+              (errors nil) (empty nil))
     (when (stringp (car body)) (pop body))
     (while (and (keywordp (car body)) (cdr body))
       (pcase (pop body)
         (:errors (setq errors (pop body)))
+        (:empty (setq empty (pop body)))
         (key (error "Unknown keyword %s" key))))
     `(puthash ,(upcase (symbol-name name))
               (grid-calc-function--make
                :name ,(upcase (symbol-name name))
                :kinds ',kinds :rest ',(cdr rest) :min ,min :errors ,errors
+               :empty ,(and empty `(list ,@defaults))
                ;; A default stands in only for an argument left out, not
                ;; for one that came to nil, as FALSE does for bool.
                :body (cl-function
@@ -1821,15 +2079,20 @@ A value for a scalar KIND may still be an array, or an error value."
                                      collect (if (< i (length kinds))
                                                  (nth i kinds)
                                                rest)))
+                 (empty (grid-calc-function-empty function))
                  (values (cl-loop for ast in arguments
                                   for kind in all-kinds
                                   for index from 0
-                                  collect (grid-calc--argument
-                                           model ast
-                                           (if (and (eq kind 'values)
-                                                    (>= index (length kinds)))
-                                               'areas
-                                             kind)))))
+                                  collect
+                                  (if (and (equal ast '(MISSING))
+                                           (nth index empty))
+                                      (nth index empty)
+                                    (grid-calc--argument
+                                     model ast
+                                     (if (and (eq kind 'values)
+                                              (>= index (length kinds)))
+                                         'areas
+                                       kind))))))
             ;; Each area of a union, as in SUM((A1,C3)), is an argument
             ;; of its own where the arguments may repeat.
             (when (cl-some (lambda (value) (eq (car-safe value) 'union)) values)

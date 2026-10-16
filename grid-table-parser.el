@@ -205,9 +205,10 @@ token; elsewhere it separates tokens and is dropped."
           (let ((start pos))
             (while (and (< pos len) (memq (aref formula-str pos) '(?\s ?\t ?\n ?\r)))
               (setq pos (1+ pos)))
-            ;; A1:B5 C3:D4 is where the two ranges meet
+            ;; A1:B5 C3:D4 is where the two ranges meet, as is A1# C3:D4
             (when (and tokens (< pos len)
-                       (memq (caar tokens) '(CELL-REF RPAREN STRUCT NAME-REF))
+                       (or (memq (caar tokens) '(CELL-REF RPAREN STRUCT NAME-REF))
+                           (equal (car tokens) '(OPERATOR "#")))
                        (or (grid-parser--name-start-p (aref formula-str pos))
                            (memq (aref formula-str pos) '(?' ?\())))
               (push (list 'SPACE (substring formula-str start pos)) tokens))))
