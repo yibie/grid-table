@@ -368,22 +368,31 @@ With A1 false TEXT is in R1C1 style, as \"R2C3\" or \"R[-1]C\"."
         (grid-calc-err "#REF!"))))
 
 (defun grid-calc--anchor-array (reference)
-  "Return what the formula in the corner of REFERENCE gives, all of it."
+  "Return the cells the formula in the corner of REFERENCE spills over.
+They are a reference, so a formula in a plain cell takes the one in its
+own row or column, as from any range."
   (let* ((model (grid-calc-ref-model reference))
          (row (grid-calc-ref-top reference))
          (col (grid-calc-ref-left reference))
          (raw (grid-calc--raw-at reference)))
-    (if (not (grid-calc--formula-p raw))
-        (grid-calc-ref-cell reference 0 0)
-      (let ((grid-calc--here (list model row col))
-            (grid-calc--array-context t)
-            (grid-calc--locals nil))
-        (grid-calc--deref
-         (grid-calc--eval model (grid-parser-parse (substring raw 1))))))))
+    ;; Only one cell, holding a formula, is a corner things spill from.
+    (if (not (and (= (grid-calc-ref-rows reference) 1)
+                  (= (grid-calc-ref-cols reference) 1)
+                  (grid-calc--formula-p raw)))
+        (grid-calc-err "#REF!")
+      (let* ((value (let ((grid-calc--here (list model row col))
+                          (grid-calc--array-context t)
+                          (grid-calc--locals nil))
+                      (grid-calc--deref
+                       (grid-calc--eval model (grid-parser-parse (substring raw 1))))))
+             (rows (if (grid-calc-array-p value) (grid-calc-array-rows value) 1))
+             (cols (if (grid-calc-array-p value) (grid-calc-array-cols value) 1)))
+        (grid-calc-ref--make model row col (+ row rows -1) (+ col cols -1))))))
 
 (grid-calc-define anchorarray ((reference ref))
   "All the values the formula at REFERENCE gives, as A1# names them."
-  (grid-calc--anchor-array reference))
+  (if (eq (car-safe reference) 'union) (grid-calc-err "#REF!")
+    (grid-calc--anchor-array reference)))
 
 ;;;----------------------------------------------------------------------
 ;;; Where a reference is
@@ -414,12 +423,14 @@ A range of several columns gives each of their numbers."
                          (lambda (_ col) (+ left col 1)))))))
 
 (grid-calc-define rows ((value values))
-  "How many rows VALUE has."
-  (car (grid-calc--table-full-size value)))
+  "How many rows VALUE has.  An error given for VALUE is the answer."
+  (if (grid-calc-err-p value) value
+    (car (grid-calc--table-full-size value))))
 
 (grid-calc-define columns ((value values))
-  "How many columns VALUE has."
-  (cdr (grid-calc--table-full-size value)))
+  "How many columns VALUE has.  An error given for VALUE is the answer."
+  (if (grid-calc-err-p value) value
+    (cdr (grid-calc--table-full-size value))))
 
 (grid-calc-define areas ((reference ref))
   "How many areas REFERENCE has, as (A1:B2,D4) has 2."

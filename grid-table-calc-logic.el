@@ -190,10 +190,55 @@ as an argument must be TRUE or FALSE.  None at all is #VALUE!."
   "TRUE when the cell REFERENCE names holds a formula."
   (grid-calc-bool (grid-calc--formula-p (grid-calc--raw-at reference))))
 
+(defun grid-calc-closing-paren (text open)
+  "Return where the parenthesis at OPEN in TEXT closes, or nil.
+Parentheses in strings and quoted sheet names don't count."
+  (let ((depth 0) (pos open) (end (length text)) (found nil))
+    (while (and (not found) (< pos end))
+      (let ((char (aref text pos)))
+        (cond ((memq char '(?\" ?'))
+               ;; Up to the closing quote; a doubled one stays inside.
+               (setq pos (1+ pos))
+               (while (and (< pos end)
+                           (or (/= (aref text pos) char)
+                               (and (< (1+ pos) end) (= (aref text (1+ pos)) char)
+                                    (setq pos (1+ pos)))))
+                 (setq pos (1+ pos))))
+              ((eq char ?\() (setq depth (1+ depth)))
+              ((eq char ?\))
+               (setq depth (1- depth))
+               (when (= depth 0) (setq found pos)))))
+      (setq pos (1+ pos)))
+    found))
+
+(defun grid-calc-excel-formula-text (formula)
+  "Return FORMULA as Excel shows it: SINGLE(X) as @X, ANCHORARRAY(A1) as A1#.
+Workbooks store the operators as these functions."
+  (let ((case-fold-search t) (start 0))
+    (while (string-match "\\(?:\\`\\|[^A-Za-z0-9_.]\\)\\(SINGLE\\|ANCHORARRAY\\)("
+                         formula start)
+      (let* ((from (match-beginning 1))
+             (open (1- (match-end 0)))
+             (anchor (string-equal (upcase (match-string 1 formula)) "ANCHORARRAY"))
+             (close (grid-calc-closing-paren formula open)))
+        (if (or (null close)
+                ;; Not inside a string: an even number of quotes before.
+                (cl-oddp (cl-count ?\" formula :end from)))
+            (setq start (match-end 0))
+          (let ((inner (grid-calc-excel-formula-text
+                        (substring formula (1+ open) close))))
+            (setq formula (concat (substring formula 0 from)
+                                  (if anchor (concat inner "#") (concat "@" inner))
+                                  (substring formula (1+ close)))
+                  start from)))))
+    formula))
+
 (grid-calc-define formulatext ((reference ref))
-  "The formula of the cell REFERENCE names, as text; #N/A when none."
+  "The formula of the cell REFERENCE names, as text, as Excel shows it;
+#N/A when there is none."
   (let ((raw (grid-calc--raw-at reference)))
-    (if (grid-calc--formula-p raw) (substring-no-properties raw)
+    (if (grid-calc--formula-p raw)
+        (grid-calc-excel-formula-text (substring-no-properties raw))
       (grid-calc-err "#N/A"))))
 
 (defconst grid-calc--error-numbers

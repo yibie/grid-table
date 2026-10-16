@@ -165,9 +165,6 @@ HOW is passed on to `grid-calc-numbers'."
 
 (defun grid-calc--paired (left right)
   "Return the pairs of numbers of LEFT and RIGHT, arrays of one size."
-  (unless (= (length (grid-calc-array-values left))
-             (length (grid-calc-array-values right)))
-    (grid-calc-raise "#N/A"))
   (grid-calc--number-pairs left right))
 
 (defun grid-calc--covariance (left right sample)
@@ -392,10 +389,12 @@ AGGREGATE, which these functions leave out to not count twice."
     (and (grid-calc--formula-p raw)
          (string-match-p "\\b\\(SUBTOTAL\\|AGGREGATE\\)(" (upcase raw)))))
 
-(defun grid-calc--shown-values (arguments skip-hidden skip-errors)
+(defun grid-calc--shown-values (arguments skip-hidden skip-errors
+                                           &optional keep-nested)
   "Return the values of ARGUMENTS as SUBTOTAL and AGGREGATE see them.
-Cells holding a SUBTOTAL or AGGREGATE are left out, and with
-SKIP-HIDDEN the hidden rows; SKIP-ERRORS leaves error values out."
+Cells holding a SUBTOTAL or AGGREGATE are left out unless KEEP-NESTED,
+and with SKIP-HIDDEN the hidden rows; SKIP-ERRORS leaves error values
+out."
   (let (values)
     (dolist (argument arguments)
       (if (grid-calc-ref-p argument)
@@ -408,7 +407,8 @@ SKIP-HIDDEN the hidden rows; SKIP-ERRORS leaves error values out."
             (dotimes (row (grid-calc-ref-filled-rows argument))
               (unless (memq (+ top row) hidden)
                 (dotimes (col cols)
-                  (unless (grid-calc--subtotal-cell-p model (+ top row) (+ left col))
+                  (unless (and (not keep-nested)
+                               (grid-calc--subtotal-cell-p model (+ top row) (+ left col)))
                     (push (grid-calc--cell model (+ top row) (+ left col)) values))))))
         (grid-calc-each-value argument (lambda (value _) (push value values)))))
     (setq values (nreverse values))
@@ -463,13 +463,16 @@ ones leave out hidden rows, 2 and 3 and 6 and 7 error values, 0 to 3
 other subtotals."
   (unless (and (<= 1 function 19) (<= 0 options 7)) (grid-calc-raise "#VALUE!"))
   (let ((skip-hidden (memq options '(1 3 5 7)))
-        (skip-errors (memq options '(2 3 6 7))))
+        (skip-errors (memq options '(2 3 6 7)))
+        (keep-nested (> options 3)))
     (if (>= function 14)
         (grid-calc--aggregate-by
-         function (grid-calc--shown-values (list range) skip-hidden skip-errors)
+         function (grid-calc--shown-values (list range) skip-hidden skip-errors
+                                           keep-nested)
          (grid-calc--first (or (car more) (grid-calc-raise "#VALUE!"))))
       (grid-calc--aggregate-by
-       function (grid-calc--shown-values (cons range more) skip-hidden skip-errors)))))
+       function (grid-calc--shown-values (cons range more) skip-hidden skip-errors
+                                         keep-nested)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Database functions

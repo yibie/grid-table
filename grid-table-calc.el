@@ -843,6 +843,8 @@ an array formula or under `grid-calc-legacy-arrays', else #VALUE!."
         (grid-calc--store (grid-calc-aref value 0 0))
       "#VALUE!"))
    ((null value) 0)
+   ;; Several areas are no value a cell can show.
+   ((eq (car-safe value) 'union) "#VALUE!")
    ;; A chart
    (t value)))
 
@@ -1288,9 +1290,9 @@ of one row or column stands for each row or column."
   (cond
    ((and (zerop base) (zerop exponent)) (grid-calc-raise "#NUM!"))
    ((and (zerop base) (< exponent 0)) (grid-calc-raise "#DIV/0!"))
-   ((and (< base 0) (/= exponent (ftruncate exponent)))
-    ;; An odd root of a negative number is negative, as =-8^(1/3) is not
-    ;; in Excel either; it is #NUM!.
+   ((and (< base 0) (/= exponent (truncate exponent)))
+    ;; Excel has no root of a negative number, not even an odd one:
+    ;; =(-8)^(1/3) is #NUM!.
     (grid-calc-raise "#NUM!"))
    ((and (integerp base) (integerp exponent) (>= exponent 0)
          (< (* exponent (log (max 2 (abs base)) 2)) 62))
@@ -1778,11 +1780,13 @@ A value for a scalar KIND may still be an array, or an error value."
                (eq (car-safe value) 'union))
            value
          (grid-calc-err "#VALUE!"))))
-    ((or 'values 'array)
+    ((or 'values 'array 'areas)
      (let* ((grid-calc--array-context t)
             (value (grid-calc--eval model ast)))
+       ;; Several areas are only for an argument that may repeat, which
+       ;; `grid-calc--call' spreads them over; elsewhere one is wanted.
        (when (eq (car-safe value) 'union)
-         (setq value (cadr value)))
+         (setq value (if (eq kind 'areas) value (grid-calc-err "#VALUE!"))))
        (if (eq kind 'array)
            (let ((value (grid-calc--deref value)))
              (if (grid-calc-array-p value) value
@@ -1817,9 +1821,29 @@ A value for a scalar KIND may still be an array, or an error value."
                                      collect (if (< i (length kinds))
                                                  (nth i kinds)
                                                rest)))
-                 (values (cl-mapcar (lambda (ast kind)
-                                      (grid-calc--argument model ast kind))
-                                    arguments all-kinds)))
+                 (values (cl-loop for ast in arguments
+                                  for kind in all-kinds
+                                  for index from 0
+                                  collect (grid-calc--argument
+                                           model ast
+                                           (if (and (eq kind 'values)
+                                                    (>= index (length kinds)))
+                                               'areas
+                                             kind)))))
+            ;; Each area of a union, as in SUM((A1,C3)), is an argument
+            ;; of its own where the arguments may repeat.
+            (when (cl-some (lambda (value) (eq (car-safe value) 'union)) values)
+              (setq values (cl-loop for value in values
+                                    for kind in all-kinds
+                                    if (and (eq (car-safe value) 'union)
+                                            (eq kind 'values))
+                                    append (cdr value) into spread
+                                    and append (make-list (length (cdr value)) kind)
+                                    into spread-kinds
+                                    else collect value into spread
+                                    and collect kind into spread-kinds
+                                    finally (setq all-kinds spread-kinds)
+                                    finally return spread)))
             (grid-calc--apply function model all-kinds values))))))))
 
 (defun grid-calc--apply (function model kinds values)

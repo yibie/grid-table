@@ -298,12 +298,21 @@ DOMAIN, a function of the number, makes it #NUM! when it does not hold."
   (grid-calc--add (mapcar (lambda (n) (* n n)) (grid-calc-numbers numbers))))
 
 (defun grid-calc--pairs (left right)
-  "Return the values of arrays LEFT and RIGHT, which must be one size.
-They are a list of (L . R) pairs, in order."
-  (unless (and (= (grid-calc-array-rows left) (grid-calc-array-rows right))
-               (= (grid-calc-array-cols left) (grid-calc-array-cols right)))
-    (grid-calc-raise "#N/A"))
-  (cl-mapcar #'cons (grid-calc-array-values left) (grid-calc-array-values right)))
+  "Return the values of arrays LEFT and RIGHT, which must hold as many.
+They are a list of (L . R) pairs, in reading order; the shapes may
+differ, as a column of three pairs with a row of three."
+  (let ((lefts (grid-calc-array-values left))
+        (rights (grid-calc-array-values right)))
+    (unless (= (length lefts) (length rights))
+      (grid-calc-raise "#N/A"))
+    (cl-mapcar #'cons lefts rights)))
+
+(defun grid-calc--sum-pairs (fn xs ys)
+  "Return the sum of FN over the pairs of numbers of XS and YS.
+With no such pair it is #DIV/0!, as in Excel."
+  (let ((pairs (grid-calc--number-pairs xs ys)))
+    (unless pairs (grid-calc-raise "#DIV/0!"))
+    (grid-calc--add (mapcar (lambda (p) (funcall fn (car p) (cdr p))) pairs))))
 
 (defun grid-calc--number-pairs (left right)
   "Return the pairs of LEFT and RIGHT that are both numbers, as (L . R)."
@@ -339,18 +348,15 @@ Values that are not numbers count as 0."
 
 (grid-calc-define sumx2my2 ((xs array) (ys array))
   "The sum of the differences of the squares of pairs of XS and YS."
-  (grid-calc--add (mapcar (lambda (p) (- (* (car p) (car p)) (* (cdr p) (cdr p))))
-                          (grid-calc--number-pairs xs ys))))
+  (grid-calc--sum-pairs (lambda (x y) (- (* x x) (* y y))) xs ys))
 
 (grid-calc-define sumx2py2 ((xs array) (ys array))
   "The sum of the sums of the squares of pairs of XS and YS."
-  (grid-calc--add (mapcar (lambda (p) (+ (* (car p) (car p)) (* (cdr p) (cdr p))))
-                          (grid-calc--number-pairs xs ys))))
+  (grid-calc--sum-pairs (lambda (x y) (+ (* x x) (* y y))) xs ys))
 
 (grid-calc-define sumxmy2 ((xs array) (ys array))
   "The sum of the squares of the differences of pairs of XS and YS."
-  (grid-calc--add (mapcar (lambda (p) (expt (- (car p) (cdr p)) 2))
-                          (grid-calc--number-pairs xs ys))))
+  (grid-calc--sum-pairs (lambda (x y) (expt (- x y) 2)) xs ys))
 
 ;;;----------------------------------------------------------------------
 ;;; Criteria

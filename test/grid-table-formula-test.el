@@ -19,6 +19,9 @@
 
 (ert-deftest grid-table-formula-operators-follow-spreadsheet-rules ()
   (should (equal (grid-table-formula-test--eval "=2^3") 8))
+  (should (equal (grid-table-formula-test--eval "=(-2)^3") -8))
+  (should (equal (grid-table-formula-test--eval "=(-4)^-1") -0.25))
+  (should (equal (grid-table-formula-test--eval "=(-8)^(1/3)") "#NUM!"))
   (should (equal (grid-table-formula-test--eval "=-5") -5))
   (should (equal (grid-table-formula-test--eval "=+5") 5))
   (should (equal (grid-table-formula-test--eval "=--5") 5))
@@ -1340,6 +1343,45 @@
       (should (= (count "10") 1))
       (should (= (count "\"\"") 1))
       (should (= (count "\"<>\"") 6)))))
+
+(ert-deftest grid-table-formula-pairs-match-by-count ()
+  ;; Excel pairs values in reading order, whatever shape holds them.
+  (let ((rows '(("1" "4" "5" "6") ("2" "" "" "") ("3" "x" "" ""))))
+    (cl-flet ((value (formula)
+                (let ((model (grid-model-create 3 4 rows)))
+                  (grid-model-set-raw-value model 2 3 formula)
+                  (grid-model-get-computed-value model 2 3))))
+      (should (= (value "=SUMX2PY2(A1:A3,B1:D1)") 91))
+      (should (= (value "=CORREL(A1:A3,B1:D1)") 1))
+      (should (equal (value "=SUMX2MY2(A1:A2,B1:B3)") "#N/A"))
+      (should (equal (value "=SUMXMY2(B2:B3,C2:C3)") "#DIV/0!")))))
+
+(ert-deftest grid-table-formula-unions-spills-and-nested-totals ()
+  (let ((rows '(("1" "2" "=SEQUENCE(3)" "")
+                ("3" "=AGGREGATE(9,0,A1:A2)" "" "")
+                ("=SUBTOTAL(9,A1:A2)" "" "" ""))))
+    (cl-flet ((value (formula)
+                (let ((model (grid-model-create 3 4 rows)))
+                  (grid-model-set-raw-value model 1 3 formula)
+                  (grid-model-get-computed-value model 1 3))))
+      ;; Each area of a union counts once; a union is no single value.
+      (should (= (value "=SUM((A1,B1:B2))") 7))
+      (should (equal (value "=(A1,B1)") "#VALUE!"))
+      ;; A# is the cells the formula in A spills over; only a formula
+      ;; spills.  (The grid doesn't show the spilled values yet.)
+      (should (= (value "=ROWS(C1#)") 3))
+      (should (= (value "=ROWS(C1:C2 C1#)") 2))
+      (should (equal (value "=ROWS(A1#)") "#REF!"))
+      (should (equal (value "=COLUMNS(#N/A)") "#N/A"))
+      ;; Options 0 to 3 leave out other totals, 4 to 7 keep them.
+      (should (= (value "=AGGREGATE(9,0,A1:B3)") 6))
+      (should (= (value "=AGGREGATE(9,4,A1:B3)") 14))
+      ;; FORMULATEXT shows the operators the file stores as functions.
+      (should (equal (value "=FORMULATEXT(B2)") "=AGGREGATE(9,0,A1:A2)")))
+    (should (equal (grid-calc-excel-formula-text "=SUM(ANCHORARRAY(C1))+SINGLE(A1:A3)")
+                   "=SUM(C1#)+@A1:A3"))
+    (should (equal (grid-calc-excel-formula-text "=\"SINGLE(A1)\"")
+                   "=\"SINGLE(A1)\""))))
 
 (ert-deftest grid-table-sort-keeps-frozen-rows-in-place ()
   (let ((model (grid-model-create 4 1 '(("Title") ("Header") ("b") ("a")))))

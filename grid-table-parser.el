@@ -278,6 +278,11 @@ token; elsewhere it separates tokens and is dropped."
             (push (grid-parser-make-token grid-parser-token-type-error text) tokens)
             (setq pos (+ pos (length text)))))
 
+         ;; A1# is the cells the formula in A1 spills over
+         ((and (eq char ?#) (memq (caar tokens) '(CELL-REF NAME-REF)))
+          (push (grid-parser-make-token grid-parser-token-type-operator "#") tokens)
+          (setq pos (1+ pos)))
+
          ;; A table's columns: Table1[Price], [@Price], Table1[[#Totals],[Price]]
          ((eq char ?\[)
           (let ((end (grid-parser--bracket-end formula-str pos)))
@@ -329,10 +334,10 @@ token; elsewhere it separates tokens and is dropped."
     (let ((kept '()))
       (while tokens
         (let ((token (pop tokens)))
+          ;; A function's reference may meet one too: A1:C3 INDEX(...).
           (unless (and (eq (car token) 'SPACE)
-                       (not (memq (caar tokens) '(CELL-REF LPAREN STRUCT NAME-REF)))
-                       (not (and (eq (caar tokens) 'FUNCTION)
-                                 (not (eq (caadr tokens) 'LPAREN)))))
+                       (not (memq (caar tokens)
+                                  '(CELL-REF LPAREN STRUCT NAME-REF FUNCTION))))
             (push token kept))))
       (nreverse (cons (grid-parser-make-token grid-parser-token-type-eof nil)
                       kept)))))
@@ -627,16 +632,25 @@ Returns (ast . remaining-tokens)."
 (defun grid-parser-parse-range-expression (tokens)
   "Parse references joined by colons, as A1:INDEX(B1:B9,3).
 Returns (ast . remaining-tokens)."
-  (let* ((result (grid-parser-parse-primary-expression tokens))
+  (let* ((result (grid-parser--parse-spilled tokens))
          (left (car result))
          (remaining (cdr result)))
     (while (grid-parser-token-is-p (car remaining)
                                    grid-parser-token-type-operator ":")
       (pop remaining)
-      (let ((right (grid-parser-parse-primary-expression remaining)))
+      (let ((right (grid-parser--parse-spilled remaining)))
         (setq left (list 'RANGE-OP left (car right))
               remaining (cdr right))))
     (cons left remaining)))
+
+(defun grid-parser--parse-spilled (tokens)
+  "Parse a primary expression, and a # after it as ANCHORARRAY of it.
+Workbooks store A1# so.  Returns (ast . remaining-tokens)."
+  (let ((result (grid-parser-parse-primary-expression tokens)))
+    (if (grid-parser-token-is-p (cadr result) grid-parser-token-type-operator "#")
+        (cons (list 'FUNCTION-CALL "ANCHORARRAY" (list (car result)))
+              (cddr result))
+      result)))
 
 (defun grid-parser--parse-arguments (tokens close)
   "Parse expressions separated by commas up to the token type CLOSE.
