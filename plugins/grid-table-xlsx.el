@@ -22,6 +22,7 @@
 (declare-function grid-table-xlsx-module-sheets "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-read "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-write "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-date1904 "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-prune "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-names "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-set-names "grid-table-xlsx-module")
@@ -147,6 +148,11 @@ meant it to be used."
   (grid-table-xlsx--ensure-module)
   (car (read-from-string
         (grid-table-xlsx-module-sheets (expand-file-name file)))))
+
+(defun grid-table-xlsx-date-system (file)
+  "Return 1904 when the dates of the xlsx FILE count from 1904, else 1900."
+  (grid-table-xlsx--ensure-module)
+  (if (grid-table-xlsx-module-date1904 (expand-file-name file)) 1904 1900))
 
 (defconst grid-table-xlsx--future-functions
   (append
@@ -767,13 +773,14 @@ the header row."
 ;;;###autoload
 (defun grid-table-xlsx-create-workbook (file)
   "Return a workbook holding every sheet of the xlsx FILE, and its names."
-  (let ((workbook
-         (grid-workbook-create
-          (mapcar (lambda (name)
-                    (cons name (grid-table-xlsx-create-data-source file name)))
-                  (or (grid-table-xlsx-sheet-names file)
-                      (error "No sheet in %s" file)))
-          t)))
+  (let* ((grid-format-date-system (grid-table-xlsx-date-system file))
+         (workbook
+          (grid-workbook-create
+           (mapcar (lambda (name)
+                     (cons name (grid-table-xlsx-create-data-source file name)))
+                   (or (grid-table-xlsx-sheet-names file)
+                       (error "No sheet in %s" file)))
+           t grid-format-date-system)))
     (grid-table-xlsx-give-names workbook (expand-file-name file))
     workbook))
 
@@ -970,7 +977,11 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
          (grid-calc-sheets (and workbook (grid-workbook--resolver workbook)))
          (grid-calc-names (and workbook (grid-workbook--names-resolver workbook)))
          (grid-calc-tables (and workbook (grid-workbook--tables-resolver workbook)))
-         records)
+         (grid-format-date-system (grid-workbook-date-system-of workbook))
+         ;; The workbook's date system, which a new file would not know.
+         (records (and workbook
+                       (list (concat "Y" grid-table-xlsx--field
+                                     (number-to-string grid-format-date-system))))))
     (dotimes (row rows)
       (dotimes (col cols)
         (when-let* ((record

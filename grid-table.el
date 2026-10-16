@@ -112,6 +112,12 @@ so does a cell showing a FALSE that a formula spills."
          (or (and (stringp raw) (string-prefix-p "=" raw))
              (and model (grid-calc-spilled-p model row col))))))
 
+;; Dates shown and typed in a grid count as its workbook's do.
+(setq grid-format-date-system-function
+      (lambda ()
+        (and (boundp 'grid-table--data-source)
+             (grid-workbook-source-date-system grid-table--data-source))))
+
 (defun grid-get-display-value-at (source row col)
   "Return what the cell at ROW and COL of SOURCE shows.
 That is its computed value written after its format.  A value that is
@@ -302,6 +308,7 @@ in what it gives are left out."
     (if (listp spec)
         spec
       (let* ((workbook (grid-workbook-of source))
+             (grid-format-date-system (grid-workbook-date-system-of workbook))
              (grid-calc-sheets (and workbook (grid-workbook--resolver workbook)))
              (grid-calc-names (and workbook
                                    (grid-workbook--names-resolver workbook)))

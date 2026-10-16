@@ -32,6 +32,24 @@
 (defconst grid-format--unix-epoch-serial 25569
   "The serial number of 1970-01-01.")
 
+(defvar grid-format-date-system nil
+  "1904 when serial numbers count days from 1904-01-01, 1900 when from 1900.
+A workbook made on a Mac may count from 1904, and its serial numbers are
+then 1462 days less for the same date.  Bound to its workbook's while a
+formula is computed; nil leaves it to `grid-format-date-system-function'.")
+
+(defvar grid-format-date-system-function nil
+  "Function of no arguments giving the date system when nothing bound one.
+It returns 1900, 1904 or nil, which is 1900.")
+
+(defun grid-format-date-offset ()
+  "Return how many days a serial number is short of the 1900 system's."
+  (if (eql (or grid-format-date-system
+               (and grid-format-date-system-function
+                    (funcall grid-format-date-system-function)))
+           1904)
+      1462 0))
+
 (defun grid-format-text-p (value)
   "Return non-nil when VALUE is text that must not be read as a number."
   (and (stringp value) (> (length value) 0)
@@ -71,15 +89,18 @@ of the next year and day 0 the last day of the month before."
   (let ((seconds (float-time
                   (encode-time (list (or second 0) (or minute 0) (or hour 0)
                                      day month year nil nil t)))))
-    (if (or hour minute second)
-        (+ grid-format--unix-epoch-serial (/ seconds 86400.0))
-      (+ grid-format--unix-epoch-serial (floor seconds 86400)))))
+    (- (if (or hour minute second)
+           (+ grid-format--unix-epoch-serial (/ seconds 86400.0))
+         (+ grid-format--unix-epoch-serial (floor seconds 86400)))
+       (grid-format-date-offset))))
 
 (defun grid-format-serial-to-date (serial)
   "Return (YEAR MONTH DAY HOUR MINUTE SECOND WEEKDAY) for SERIAL.
 WEEKDAY is 0 for Sunday."
   (let ((time (decode-time
-               (round (* (- serial grid-format--unix-epoch-serial) 86400.0))
+               (round (* (- (+ serial (grid-format-date-offset))
+                            grid-format--unix-epoch-serial)
+                         86400.0))
                t)))
     (list (nth 5 time) (nth 4 time) (nth 3 time)
           (nth 2 time) (nth 1 time) (nth 0 time) (nth 6 time))))

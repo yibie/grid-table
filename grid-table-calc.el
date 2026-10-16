@@ -1286,12 +1286,13 @@ of the next year and day 0 the last day of the month before."
          (first (grid-calc--civil-days year month 1))
          (first (+ first (if (or (> year 1900) (and (= year 1900) (> month 2)))
                              25569 25568))))
-    (+ first (1- day))))
+    (- (+ first (1- day)) (grid-format-date-offset))))
 
 (defun grid-calc-serial-date (serial)
   "Return (YEAR MONTH DAY) of the whole part of Excel's SERIAL.
-Serial 60 is the 29 February 1900 Excel counts, and 0 is 1900-01-00."
-  (let ((whole (floor serial)))
+Serial 60 is the 29 February 1900 Excel counts, and 0 is 1900-01-00.
+In the 1904 system serial 0 is 1904-01-01."
+  (let ((whole (+ (floor serial) (grid-format-date-offset))))
     (cond ((= whole 60) (list 1900 2 29))
           ((= whole 0) (list 1900 1 0))
           ((< whole 60) (grid-calc--civil-date (- whole 25568)))

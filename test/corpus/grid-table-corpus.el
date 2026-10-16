@@ -382,7 +382,10 @@ RECORD is a JSON file of what was found."
   (let ((copy (make-temp-file "grid-table-corpus-" nil ".xlsx")))
     (delete-file copy)
     (unwind-protect
-        (when-let* ((names (grid-table-corpus--stage "sheets"
+        (when-let* ((date-system (grid-table-corpus--stage "sheets"
+                                   (grid-table-xlsx-date-system file)))
+                    (grid-format-date-system date-system)
+                    (names (grid-table-corpus--stage "sheets"
                              (grid-table-xlsx-sheet-names file))))
           (grid-table-corpus--note :sheets (length names))
           (when-let* ((sheets (grid-table-corpus--stage "read"
@@ -394,7 +397,7 @@ RECORD is a JSON file of what was found."
                                                   (cdr sheet) 'values)))
                                        sheets)))
             (when-let* ((workbook (grid-table-corpus--stage "recalc"
-                                    (let ((workbook (grid-workbook-create sheets t)))
+                                    (let ((workbook (grid-workbook-create sheets t date-system)))
                                       (grid-table-xlsx-give-names workbook file)
                                       workbook))))
               (grid-table-corpus--stage "formulas"

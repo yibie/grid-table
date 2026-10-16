@@ -434,6 +434,26 @@ grid reads them back without it."
         (grid-table-xlsx-write-workbook back file)
         (should-not (grid-workbook-names (grid-table-xlsx-create-workbook file)))))))
 
+(ert-deftest grid-table-xlsx-test-dates-from-1904 ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "") '(("0" "=TEXT(A1,\"yyyy-mm-dd\")"))))
+           (workbook (grid-workbook-create (list (cons "Data" data)) nil 1904)))
+      (should (equal (grid-get-computed-value-at data 0 1) "1904-01-01"))
+      (grid-table-xlsx-write-workbook workbook file)
+      (should (= (grid-table-xlsx-date-system file) 1904))
+      (let* ((back (grid-table-xlsx-create-workbook file))
+             (data (grid-workbook-sheet back "Data")))
+        (should (= (grid-workbook-date-system-of back) 1904))
+        (should (equal (grid-get-computed-value-at data 0 1) "1904-01-01")))
+      ;; A workbook of the usual system writes it.
+      (grid-table-xlsx-write-workbook
+       (grid-workbook-create (list (cons "Data" (make-default-data-source
+                                                 '("") '(("0"))))))
+       file)
+      (should (= (grid-table-xlsx-date-system file) 1900)))))
+
 (ert-deftest grid-table-xlsx-test-notes-and-links ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

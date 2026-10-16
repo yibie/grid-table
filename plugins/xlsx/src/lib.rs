@@ -392,6 +392,13 @@ fn sheets(path: String) -> Result<String> {
     Ok(out)
 }
 
+/// Return whether the dates of the xlsx file PATH count from 1904.
+#[defun]
+fn date1904(path: String) -> Result<bool> {
+    let book = reader::xlsx::lazy_read(Path::new(&path)).map_err(fail)?;
+    Ok(book.date1904())
+}
+
 /// Return sheet SHEET of the xlsx file PATH as a printed plist.
 /// :cells holds (ROW COL RAW . STYLE), :merges A1 ranges and :conditionals
 /// (RANGE TYPE OPERATOR FORMULA TEXT PRIORITY . STYLE).
@@ -594,6 +601,8 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                 sheet.cell_mut((col + 1, row + 1)).set_hyperlink(link);
             }
             "F" if fields.len() >= 4 => conditionals.push(&record[2..]),
+            // The workbook's date system, which `write' has taken.
+            "Y" => {}
             // G type from to title names categories ref...: a chart
             "G" if fields.len() >= 8 => {
                 sheet.add_chart(chart(&fields)?);
@@ -997,7 +1006,8 @@ fn prune(path: String, names: String) -> Result<()> {
 /// SHEET replaced or added and its other sheets kept.  PAYLOAD is records
 /// separated by U+001E with fields separated by U+001F:
 /// C ROW COL KIND TEXT BOLD ITALIC COLOR FILL ALIGN, M RANGE and
-/// F RANGE OP FORMULA TEXT BOLD ITALIC COLOR FILL.
+/// F RANGE OP FORMULA TEXT BOLD ITALIC COLOR FILL, and Y 1900 or Y 1904
+/// for the workbook's date system.
 #[defun]
 fn write(path: String, base: Option<String>, sheet: String, payload: String) -> Result<()> {
     let mut book: Workbook = match &base {
@@ -1035,6 +1045,13 @@ fn write(path: String, base: Option<String>, sheet: String, payload: String) -> 
     };
     if !has_sheet(&book, &sheet) {
         book.new_sheet(sheet.as_str()).map_err(fail)?;
+    }
+    // Y 1904 or Y 1900 gives the workbook its date system.
+    for record in payload.split(RECORD) {
+        let fields: Vec<&str> = record.split(FIELD).collect();
+        if fields.len() >= 2 && fields[0] == "Y" {
+            book.set_date1904(fields[1] == "1904");
+        }
     }
     let target = book.sheet_by_name_mut(&sheet).map_err(fail)?;
     clear(target);

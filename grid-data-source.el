@@ -223,8 +223,9 @@ belong to one sheet, as a workbook file may have them: an alist from
 the sheet as SHEET!NAME, finds such a name before one of the workbook.
 TABLES holds the tables a workbook file has, for references such as
 Table1[Qty]: each is (NAME SHEET TOP LEFT BOTTOM RIGHT HEADERS TOTALS
-COLUMNS), as `grid-calc-tables' describes."
-  sheets names local-names tables)
+COLUMNS), as `grid-calc-tables' describes.  DATE-SYSTEM is 1904 when
+its dates count from 1904, as `grid-format-date-system' says."
+  sheets names local-names tables date-system)
 
 (defvar grid-workbook--parsed-names (make-hash-table :test 'equal)
   "Definitions of names already parsed, from their text.")
@@ -438,15 +439,25 @@ non-nil, as it has to be when the sheets themselves changed."
   (let ((grid-calc-sheets (grid-workbook--resolver workbook))
         (grid-calc-names (grid-workbook--names-resolver workbook))
         (grid-calc-tables (grid-workbook--tables-resolver workbook))
+        (grid-format-date-system (grid-workbook-date-system-of workbook))
         (grid-calc-defer nil))
     (grid-table-calc-evaluate-models (grid-workbook--models workbook)
                                      everything))))
 
-(defun grid-workbook-create (sheets &optional as-read)
+(defun grid-workbook-date-system-of (workbook)
+  "Return the date system of WORKBOOK, 1900 or 1904; nil for no workbook."
+  (and workbook (or (grid-workbook-date-system workbook) 1900)))
+
+(defun grid-workbook-source-date-system (source)
+  "Return the date system of SOURCE's workbook, or nil without one."
+  (and source (grid-workbook-date-system-of (grid-workbook-of source))))
+
+(defun grid-workbook-create (sheets &optional as-read date-system)
   "Return a workbook of SHEETS, a list of (NAME . SOURCE) in order.
 AS-READ means the names come from a file, which may hold one longer than
-a sheet can be given here; they are kept as they are."
-  (let ((workbook (grid-workbook--create)))
+a sheet can be given here; they are kept as they are.  DATE-SYSTEM is
+1904 for a workbook whose dates count from 1904."
+  (let ((workbook (grid-workbook--create :date-system date-system)))
     (pcase-dolist (`(,name . ,source) sheets)
       (grid-workbook-add-sheet workbook source name nil as-read))
     (grid-workbook-recalculate workbook t)

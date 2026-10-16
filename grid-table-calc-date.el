@@ -108,7 +108,7 @@ carries over into the years and months around it."
   "Return the day of the week of SERIAL, 0 for Sunday.
 Excel's day 1 is a Sunday, and counting on from there holds for every
 later day, its 29 February 1900 included."
-  (mod (1- (floor serial)) 7))
+  (mod (1- (+ (floor serial) (grid-format-date-offset))) 7))
 
 (defconst grid-calc--weekday-starts
   '((1 . 0) (2 . 1) (11 . 1) (12 . 2) (13 . 3) (14 . 4) (15 . 5) (16 . 6) (17 . 0))
