@@ -92,14 +92,28 @@ impl<W: io::Seek + io::Write> WriterManager<W> {
 
     #[inline]
     pub fn next_table_no(&mut self) -> i32 {
-        self.table_no += 1;
-        self.table_no
+        // grid-table: a sheet copied unread keeps its table parts' names,
+        // which a table written afresh must not take: its part would be
+        // dropped as already there, and it would point at the other one.
+        loop {
+            self.table_no += 1;
+            let path = format!("{PKG_TABLES}/table{}.xml", self.table_no);
+            if !self.check_file_exist(&path) {
+                return self.table_no;
+            }
+        }
     }
 
     #[inline]
     pub fn next_pivot_table_no(&mut self) -> i32 {
-        self.pivot_table_no += 1;
-        self.pivot_table_no
+        // grid-table: as for tables.
+        loop {
+            self.pivot_table_no += 1;
+            let path = format!("xl/pivotTables/pivotTable{}.xml", self.pivot_table_no);
+            if !self.check_file_exist(&path) {
+                return self.pivot_table_no;
+            }
+        }
     }
 
     #[inline]

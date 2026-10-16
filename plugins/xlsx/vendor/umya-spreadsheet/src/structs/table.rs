@@ -139,6 +139,18 @@ impl Table {
         &mut self.columns
     }
 
+    // grid-table: columns are added and removed where a sheet's columns
+    // were inserted or deleted.
+    #[inline]
+    pub fn set_columns(&mut self, columns: Vec<TableColumn>) {
+        self.columns = columns;
+    }
+
+    #[inline]
+    pub fn take_columns(&mut self) -> Vec<TableColumn> {
+        std::mem::take(&mut self.columns)
+    }
+
     #[inline]
     #[must_use]
     #[deprecated(since = "3.0.0", note = "Use columns()")]

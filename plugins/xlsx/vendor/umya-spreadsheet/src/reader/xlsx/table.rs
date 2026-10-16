@@ -17,6 +17,16 @@ use crate::structs::{
     raw::RawFile,
 };
 
+// grid-table: an attribute's text, unescaped. Upstream kept `&amp;` and
+// `&#xA;` as written, and the writer escaped them again on every save.
+fn attr_text(attr: &quick_xml::events::attributes::Attribute) -> Result<String, XlsxError> {
+    let raw = get_attribute_value(attr)?;
+    Ok(match quick_xml::escape::unescape(&raw) {
+        Ok(text) => text.into_owned(),
+        Err(_) => raw,
+    })
+}
+
 pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<(), XlsxError> {
     let data = std::io::Cursor::new(table_file.file_data());
     let mut reader = Reader::from_reader(data);
@@ -32,15 +42,15 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                     for attr in e.attributes().with_checks(false).flatten() {
                         match attr.key.0 {
                             b"name" => {
-                                let attr_val = get_attribute_value(&attr)?;
+                                let attr_val = attr_text(&attr)?;
                                 table_column.set_name(attr_val);
                             }
                             b"totalsRowLabel" => {
-                                let attr_val = get_attribute_value(&attr)?;
+                                let attr_val = attr_text(&attr)?;
                                 table_column.set_totals_row_label_str(&attr_val);
                             }
                             b"totalsRowFunction" => {
-                                let attr_val = get_attribute_value(&attr)?;
+                                let attr_val = attr_text(&attr)?;
                                 table_column.set_totals_row_function_str(&attr_val);
                             }
                             _ => {}
@@ -59,7 +69,7 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                     let mut show_row_stripes = ShowStripes::Hide;
                     let mut show_col_stripes = ShowStripes::Hide;
                     for attr in e.attributes().with_checks(false).flatten() {
-                        let attr_val = get_attribute_value(&attr)?;
+                        let attr_val = attr_text(&attr)?;
                         match attr.key.0 {
                             b"name" => {
                                 name = attr_val;
@@ -87,23 +97,15 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                             _ => {}
                         }
                     }
-                    if name.is_empty() {
-                        table.set_style_info(Some(TableStyleInfo::new(
-                            &name,
-                            show_first_col,
-                            show_last_col,
-                            show_row_stripes,
-                            show_col_stripes,
-                        )));
-                    } else {
-                        table.set_style_info(Some(TableStyleInfo::new(
-                            &name,
-                            ShowColumn::Hide,
-                            ShowColumn::Hide,
-                            ShowStripes::Hide,
-                            ShowStripes::Hide,
-                        )));
-                    }
+                    // grid-table: upstream kept the flags only for a style
+                    // with no name, and so lost every table's banding.
+                    table.set_style_info(Some(TableStyleInfo::new(
+                        &name,
+                        show_first_col,
+                        show_last_col,
+                        show_row_stripes,
+                        show_col_stripes,
+                    )));
                 }
                 b"autoFilter" => {
                     table.auto_filter_mut().set_attributes(&mut reader, e, true);
@@ -120,7 +122,7 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                 }
                 b"table" => {
                     for attr in e.attributes().with_checks(false).flatten() {
-                        let attr_val = get_attribute_value(&attr)?;
+                        let attr_val = attr_text(&attr)?;
                         match attr.key.0 {
                             b"displayName" => {
                                 table.set_display_name(&attr_val);
@@ -132,6 +134,10 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                                 let area_coords: Vec<&str> = attr_val.split(':').collect();
                                 if area_coords.len() == 2 {
                                     table.set_area((area_coords[0], area_coords[1]));
+                                } else if area_coords.len() == 1 {
+                                    // grid-table: a one-cell table's ref is
+                                    // that cell alone.
+                                    table.set_area((area_coords[0], area_coords[0]));
                                 }
                             }
                             b"totalsRowShown" => {
@@ -153,15 +159,15 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                     for attr in e.attributes().with_checks(false).flatten() {
                         match attr.key.0 {
                             b"name" => {
-                                let attr_val = get_attribute_value(&attr)?;
+                                let attr_val = attr_text(&attr)?;
                                 table_column.set_name(attr_val);
                             }
                             b"totalsRowLabel" => {
-                                let attr_val = get_attribute_value(&attr)?;
+                                let attr_val = attr_text(&attr)?;
                                 table_column.set_totals_row_label_str(&attr_val);
                             }
                             b"totalsRowFunction" => {
-                                let attr_val = get_attribute_value(&attr)?;
+                                let attr_val = attr_text(&attr)?;
                                 table_column.set_totals_row_function_str(&attr_val);
                             }
                             _ => {}
@@ -189,6 +195,12 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
             _ => (),
         }
         buf.clear();
+    }
+    // grid-table: `name` is optional, and Excel and LibreOffice may leave
+    // it out; upstream then dropped the table as malformed.
+    if table.name().is_empty() {
+        let display_name = table.display_name().to_string();
+        table.set_name(&display_name);
     }
     // add the table to the sheet (if a few sanity checks pass)
     if table.is_ok() {

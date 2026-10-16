@@ -4,8 +4,11 @@ use quick_xml::{
     Writer,
     events::{
         BytesDecl,
+        BytesStart,
         Event,
+        attributes::Attribute,
     },
+    name::QName,
 };
 
 use super::{
@@ -24,6 +27,24 @@ use crate::{
         WriterManager,
     },
 };
+
+// grid-table: a `tableColumn` start tag. Its name must equal the header
+// cell's text, line breaks included, and a raw line break in an attribute
+// is read back as a space, so they are written as character references.
+fn table_column_tag(attributes: crate::structs::AttrCollection<'_>) -> BytesStart<'_> {
+    let mut elem = BytesStart::new("tableColumn");
+    for crate::structs::AttrPair(key, value) in attributes {
+        let value = quick_xml::escape::escape(value.as_ref())
+            .replace('\n', "&#xA;")
+            .replace('\r', "&#xD;")
+            .replace('\t', "&#x9;");
+        elem.push_attribute(Attribute {
+            key:   QName(key.as_bytes()),
+            value: value.into_bytes().into(),
+        });
+    }
+    elem
+}
 
 pub(crate) fn write<W: io::Seek + io::Write>(
     worksheet: &Worksheet,
@@ -45,7 +66,10 @@ pub(crate) fn write<W: io::Seek + io::Write>(
 
         // table area coordinates
         let area_coords = table.area();
-        let area = format!("{}:{}", area_coords.0, area_coords.1);
+        // grid-table: a one-cell table's ref is that cell alone, as Excel
+        // writes it.
+        let (from, to) = (area_coords.0.to_string(), area_coords.1.to_string());
+        let area = if from == to { from } else { format!("{from}:{to}") };
 
         // table start
         let table_no = writer_mng.next_table_no();
@@ -97,14 +121,18 @@ pub(crate) fn write<W: io::Seek + io::Write>(
             attributes.push(("totalsRowFunction", col.totals_row_function_str()).into());
             match col.calculated_column_formula() {
                 Some(v) => {
-                    write_start_tag(&mut writer, "tableColumn", attributes, false);
+                    writer
+                        .write_event(Event::Start(table_column_tag(attributes)))
+                        .unwrap();
                     write_start_tag(&mut writer, "calculatedColumnFormula", vec![], false);
                     write_text_node(&mut writer, v);
                     write_end_tag(&mut writer, "calculatedColumnFormula");
                     write_end_tag(&mut writer, "tableColumn");
                 }
                 None => {
-                    write_start_tag(&mut writer, "tableColumn", attributes, true);
+                    writer
+                        .write_event(Event::Empty(table_column_tag(attributes)))
+                        .unwrap();
                 }
             }
 
@@ -115,11 +143,13 @@ pub(crate) fn write<W: io::Seek + io::Write>(
         // tableStyleInfo
         if table.has_style_info() {
             let style_info = table.style_info().unwrap();
-            write_start_tag(
-                &mut writer,
-                "tableStyleInfo",
-                vec![
-                    ("name", style_info.name()).into(),
+            // grid-table: a style with no name is written without one, not
+            // as an empty name.
+            let mut attributes: crate::structs::AttrCollection = Vec::new();
+            if !style_info.name().is_empty() {
+                attributes.push(("name", style_info.name()).into());
+            }
+            attributes.extend::<crate::structs::AttrCollection>(vec![
                     (
                         "showFirstColumn",
                         &i32::from(style_info.is_show_first_col()).to_string(),
@@ -140,9 +170,8 @@ pub(crate) fn write<W: io::Seek + io::Write>(
                         &i32::from(style_info.is_show_col_stripes()).to_string(),
                     )
                         .into(),
-                ],
-                true,
-            );
+                ]);
+            write_start_tag(&mut writer, "tableStyleInfo", attributes, true);
         }
 
         write_end_tag(&mut writer, "table");
