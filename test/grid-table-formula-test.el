@@ -1090,6 +1090,19 @@
                       ("" "") ("" "")))))
     (should (equal (grid-model-get-computed-value model 0 0) 20))))
 
+(ert-deftest grid-table-formula-file-formula-reads-a-spill ()
+  ;; A1 and A2 are a workbook file's formulas; B4, which they come
+  ;; first to compute, is not, and spills all the same.
+  (let ((model (grid-model-create
+                6 2 '(("=B5*10" "") ("=SUM(B4#)" "") ("" "")
+                      ("" "=SEQUENCE(2)") ("" "") ("" "")))))
+    (grid-model-set-legacy model '((0 . 0) (1 . 0)))
+    (grid-calc-forget model)
+    (grid-model-recalculate-all model)
+    (should (equal (grid-calc-spill-range model 3 1) "B4:B5"))
+    (should (equal (grid-model-get-computed-value model 0 0) 20))
+    (should (equal (grid-model-get-computed-value model 1 0) 3))))
+
 (ert-deftest grid-table-formula-spill-moves-with-its-formula ()
   (let* ((model (grid-model-create
                  5 2 '(("" "=SUM(A3:A5)") ("" "") ("=SEQUENCE(3)" "")

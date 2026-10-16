@@ -172,6 +172,11 @@ A sheet that does not exist makes the reference #REF!."
 (defvar grid-calc--depth 0
   "How many formulas are being evaluated on top of each other.")
 
+(defvar grid-calc--legacy-outside 'unset
+  "`grid-calc-legacy-arrays' as the recalculation found it, or `unset'.
+A formula computed because another reads it is read as its own cell
+says, not as the one reading it.")
+
 (defun grid-calc--error-value (err)
   "Return the value shown for a formula that signaled ERR."
   (let ((message (error-message-string err)))
@@ -250,9 +255,13 @@ PASS is MODEL's state in the recalculation in progress."
                          (cols (grid-data-model-cols model))
                          (row (/ index cols))
                          (col (% index cols))
+                         (grid-calc--legacy-outside
+                          (if (eq grid-calc--legacy-outside 'unset)
+                              grid-calc-legacy-arrays
+                            grid-calc--legacy-outside))
                          (grid-calc-legacy-arrays
                           (or (grid-model-legacy-at model row col)
-                              grid-calc-legacy-arrays))
+                              grid-calc--legacy-outside))
                          (grid-calc--array-formula
                           (and (grid-model-array-at model row col) t))
                          (range (grid-model-array-at model row col))
@@ -327,6 +336,55 @@ A range such as \"A1:B3\"; nil when it spills nothing or is blocked."
         (format "%s%d:%s%d"
                 (grid-calc-col-number-to-letter col) (1+ row)
                 (grid-calc-col-number-to-letter (+ col cols -1)) (+ row rows))))))
+
+(defun grid-calc-spill-blocked-p (model row col)
+  "Return non-nil when the formula at ROW and COL of MODEL shows #SPILL!."
+  (grid-calc--spill-blocked-p
+   model (+ (* row (grid-data-model-cols model)) col)))
+
+(defun grid-calc--many-cells-p (ast)
+  "Return non-nil when the formula AST reads a range or array anywhere.
+A multi-cell range, an array constant, a union or intersection, a name,
+a table, a spill or a reference a function builds all count."
+  (cond
+   ((not (consp ast)) nil)
+   ((memq (car ast) '(RANGE RANGE-OP ARRAY UNION INTERSECT NAME STRUCT-REF))
+    t)
+   ((and (eq (car ast) 'FUNCTION-CALL)
+         (member (upcase (format "%s" (cadr ast)))
+                 '("ANCHORARRAY" "OFFSET" "INDIRECT")))
+    t)
+   (t (or (grid-calc--many-cells-p (car ast))
+          (grid-calc--many-cells-p (cdr ast))))))
+
+(defun grid-calc-legacy-differs-p (model row col)
+  "Return non-nil when the formula at ROW and COL of MODEL may read
+otherwise as a workbook file's.  A formula typed in the grid takes a
+range whole where a file's may take one cell of it, as Excel before
+dynamic arrays read =MAX(ABS(A1:A3)); a workbook marks such a formula as
+a dynamic array of its own cell.  Any formula reading a range or array
+counts, and any whose value the old reading changes."
+  (when-let* ((cell (grid-model-get-cell model row col))
+              (raw (grid-cell-raw-input cell))
+              ((grid-calc--formula-p raw))
+              ((not (grid-model-legacy-at model row col)))
+              ((not (grid-model-array-at model row col)))
+              ;; One the grid cannot read is kept as it was written.
+              (ast (ignore-errors (grid-calc--parsed cell raw)))
+              ((not (eq (car-safe ast) 'ELISP-CODE))))
+    (or (grid-calc--many-cells-p ast)
+        (not (equal (grid-cell-computed-value cell)
+                    (condition-case err
+                        (let ((grid-calc--legacy-outside
+                               (if (eq grid-calc--legacy-outside 'unset)
+                                   grid-calc-legacy-arrays
+                                 grid-calc--legacy-outside))
+                              (grid-calc-legacy-arrays t)
+                              (grid-calc--array-formula nil)
+                              (grid-calc--depth (1+ grid-calc--depth))
+                              (grid-calc--locals nil))
+                          (grid-calc--eval-formula model ast row col))
+                      (error (grid-calc--error-value err))))))))
 
 (defun grid-calc--spill-blocked-p (model index)
   "Return non-nil when the formula at INDEX of MODEL shows #SPILL!."
