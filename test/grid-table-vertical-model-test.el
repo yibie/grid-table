@@ -73,6 +73,24 @@
              (regexp-quote "conflicts with ((0 0 0 1)) at ((0 1 0 1))")
              (car warnings)))))
 
+(ert-deftest grid-table-validation-names-every-overlapping-range ()
+  ;; A merge over several rows meets kept merges on each of them; they
+  ;; are named in the order they were kept.
+  (let ((model (grid-model-create 4 3 (make-list 4 (make-list 3 ""))))
+        warnings)
+    (cl-letf (((symbol-function 'display-warning)
+               (lambda (_type message &rest _args)
+                 (push message warnings))))
+      (should
+       (equal
+        (grid-model-validate-merges
+         model '((3 0 3 1) (1 0 1 1) (1 1 3 2)) t)
+        '((1 0 1 1) (3 0 3 1)))))
+    (should (string-match-p
+             (regexp-quote
+              "conflicts with ((3 0 3 1) (1 0 1 1)) at ((3 1 3 1) (1 1 1 1))")
+             (car warnings)))))
+
 (ert-deftest grid-table-validation-rejects-nonempty-before-overlap ()
   (let ((model (grid-model-create 1 4 '(("a" "kept" "" ""))))
         warnings)

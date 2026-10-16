@@ -627,7 +627,11 @@ The new cells are empty; nothing that was there moves."
 (defun grid-model-validate-merges (model merges &optional discard-invalid)
   "Validate MERGES for MODEL.
 When DISCARD-INVALID is non-nil, warn and return only valid merges."
-  (let (accepted)
+  (let ((accepted nil)
+        ;; Each row's accepted merges, and the order they came in, so a
+        ;; merge is set only against those on its rows.
+        (by-row (make-hash-table))
+        (order (make-hash-table :test #'eq)))
     (dolist (raw-merge merges)
       (let* ((merge (and (listp raw-merge)
                          (= (length raw-merge) 4)
@@ -653,10 +657,14 @@ When DISCARD-INVALID is non-nil, warn and return only valid merges."
               (error "Invalid merge %S: %s" merge message))))
          (t
           (let ((conflicts
-                 (cl-remove-if-not
-                  (lambda (kept)
-                    (grid-model--merge-overlaps-p kept merge))
-                  accepted)))
+                 (sort (cl-remove-if-not
+                        (lambda (kept)
+                          (grid-model--merge-overlaps-p kept merge))
+                        (delete-dups
+                         (cl-loop for row from (nth 0 merge) to (nth 2 merge)
+                                  append (gethash row by-row))))
+                       ;; The latest first, as ACCEPTED holds them.
+                       (lambda (a b) (> (gethash a order) (gethash b order))))))
             (if conflicts
                 (let ((message
                        (format "conflicts with %S at %S"
@@ -671,6 +679,9 @@ When DISCARD-INVALID is non-nil, warn and return only valid merges."
                       (display-warning
                        'grid-table (format "Discarding %S: %s" merge message))
                     (error "Invalid merge %S: %s" merge message)))
+              (puthash merge (hash-table-count order) order)
+              (cl-loop for row from (nth 0 merge) to (nth 2 merge)
+                       do (push merge (gethash row by-row)))
               (push merge accepted)))))))
     (sort (nreverse accepted)
           (lambda (left right)
