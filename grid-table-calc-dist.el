@@ -682,6 +682,399 @@ of TOTAL; or of at most K."
 
 (grid-calc-alias poisson poisson.dist)
 
+;;;----------------------------------------------------------------------
+;;; Forecasting by exponential smoothing
+;;;----------------------------------------------------------------------
+
+;; FORECAST.ETS and its kin fit additive Holt-Winters smoothing to
+;; values along a timeline of constant step: a level, a trend and,
+;; when the values repeat in a pattern, a season.  The equations are
+;; the NIST Engineering Statistics Handbook's, 6.4.3.5.  How the step,
+;; gaps, repeated points and the season's length are found, how the
+;; three smoothing constants are searched for, and how the level, trend
+;; and season start, follow LibreOffice Calc's FORECAST.ETS.  The
+;; prediction interval is that of the ETS(A,A,A) model in Hyndman et
+;; al., Forecasting with Exponential Smoothing (2008), 6.3.
+;;
+;; Excel does not publish how it fits the constants, so its values
+;; differ a little from these, as LibreOffice's do.
+
+(cl-defstruct (grid-calc--ets (:constructor grid-calc--ets-make))
+  "Values smoothed along a timeline.
+YS are the values a STEP apart, FIRST the first one's place on the
+timeline and LAST the last one's; MONTH-DAY, when non-zero, says the
+timeline is dates on that day of the month, a month apart, places
+then counted in months.  PERIOD is the season's length, 0 for none.
+ALPHA, BETA and GAMMA smooth the level, trend and season; LEVEL,
+TREND and SEASON hold each step's state, SEASON PERIOD places ahead,
+and FORECAST each value as the step before foretold it."
+  ys step first last month-day period alpha beta gamma
+  level trend season forecast)
+
+(defun grid-calc--ets-month (serial)
+  "Return SERIAL's month counted from year 0, and its day: (MONTHS DAY)."
+  (pcase-let ((`(,year ,month ,day) (grid-calc-serial-date serial)))
+    (list (+ (* 12 year) month) day)))
+
+(defun grid-calc--ets-place (ets x)
+  "Return where on ETS's timeline X falls, in months when it counts them."
+  (let ((day (grid-calc--ets-month-day ets)))
+    (if (zerop day)
+        (float x)
+      (pcase-let* ((`(,year ,month ,on) (grid-calc-serial-date x))
+                   (length (cond ((memq month '(4 6 9 11)) 30)
+                                 ((/= month 2) 31)
+                                 ((grid-calc--leap-year-p year) 29)
+                                 (t 28))))
+        (+ (* 12.0 year) month (/ (- on day) (float length)))))))
+
+(defun grid-calc--leap-year-p (year)
+  "Return non-nil when YEAR has a 29 February."
+  (and (zerop (% year 4)) (or (/= 0 (% year 100)) (zerop (% year 400)))))
+
+(defun grid-calc--ets-aggregate (ys aggregation)
+  "Return the one value of YS, values at one place, AGGREGATION says.
+It is 1 AVERAGE, 2 COUNT, 3 COUNTA, 4 MAX, 5 MEDIAN, 6 MIN or 7 SUM."
+  (pcase aggregation
+    (1 (/ (apply #'+ ys) (float (length ys))))
+    ((or 2 3) (length ys))
+    (4 (apply #'max ys))
+    (5 (grid-calc--median ys))
+    (6 (apply #'min ys))
+    (7 (apply #'+ ys))))
+
+(defun grid-calc--ets-points (values timeline completion aggregation)
+  "Return an ETS of the VALUES along TIMELINE, arrays of one size.
+Points at one place become one by AGGREGATION, and a gap of whole steps
+is filled with the mean of the points beside it, or with 0 when
+COMPLETION is 0.  The step must be constant, gaps aside, and at most
+three points in ten missing."
+  (let* ((pairs (grid-calc--pairs timeline values))
+         points)
+    (pcase-dolist (`(,x . ,y) pairs)
+      (dolist (v (list x y))
+        (when (grid-calc-err-p v) (grid-calc-raise (grid-calc-err-code v))))
+      (unless (grid-calc-blank-p y)
+        (unless (and (numberp x) (numberp y)) (grid-calc-raise "#VALUE!"))
+        (push (cons (float x) (float y)) points)))
+    (when (< (length points) 3) (grid-calc-raise "#VALUE!"))
+    (setq points (sort points (lambda (a b) (< (car a) (car b)))))
+    (let* ((first (caar points))
+           (month-day
+            ;; Dates on one day of the month are a month apart, however
+            ;; many days that is.
+            (let ((day (cadr (grid-calc--ets-month first))))
+              (if (cl-every (lambda (point)
+                              (= (cadr (grid-calc--ets-month (car point))) day))
+                            points)
+                  day 0)))
+           (points (if (zerop month-day) points
+                     (mapcar (lambda (point)
+                               (cons (float (car (grid-calc--ets-month (car point))))
+                                     (cdr point)))
+                             points)))
+           (merged nil))
+      ;; Points at one place.
+      (while points
+        (let* ((x (caar points))
+               (same (cl-loop while (and points (= (caar points) x))
+                              collect (cdr (pop points)))))
+          (push (cons x (if (cdr same)
+                            (grid-calc--ets-aggregate same aggregation)
+                          (car same)))
+                merged)))
+      (setq merged (nreverse merged))
+      (when (< (length merged) 3) (grid-calc-raise "#VALUE!"))
+      (let* ((step (cl-loop for (a b) on merged while b
+                            minimize (- (car b) (car a))))
+             (count (length merged))
+             (ys nil))
+        ;; The step is constant, or gaps are whole steps.
+        (cl-loop for (a b) on merged while b
+                 for steps = (/ (- (car b) (car a)) step)
+                 do (unless (= steps (ffloor steps)) (grid-calc-raise "#NUM!"))
+                 do (push (cdr a) ys)
+                 do (dotimes (_ (1- (truncate steps)))
+                      (push (if (eql completion 0) 0.0 (/ (+ (cdr a) (cdr b)) 2))
+                            ys)))
+        (push (cdar (last merged)) ys)
+        (setq ys (vconcat (nreverse ys)))
+        (when (> (- (length ys) count) (* 0.3 count)) (grid-calc-raise "#NUM!"))
+        (grid-calc--ets-make :ys ys :step step :first (caar merged)
+                             :last (car (car (last merged)))
+                             :month-day month-day)))))
+
+(defun grid-calc--ets-period-length (ys)
+  "Return how many of YS a season most likely lasts, 1 for none.
+Each length from half the values down to 1 is tried, setting the rise
+from each value to the next beside that a season later; the length
+whose rises differ least wins, the shorter on a tie."
+  (let ((n (length ys)) (best 1) (best-error nil))
+    (cl-loop for length from (/ n 2) downto 1
+             for periods = (/ n length)
+             for divisor = (1- (* (1- periods) length))
+             when (> divisor 0)
+             do (let ((error
+                       (/ (cl-loop for i from (1+ (- n (* periods length)))
+                                   below (- n length)
+                                   sum (abs (- (- (aref ys i) (aref ys (1- i)))
+                                               (- (aref ys (+ i length))
+                                                  (aref ys (+ i length -1))))))
+                          (float divisor))))
+                  (when (or (null best-error) (<= error best-error))
+                    (setq best length best-error error))))
+    best))
+
+(defun grid-calc--ets-start (ets)
+  "Give ETS its level, trend and season at the first value."
+  (let* ((ys (grid-calc--ets-ys ets))
+         (n (length ys))
+         (period (grid-calc--ets-period ets))
+         (season (make-vector (+ n period) 0.0))
+         (trend (if (zerop period)
+                    (/ (- (aref ys (1- n)) (aref ys 0)) (float (1- n)))
+                  (/ (cl-loop for i below period
+                              sum (- (aref ys (+ i period)) (aref ys i)))
+                     (float (* period period))))))
+    (unless (zerop period)
+      ;; Each place's mean distance from its season's mean, the trend
+      ;; taken out.
+      (let* ((periods (/ n period))
+             (means (cl-loop for p below periods
+                             collect (/ (cl-loop for j below period
+                                                 sum (aref ys (+ (* p period) j)))
+                                        (float period)))))
+        (dotimes (j period)
+          (aset season j
+                (/ (cl-loop for p below periods
+                            for mean in means
+                            sum (- (aref ys (+ (* p period) j))
+                                   (+ mean (* (- j (* 0.5 (1- period))) trend))))
+                   (float periods))))))
+    (setf (grid-calc--ets-season ets) season
+          (grid-calc--ets-level ets) (make-vector n 0.0)
+          (grid-calc--ets-trend ets) (make-vector n 0.0)
+          (grid-calc--ets-forecast ets) (make-vector n 0.0))
+    (aset (grid-calc--ets-level ets) 0 (- (aref ys 0) (aref season 0)))
+    (aset (grid-calc--ets-trend ets) 0 trend)
+    (aset season period (aref season 0))
+    (aset (grid-calc--ets-forecast ets) 0 (aref ys 0))))
+
+(defun grid-calc--ets-smooth (ets)
+  "Smooth ETS's values with its constants, and return the mean squared error."
+  (let* ((ys (grid-calc--ets-ys ets)) (n (length ys))
+         (period (grid-calc--ets-period ets))
+         (alpha (grid-calc--ets-alpha ets))
+         (beta (grid-calc--ets-beta ets))
+         (gamma (grid-calc--ets-gamma ets))
+         (level (grid-calc--ets-level ets))
+         (trend (grid-calc--ets-trend ets))
+         (season (grid-calc--ets-season ets))
+         (forecast (grid-calc--ets-forecast ets))
+         (squares 0.0))
+    (cl-loop for i from 1 below n
+             for y = (aref ys i)
+             for ahead = (+ (aref level (1- i)) (aref trend (1- i)))
+             for seasonal = (aref season i)
+             do (aset forecast i (+ ahead seasonal))
+             do (aset level i (+ (* alpha (- y seasonal)) (* (- 1 alpha) ahead)))
+             do (aset trend i (+ (* beta (- (aref level i) (aref level (1- i))))
+                                 (* (- 1 beta) (aref trend (1- i)))))
+             do (unless (zerop period)
+                  (aset season (+ i period)
+                        (+ (* gamma (- y (aref level i))) (* (- 1 gamma) seasonal))))
+             do (setq squares (+ squares (expt (- (aref forecast i) y) 2))))
+    (/ squares (1- n))))
+
+(defun grid-calc--ets-search (ets setter inner)
+  "Search for the constant SETTER sets of ETS that fits it best.
+It halves 0 to 1 towards the end with the smaller error, to 0.001,
+calling INNER after each try to fit the constants it leaves to it.
+Return the error."
+  (let ((try (lambda (value)
+               (funcall setter value)
+               (funcall inner)
+               (grid-calc--ets-smooth ets))))
+    (let* ((low 0.0) (high 1.0) (middle 0.5)
+           (low-error (funcall try low))
+           (high-error (funcall try high))
+           (error (funcall try middle)))
+      (if (= low-error error high-error)
+          (funcall try 0.0)
+        (while (> (- high middle) 0.001)
+          (if (> high-error low-error)
+              (setq high middle high-error error middle (/ (+ low middle) 2))
+            (setq low middle low-error error middle (/ (+ middle high) 2)))
+          (setq error (funcall try middle)))
+        (cond ((and (> high-error low-error) (< low-error error))
+               (funcall try low))
+              ((and (<= high-error low-error) (< high-error error))
+               (funcall try high))
+              (t error))))))
+
+(defun grid-calc--ets-fit (ets)
+  "Fit ETS's constants, smoothing level, then season, then trend."
+  (grid-calc--ets-start ets)
+  (let* ((trend (lambda ()
+                  (grid-calc--ets-search
+                   ets (lambda (v) (setf (grid-calc--ets-beta ets) v)) #'ignore)))
+         (season (if (zerop (grid-calc--ets-period ets))
+                     (lambda ()
+                       (setf (grid-calc--ets-gamma ets) 0.0)
+                       (funcall trend))
+                   (lambda ()
+                     (grid-calc--ets-search
+                      ets (lambda (v) (setf (grid-calc--ets-gamma ets) v)) trend)))))
+    (grid-calc--ets-search
+     ets (lambda (v) (setf (grid-calc--ets-alpha ets) v)) season))
+  ets)
+
+(defvar grid-calc--ets-last nil
+  "The arguments and the fit of the last values smoothed, (KEY . ETS).
+Formulas filled down one column smooth the same values again and again.")
+
+(defun grid-calc--ets (values timeline seasonality completion aggregation)
+  "Return an ETS fit to VALUES along TIMELINE.
+SEASONALITY is 1 to find the season's length, 0 for no season, or the
+length; COMPLETION and AGGREGATION are as `grid-calc--ets-points' takes."
+  (unless (and (= seasonality (floor seasonality)) (<= 0 seasonality 8760))
+    (grid-calc-raise "#NUM!"))
+  (unless (memql completion '(0 1 0.0 1.0)) (grid-calc-raise "#NUM!"))
+  (unless (and (= aggregation (floor aggregation)) (<= 1 aggregation 7))
+    (grid-calc-raise "#NUM!"))
+  (let ((key (list (grid-calc-array-values values)
+                   (grid-calc-array-values timeline)
+                   seasonality completion aggregation
+                   (grid-format-date-offset))))
+    (if (equal key (car grid-calc--ets-last))
+        (cdr grid-calc--ets-last)
+      (let* ((ets (grid-calc--ets-points values timeline completion
+                                         (truncate aggregation)))
+             (ys (grid-calc--ets-ys ets))
+             (period (pcase (truncate seasonality)
+                       (1 (grid-calc--ets-period-length ys))
+                       (length length))))
+        (when (> (* 2 period) (length ys)) (grid-calc-raise "#NUM!"))
+        (setf (grid-calc--ets-period ets) (if (<= period 1) 0 period))
+        (grid-calc--ets-fit ets)
+        (setq grid-calc--ets-last (cons key ets))
+        ets))))
+
+(defun grid-calc--ets-steps (ets target)
+  "Return how many steps past ETS's last value TARGET is, or #NUM!."
+  (let ((steps (/ (- (grid-calc--ets-place ets target) (grid-calc--ets-last ets))
+                  (grid-calc--ets-step ets))))
+    (when (< steps 0) (grid-calc-raise "#NUM!"))
+    steps))
+
+(defun grid-calc--ets-interpolate (function steps)
+  "Return FUNCTION at STEPS, a line between the whole steps beside it."
+  (let* ((whole (floor steps))
+         (at (funcall function whole))
+         (fraction (- steps whole)))
+    (if (< fraction 0.001) at
+      (+ at (* fraction (- (funcall function (1+ whole)) at))))))
+
+(defun grid-calc--ets-ahead (ets steps)
+  "Return the value ETS foretells STEPS whole steps past its last value."
+  (let* ((n (length (grid-calc--ets-ys ets)))
+         (period (grid-calc--ets-period ets)))
+    (+ (aref (grid-calc--ets-level ets) (1- n))
+       (* steps (aref (grid-calc--ets-trend ets) (1- n)))
+       (if (zerop period) 0.0
+         (aref (grid-calc--ets-season ets) (+ n (mod (1- steps) period)))))))
+
+(defun grid-calc--ets-errors (ets)
+  "Return the forecast errors of ETS's values past the first."
+  (let ((ys (grid-calc--ets-ys ets)) (forecast (grid-calc--ets-forecast ets)))
+    (cl-loop for i from 1 below (length ys)
+             collect (- (aref forecast i) (aref ys i)))))
+
+(defun grid-calc--ets-rmse (ets)
+  "Return the root mean squared error of ETS's forecasts."
+  (let ((errors (grid-calc--ets-errors ets)))
+    (sqrt (/ (cl-loop for e in errors sum (* e e)) (length errors)))))
+
+(grid-calc-define forecast.ets ((target number) (values array) (timeline array)
+                                &optional (seasonality number 1)
+                                (completion number 1) (aggregation number 1))
+  "The value at TARGET of VALUES along TIMELINE, smoothed.
+See `grid-calc--ets' for SEASONALITY, COMPLETION and AGGREGATION."
+  :empty t
+  (let ((ets (grid-calc--ets values timeline seasonality completion aggregation)))
+    (grid-calc--ets-interpolate (lambda (steps) (grid-calc--ets-ahead ets steps))
+                                (grid-calc--ets-steps ets target))))
+
+(grid-calc-define forecast.ets.confint ((target number) (values array)
+                                        (timeline array)
+                                        &optional (level number 0.95)
+                                        (seasonality number 1)
+                                        (completion number 1)
+                                        (aggregation number 1))
+  "Half the width of the interval FORECAST.ETS's value at TARGET falls in.
+It does so with the chance LEVEL, between 0 and 1."
+  :empty t
+  (unless (< 0 level 1) (grid-calc-raise "#NUM!"))
+  (let* ((ets (grid-calc--ets values timeline seasonality completion aggregation))
+         (alpha (grid-calc--ets-alpha ets))
+         (beta (grid-calc--ets-beta ets))
+         (gamma (grid-calc--ets-gamma ets))
+         (period (grid-calc--ets-period ets))
+         (width (* (grid-calc--normal-inverse (/ (+ 1 level) 2))
+                   (grid-calc--ets-rmse ets))))
+    (grid-calc--ets-interpolate
+     (lambda (steps)
+       (if (< steps 1) 0.0
+         ;; How much each step's error carries into one J steps on.
+         (* width
+            (sqrt (1+ (cl-loop for j from 1 below steps
+                               sum (expt (+ (* alpha (1+ (* beta j)))
+                                            (if (and (> period 0) (zerop (% j period)))
+                                                (* gamma (- 1 alpha))
+                                              0))
+                                         2)))))))
+     (grid-calc--ets-steps ets target))))
+
+(grid-calc-define forecast.ets.seasonality ((values array) (timeline array)
+                                            &optional (completion number 1)
+                                            (aggregation number 1))
+  "How many steps the season FORECAST.ETS finds in VALUES lasts, 0 for none."
+  :empty t
+  (grid-calc--ets-period (grid-calc--ets values timeline 1 completion aggregation)))
+
+(grid-calc-define forecast.ets.stat ((values array) (timeline array) (statistic number)
+                                     &optional (seasonality number 1)
+                                     (completion number 1)
+                                     (aggregation number 1))
+  "A measure of how FORECAST.ETS smooths VALUES, STATISTIC saying which.
+It is 1 alpha, 2 beta, 3 gamma, the constants smoothing the level, trend
+and season; 4 MASE, 5 SMAPE, 6 MAE and 7 RMSE, measures of the
+forecasts' errors; or 8 the timeline's step."
+  :empty t
+  (let* ((ets (grid-calc--ets values timeline seasonality completion aggregation))
+         (ys (grid-calc--ets-ys ets))
+         (forecast (grid-calc--ets-forecast ets))
+         (errors (grid-calc--ets-errors ets))
+         (count (length errors))
+         (mae (/ (cl-loop for e in errors sum (abs e)) count)))
+    (pcase (truncate statistic)
+      (1 (grid-calc--ets-alpha ets))
+      (2 (grid-calc--ets-beta ets))
+      (3 (grid-calc--ets-gamma ets))
+      (4 (let ((rises (cl-loop for i from 2 below (length ys)
+                               sum (abs (- (aref ys i) (aref ys (1- i)))))))
+           (if (zerop rises) (grid-calc-raise "#DIV/0!")
+             (/ mae (/ rises (1- count))))))
+      (5 (* (/ 2.0 count)
+            (cl-loop for i from 1 below (length ys)
+                     for e in errors
+                     for sum = (+ (abs (aref forecast i)) (abs (aref ys i)))
+                     unless (zerop sum) sum (/ (abs e) sum))))
+      (6 mae)
+      (7 (grid-calc--ets-rmse ets))
+      (8 (grid-calc--ets-step ets))
+      (_ (grid-calc-raise "#NUM!")))))
+
 (provide 'grid-table-calc-dist)
 
 ;;; grid-table-calc-dist.el ends here

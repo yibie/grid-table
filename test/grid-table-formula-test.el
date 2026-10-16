@@ -1632,6 +1632,55 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
       (should (equal (value "=SUMX2MY2(A1:A2,B1:B3)") "#N/A"))
       (should (equal (value "=SUMXMY2(B2:B3,C2:C3)") "#DIV/0!")))))
 
+(ert-deftest grid-table-formula-forecasts-by-exponential-smoothing ()
+  (cl-flet ((value (rows formula)
+              (let ((model (grid-model-create (length rows) 3
+                                              (mapcar (lambda (row) (append row '("")))
+                                                      rows))))
+                (grid-model-set-raw-value model 0 2 formula)
+                (grid-model-get-computed-value model 0 2))))
+    (let ((line (cl-loop for x from 1 to 10
+                         collect (list (number-to-string x)
+                                       (number-to-string (+ 3 (* 2 x))))))
+          ;; A rise of 1 a step, and a season of four steps.
+          (seasons (cl-loop for x from 1 to 16
+                            collect (list (number-to-string x)
+                                          (number-to-string
+                                           (+ 10 x (nth (% (1- x) 4) '(0 5 -3 2))))))))
+      ;; A straight line goes on straight, with no doubt.
+      (should (= (value line "=FORECAST.ETS(12,B1:B10,A1:A10)") 27))
+      (should (= (value line "=FORECAST.ETS(11.5,B1:B10,A1:A10)") 26))
+      (should (= (value line "=FORECAST.ETS.CONFINT(12,B1:B10,A1:A10)") 0))
+      (should (= (value line "=FORECAST.ETS.SEASONALITY(B1:B10,A1:A10)") 0))
+      (should (= (value line "=FORECAST.ETS.STAT(B1:B10,A1:A10,8)") 1))
+      ;; The season is found, and carried on.
+      (should (= (value seasons "=FORECAST.ETS.SEASONALITY(B1:B16,A1:A16)") 4))
+      (should (< (abs (- (value seasons "=FORECAST.ETS(17,B1:B16,A1:A16)") 27)) 1e-9))
+      (should (< (abs (- (value seasons "=FORECAST.ETS(18,B1:B16,A1:A16)") 33)) 1e-9))
+      (should (< (abs (- (value seasons "=FORECAST.ETS(19,B1:B16,A1:A16,4)") 26)) 1e-9))
+      ;; A missing step is filled in from the points beside it.
+      (should (= (value (append (cl-subseq line 0 3) (cl-subseq line 4))
+                        "=FORECAST.ETS(12,B1:B9,A1:A9)")
+                 27))
+      (should (equal (value line "=FORECAST.ETS(12,B1:B10,A1:A9)") "#N/A"))
+      (should (equal (value line "=FORECAST.ETS(5,B1:B10,A1:A10)") "#NUM!"))
+      (should (equal (value line "=FORECAST.ETS(12,B1:B10,A1:A10,1.5)") "#NUM!"))
+      (should (equal (value line "=FORECAST.ETS.CONFINT(12,B1:B10,A1:A10,1)") "#NUM!"))
+      (should (equal (value (append (cl-subseq line 0 9) '(("10.5" "24")))
+                            "=FORECAST.ETS(12,B1:B10,A1:A10)")
+                     "#NUM!")))
+    ;; Daily values Excel forecasts at 6696.40; this fit is LibreOffice's.
+    (let ((rows (cl-loop for x from 43888
+                         for y in '(403 531 615 984 1254 1520 1820 2251 2612 3420 4189 5469)
+                         collect (list (number-to-string x) (number-to-string y)))))
+      (should (< (abs (- (value rows "=FORECAST.ETS(43900,B1:B12,A1:A12,1,1)")
+                         6642.539397076179))
+                 1e-6))
+      (let ((first (value rows "=FORECAST.ETS.CONFINT(43900,B1:B12,A1:A12,0.95,1,1)"))
+            (second (value rows "=FORECAST.ETS.CONFINT(43901,B1:B12,A1:A12,0.95,1,1)")))
+        (should (< 400 first 500))
+        (should (< (* 1.8 first) second (* 2.3 first)))))))
+
 (ert-deftest grid-table-formula-unions-spills-and-nested-totals ()
   (let ((rows '(("1" "2" "=SEQUENCE(3)" "")
                 ("3" "=AGGREGATE(9,0,A1:A2)" "" "")
