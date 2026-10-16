@@ -16,6 +16,11 @@ declare_const_strings! {
     THREADED_COMMENTS_NS => "http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments",
     PERSION_NS           => "http://schemas.microsoft.com/office/2017/10/relationships/person",
     PKG_PERSON           => "xl/persons/person.xml",
+    // grid-table: the cell metadata that marks a dynamic array.
+    PKG_METADATA         => "xl/metadata.xml",
+    METADATA_NS          => "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sheetMetadata",
+    METADATA_TYPE        => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml",
+    DYNAMIC_ARRAY_NS     => "http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray",
     CONTYPES_NS          => "http://schemas.openxmlformats.org/package/2006/content-types",
     CORE_PROPS_TYPE      => "application/vnd.openxmlformats-package.core-properties+xml",
     COREPROPS_NS         => "http://schemas.openxmlformats.org/package/2006/metadata/core-properties",

@@ -27,6 +27,8 @@ pub(crate) mod drawing_rels;
 pub(crate) mod embeddings;
 pub(crate) mod jsa_project_bin;
 pub(crate) mod media;
+// grid-table: dynamic-array metadata.
+pub(crate) mod metadata;
 pub(crate) mod person;
 pub(crate) mod pivot_cache;
 pub(crate) mod pivot_table;
@@ -179,6 +181,7 @@ fn write_zip_to_writer<W: io::Write + io::Seek>(
         // Finalize file list and add remaining components
         writer_manager.file_list_sort();
         shared_strings::write(&shared_string_table, &mut writer_manager)?;
+        metadata::write(wb, &mut writer_manager)?;
         styles::write(&stylesheet, &mut writer_manager)?;
         workbook::write(wb, &mut writer_manager)?;
 

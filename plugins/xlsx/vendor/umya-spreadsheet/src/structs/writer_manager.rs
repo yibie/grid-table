@@ -25,6 +25,7 @@ use crate::{
         PKG_PRNTR_SETTINGS,
         PKG_TABLES,
         SHARED_STRINGS_TYPE,
+        METADATA_TYPE,
         SHEET_TYPE,
         STYLES_TYPE,
         TABLE_TYPE,
@@ -398,6 +399,11 @@ impl<W: io::Seek + io::Write> WriterManager<W> {
             // Override sharedStrings
             if file.starts_with("/xl/sharedStrings.xml") {
                 content_type = SHARED_STRINGS_TYPE;
+            }
+
+            // grid-table: override dynamic-array metadata
+            if file.starts_with("/xl/metadata.xml") {
+                content_type = METADATA_TYPE;
             }
 
             // Override drawing

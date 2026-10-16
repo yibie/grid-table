@@ -232,6 +232,28 @@ impl Cell {
         self
     }
 
+    // grid-table: mark or unmark the cell as a dynamic array's anchor.
+    // The writer gives such a cell cm="1", the one entry of the
+    // metadata part it writes.
+    pub fn set_dynamic_array(&mut self, value: bool) -> &mut Self {
+        if value {
+            self.cell_meta_index.set_value(1);
+        } else {
+            self.cell_meta_index.remove_value();
+        }
+        self
+    }
+
+    // grid-table: an array formula carrying cell metadata, which in a
+    // workbook Excel wrote is its dynamic-array mark.
+    #[must_use]
+    pub fn is_dynamic_array(&self) -> bool {
+        self.cell_meta_index.has_value()
+            && self.cell_value.formula.as_ref().is_some_and(|formula| {
+                *formula.formula_type() == CellFormulaValues::Array
+            })
+    }
+
     #[inline]
     #[must_use]
     pub fn value(&self) -> Cow<'static, str> {
@@ -735,11 +757,12 @@ impl Cell {
             attributes.push(("s", &xf_index_str).into());
         }
 
-        // NOT SUPPORTED
-        // let cell_meta_index_str = self.cell_meta_index.get_value_string();
-        // if self.cell_meta_index.has_value() {
-        //    attributes.push(("cm", &cell_meta_index_str).into());
-        // }
+        // grid-table: only a dynamic array's mark, the one entry of the
+        // metadata part the writer makes; any other cm pointed into a
+        // part the writer does not keep.
+        if self.is_dynamic_array() {
+            attributes.push(("cm", "1").into());
+        }
 
         if empty_flag_value {
             write_start_tag(writer, "c", attributes, true);

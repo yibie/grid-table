@@ -1084,6 +1084,16 @@ impl Workbook {
         }
         false
     }
+
+    // grid-table: whether any cell is a dynamic array's anchor, which
+    // needs the metadata part.
+    #[must_use]
+    pub fn has_dynamic_arrays(&self) -> bool {
+        self.work_sheet_collection.iter().any(|worksheet| {
+            worksheet.is_deserialized()
+                && worksheet.cells().iter().any(|cell| cell.is_dynamic_array())
+        })
+    }
 }
 impl AdjustmentCoordinateWithSheet for Workbook {
     fn adjustment_insert_coordinate_with_sheet(

@@ -20,6 +20,7 @@ use super::{
 use crate::{
     helper::const_str::{
         JSA_PROJECT_NS,
+        METADATA_NS,
         PERSION_NS,
         PIVOT_CACHE_DEF_NS,
         PKG_WORKBOOK_RELS,
@@ -136,6 +137,18 @@ pub(crate) fn write<W: io::Seek + io::Write>(
             &index.to_string(),
             PERSION_NS,
             "persons/person.xml",
+            "",
+        );
+        index += 1;
+    }
+
+    // grid-table: relationship for the dynamic-array metadata
+    if wb.has_dynamic_arrays() {
+        write_relationship(
+            &mut writer,
+            &index.to_string(),
+            METADATA_NS,
+            "metadata.xml",
             "",
         );
     }
