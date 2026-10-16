@@ -1620,6 +1620,17 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
       (should (= (count "\"\"") 1))
       (should (= (count "\"<>\"") 6)))))
 
+(ert-deftest grid-table-formula-countif-takes-many-criteria ()
+  ;; Each criterion of an array counts on its own.
+  (cl-flet ((first-value (formula)
+              (car (car (grid-table-formula-test--values
+                         `((,formula "x") ("" "") ("" "x") ("" "y")))))))
+    (should (equal (first-value "=SUMPRODUCT((B1:B4<>\"\")/COUNTIF(B1:B4,B1:B4&\"\"))")
+                   2))
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),1)") 2))
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),2)") 1))
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),3)") 0))))
+
 (ert-deftest grid-table-formula-pairs-match-by-count ()
   ;; Excel pairs values in reading order, whatever shape holds them.
   (let ((rows '(("1" "4" "5" "6") ("2" "" "" "") ("3" "x" "" ""))))

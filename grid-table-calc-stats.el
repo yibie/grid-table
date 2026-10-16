@@ -55,10 +55,22 @@ count too."
   "How many cells of RANGE meet CRITERION."
   (let ((criterion (grid-calc--deref criterion)))
     (if (grid-calc-array-p criterion)
-        (grid-calc-array-map
-         (lambda (one)
-           (length (grid-calc--matching-cells (list (cons range one)))))
-         criterion)
+        ;; Read RANGE once rather than once per criterion, as in
+        ;; COUNTIF(B:B,B:B&""); the rows past the sheet are blank.
+        (pcase-let* ((`(,rows . ,cols) (grid-calc--range-shape range))
+                     (filled (min rows (car (grid-calc--table-size range))))
+                     (values (if (grid-calc-ref-p range)
+                                 (grid-calc-ref-to-array
+                                  (grid-calc--part range 0 0 filled cols))
+                               range)))
+          (grid-calc-array-map
+           (lambda (one)
+             (+ (length (grid-calc--matching-cells (list (cons values one))))
+                (if (and (< filled rows)
+                         (funcall (grid-calc-criterion one) :blank))
+                    (* (- rows filled) cols)
+                  0)))
+           criterion))
       (length (grid-calc--matching-cells (list (cons range criterion)))))))
 
 (grid-calc-define countifs (&rest (criteria values))
