@@ -380,10 +380,13 @@ the characters that keep it from being one."
                     (grid-workbook-sheets workbook))))
 
 (defun grid-workbook--resolver (workbook)
-  "Return the function that finds the model of a sheet of WORKBOOK by name."
+  "Return the function that finds the model of a sheet of WORKBOOK by name.
+Called with :names, it returns the names of the sheets in order."
   (lambda (name)
-    (when-let* ((source (grid-workbook-sheet workbook name)))
-      (gethash :model source))))
+    (if (eq name :names)
+        (grid-workbook-sheet-names workbook)
+      (when-let* ((source (grid-workbook-sheet workbook name)))
+        (gethash :model source)))))
 
 (defvar grid-workbook-holding nil
   "Non-nil while a run of changes holds back recalculation.
@@ -488,9 +491,17 @@ for `grid-workbook-create'."
       (grid-workbook-recalculate workbook t))))
 
 (defun grid-workbook-remove-sheet (workbook source)
-  "Take SOURCE out of WORKBOOK.  References into it become #REF!."
+  "Take SOURCE out of WORKBOOK.  References into it become #REF!.
+One through several sheets that ends at SOURCE ends next to it instead."
   (when (null (cdr (grid-workbook-sheets workbook)))
     (error "A workbook keeps at least one sheet"))
+  (let ((old (grid-workbook-sheet-name source))
+        (names (grid-workbook-sheet-names workbook)))
+    (grid-workbook--rewrite-formulas
+     workbook
+     (lambda (formula _sheet)
+       (grid-calc-remove-sheet-in-formula formula old names))
+     source))
   (setf (grid-workbook-sheets workbook)
         (delq source (grid-workbook-sheets workbook)))
   (remhash :workbook source)
@@ -503,7 +514,10 @@ for `grid-workbook-create'."
          (target (max 0 (min (length sheets) (+ index delta)))))
     (setf (grid-workbook-sheets workbook)
           (append (cl-subseq sheets 0 target) (list source)
-                  (nthcdr target sheets)))))
+                  (nthcdr target sheets)))
+    ;; A reference through several sheets may now take in others.
+    (unless (= target index)
+      (grid-workbook-recalculate workbook t))))
 
 (defun grid-workbook--rewrite-formulas (workbook function &optional except)
   "Pass every formula of WORKBOOK's sheets through FUNCTION.

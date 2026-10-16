@@ -28,10 +28,14 @@
 deleted cell.")
 
 (defconst grid-parser-sheet-prefix-regexp
-  "\\(?:'\\(\\(?:[^']\\|''\\)+\\)'\\|\\([[:alpha:]_][[:alnum:]_.]*\\)\\)!"
+  (concat "\\(?:'\\(\\(?:[^']\\|''\\)+\\)'"
+          "\\|\\([[:alpha:]_][[:alnum:]_.]*"
+          "\\(?::\\([[:alpha:]_][[:alnum:]_.]*\\)\\)?\\)\\)!")
   "Matches the sheet a reference names, up to its exclamation mark.
 Group 1 is a name written in apostrophes, where a doubled apostrophe
-stands for one; group 2 is a name written bare.")
+stands for one; group 2 is a name written bare.  Either may be two
+names joined by a colon, a reference through the sheets from the one to
+the other (Sheet1:Sheet3!A1); group 3 is then the second bare name.")
 
 (defconst grid-parser--cells-regexp
   (concat "\\(?:\\$?[A-Za-z]+\\$?[0-9]+\\(?::\\$?[A-Za-z]+\\$?[0-9]+\\)?"
@@ -52,7 +56,15 @@ prefix starts there."
                    (eq (get-char-code-property char 'general-category) 'Lo)
                    (memq (get-char-code-property char 'general-category)
                          '(Lu Ll Lt Lm)))
-               (eq (string-match grid-parser-sheet-prefix-regexp text pos) pos))
+               (eq (string-match grid-parser-sheet-prefix-regexp text pos) pos)
+               ;; A1:Sheet2!B3 is a range from A1, as no sheet named
+               ;; like a cell goes without apostrophes.
+               (not (and (match-beginning 3)
+                         (save-match-data
+                           (let ((case-fold-search nil))
+                             (grid-parser--cell-text-p
+                              (upcase (substring text pos
+                                                 (1- (match-beginning 3))))))))))
       (cons (match-end 0)
             (if (match-beginning 1)
                 (string-replace "''" "'" (match-string 1 text))

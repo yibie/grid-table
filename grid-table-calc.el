@@ -169,6 +169,34 @@ A sheet that does not exist makes the reference #REF!."
         ((and grid-calc-sheets (funcall grid-calc-sheets sheet)))
         (t (signal 'grid-calc-error '("#REF!")))))
 
+(defun grid-calc--sheet-span (sheet)
+  "Return the names of the sheets SHEET runs through, in order, or nil.
+SHEET is a sheet name as a reference writes it; one such as
+Sheet1:Sheet3 runs through every sheet from the one to the other, as
+they stand in the workbook.  Nil for a single sheet, and #REF! when
+either end is not a sheet."
+  (when (and sheet (string-search ":" sheet))
+    (let* ((ends (split-string sheet ":"))
+           (names (and grid-calc-sheets (funcall grid-calc-sheets :names)))
+           (from (cl-position (car ends) names :test #'grid-calc--same-sheet-p))
+           (to (cl-position (cadr ends) names :test #'grid-calc--same-sheet-p)))
+      (unless (and from to)
+        (signal 'grid-calc-error '("#REF!")))
+      (cl-subseq names (min from to) (1+ (max from to))))))
+
+(defun grid-calc--reference-sheet (ast)
+  "Return the sheet the CELL-REF or RANGE AST names, or nil."
+  (pcase ast
+    (`(CELL-REF ,_ . ,sheet) (car sheet))
+    (`(RANGE ,start ,_) (nth 2 start))))
+
+(defun grid-calc--on-sheet (ast sheet)
+  "Return the CELL-REF or RANGE AST naming SHEET instead."
+  (pcase ast
+    (`(CELL-REF ,text . ,_) (list 'CELL-REF text sheet))
+    (`(RANGE ,start ,end) (list 'RANGE (grid-calc--on-sheet start sheet)
+                                (grid-calc--on-sheet end sheet)))))
+
 (defvar grid-calc--depth 0
   "How many formulas are being evaluated on top of each other.")
 
@@ -593,6 +621,15 @@ changes by itself, or runs Lisp."
                    (t (throw 'always 'always))))
            (walk (node)
              (pcase node
+               ;; Through several sheets: each of them
+               ((and (or `(CELL-REF . ,_) `(RANGE . ,_))
+                     (let span (condition-case nil
+                                   (grid-calc--sheet-span
+                                    (grid-calc--reference-sheet node))
+                                 (grid-calc-error (throw 'always 'always))))
+                     (guard span))
+                (dolist (name span)
+                  (walk (grid-calc--on-sheet node name))))
                (`(CELL-REF ,ref . ,name)
                 (let* ((target (sheet (car name)))
                        (rows (grid-data-model-rows target))
@@ -1649,7 +1686,19 @@ of one row or column stands for each row or column."
 ;;;----------------------------------------------------------------------
 
 (defun grid-calc--reference (model ast)
-  "Return the reference the CELL-REF or RANGE AST names in MODEL."
+  "Return the reference the CELL-REF or RANGE AST names in MODEL.
+One through several sheets is the union of its area on each."
+  (if-let* ((span (grid-calc--sheet-span (grid-calc--reference-sheet ast))))
+      (let ((areas (mapcar (lambda (sheet)
+                             (grid-calc--reference
+                              model (grid-calc--on-sheet ast sheet)))
+                           span)))
+        (if (cdr areas) (cons 'union areas) (car areas)))
+    (grid-calc--one-sheet-reference model ast)))
+
+(defun grid-calc--one-sheet-reference (model ast)
+  "Return the reference the CELL-REF or RANGE AST names in MODEL.
+AST names one sheet at most."
   (pcase ast
     (`(CELL-REF ,text . ,sheet)
      (let ((target (grid-calc--sheet-model model (car sheet)))
@@ -2486,8 +2535,18 @@ reference off the sheet's top or left edge is #REF!."
 
 (defun grid-calc-sheet-prefix (name)
   "Return NAME as the sheet prefix of a reference, exclamation mark included.
-A name that is not plain letters, digits and underscores is quoted."
-  (if (string-match-p "\\`[[:alpha:]_][[:alnum:]_.]*\\'" name)
+A name that is not plain letters, digits and underscores is quoted; so
+is a span of sheets, Sheet1:Sheet3, unless both its ends are plain.  A
+name that reads as a cell, as A1 or R1C1 does, is quoted too."
+  (if (and (string-match-p (concat "\\`[[:alpha:]_][[:alnum:]_.]*"
+                                   "\\(?::[[:alpha:]_][[:alnum:]_.]*\\)?\\'")
+                           name)
+           (not (cl-some (lambda (part)
+                           (let ((case-fold-search t))
+                             (or (grid-parser--cell-text-p (upcase part))
+                                 (string-match-p
+                                  "\\`\\(?:R[0-9]*\\)?\\(?:C[0-9]*\\)?\\'" part))))
+                         (split-string name ":"))))
       (concat name "!")
     (concat "'" (string-replace "'" "''" name) "'!")))
 
@@ -2612,7 +2671,42 @@ like the ones that name none."
    (lambda (start end _sheet)
      (grid-calc--range-text start end #'grid-calc--reference-text))
    (lambda (sheet)
-     (and (grid-calc--same-sheet-p sheet old) new))))
+     ;; Either end of a reference through several sheets, Sheet1:Sheet3
+     (let* ((ends (split-string sheet ":"))
+            (renamed (mapcar (lambda (end)
+                               (if (grid-calc--same-sheet-p end old) new end))
+                             ends)))
+       (and (not (equal renamed ends)) (string-join renamed ":"))))))
+
+(defun grid-calc-remove-sheet-in-formula (formula old names)
+  "Return FORMULA for the sheet OLD taken out of the sheets NAMES.
+NAMES are all of them, OLD included, in order.  A reference through
+several sheets that ends at OLD then ends at the sheet next to it on
+the inside, as Sheet1:Sheet3 becomes Sheet1:Sheet2; others into OLD are
+left to be #REF!."
+  (grid-calc--map-references
+   formula
+   (lambda (start end _sheet)
+     (grid-calc--range-text start end #'grid-calc--reference-text))
+   (lambda (sheet)
+     (let* ((ends (split-string sheet ":"))
+            (from (cl-position (car ends) names
+                               :test #'grid-calc--same-sheet-p))
+            (to (cl-position (cadr ends) names
+                             :test #'grid-calc--same-sheet-p)))
+       (when (and (cdr ends) from to (/= from to)
+                  (cl-some (lambda (end) (grid-calc--same-sheet-p end old))
+                           ends))
+         (let* ((step (if (< from to) 1 -1))
+                (first (if (grid-calc--same-sheet-p (car ends) old)
+                           (nth (+ from step) names)
+                         (car ends)))
+                (last (if (grid-calc--same-sheet-p (cadr ends) old)
+                          (nth (- to step) names)
+                        (cadr ends))))
+           (if (grid-calc--same-sheet-p first last)
+               first
+             (concat first ":" last))))))))
 
 (defun grid-calc--lines-before (lines index)
   "Return how many of the line indexes LINES are below INDEX."
