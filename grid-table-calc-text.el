@@ -301,7 +301,7 @@ separator GROUP."
 (defun grid-calc--code-tokens (section)
   "Return SECTION, one section of a format code, as a list of tokens.
 A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
-(exp SIGN), (slash), (at), (general), (date TEXT), (elapsed TEXT),
+(exp SIGN LETTER), (slash), (at), (general), (date TEXT), (elapsed TEXT),
 (ampm TEXT) or (cond OP NUMBER)."
   (let ((tokens '()) (i 0) (len (length section)) (case-fold-search t))
     (cl-flet ((lit (text) (push (list 'lit text) tokens)))
@@ -322,7 +322,7 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
               (cond
                ((string-match "\\`\\(h+\\|m+\\|s+\\)\\'" inside)
                 (push (list 'elapsed (downcase inside)) tokens))
-               ((string-match "\\`\\(<=\\|>=\\|<>\\|<\\|>\\|=\\)\\(-?[0-9.]+\\)\\'" inside)
+               ((string-match "\\` *\\(<=\\|>=\\|<>\\|<\\|>\\|=\\) *\\(-?[0-9.]+\\) *\\'" inside)
                 (push (list 'cond (match-string 1 inside)
                             (string-to-number (match-string 2 inside)))
                       tokens))
@@ -337,7 +337,8 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
             (let ((run (downcase (match-string 0 rest))))
               (if (and (eq (aref run 0) ?e) (< (length run) 2)
                        (< (1+ i) len) (memq (aref section (1+ i)) '(?+ ?-)))
-                  (progn (push (list 'exp (string (aref section (1+ i)))) tokens)
+                  (progn (push (list 'exp (string (aref section (1+ i))) (string char))
+                               tokens)
                          (setq i (1+ i)))
                 (push (list 'date (if (eq (aref run 0) ?e) "yyyy" run)) tokens)
                 (setq i (+ i (length run) -1)))))
@@ -375,12 +376,18 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
                    when (and (eq (car token) 'point) (eq (car next) 'digit))
                    return (cl-loop for tok in (cdr (memq token tokens))
                                    while (eq (car tok) 'digit) count t)))
-         (step (/ 1.0 (* 86400 (expt 10 (or fraction-digits 0)))))
-         (serial (* step (fround (/ (float serial) step))))
-         (day (floor serial))
-         (seconds (* (- serial day) 86400))
-         (whole-seconds (floor (+ seconds 1e-9)))
+         ;; An elapsed time may be negative; it is written after a minus.
+         (sign (if (< serial 0) "-" ""))
+         (per-second (expt 10 (or fraction-digits 0)))
+         ;; The moment rounded to what the code shows, in whole units.
+         (units (round (* (abs (float serial)) 86400 per-second)))
+         (day (/ units (* 86400 per-second)))
+         (whole-seconds (/ (% units (* 86400 per-second)) per-second))
+         (seconds (+ whole-seconds (/ (float (% units per-second)) per-second)))
          (date (grid-calc-serial-date day))
+         (elapsed-units (cl-loop for token in tokens
+                                 when (eq (car token) 'elapsed)
+                                 collect (aref (cadr token) 0)))
          (hour (/ whole-seconds 3600))
          (minute (% (/ whole-seconds 60) 60))
          (second (% whole-seconds 60))
@@ -420,6 +427,13 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
                        (?m (+ (* day 1440) (* hour 60) minute))
                        (_ (+ (* day 86400) whole-seconds)))))
           (push (format (format "%%0%dd" (length code)) total) out)))
+       ;; Beside [h] or [s], h or s are the elapsed hours or seconds too.
+       ((and `(date ,code)
+             (guard (and (memq (aref code 0) '(?h ?s)) (memq (aref code 0) elapsed-units))))
+        (push (format (format "%%0%dd" (min 2 (length code)))
+                      (if (eq (aref code 0) ?h) (+ (* day 24) hour)
+                        (+ (* day 86400) whole-seconds)))
+              out))
        (`(date ,code)
         (push
          (pcase (aref code 0)
@@ -437,9 +451,10 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
            (?s (if (= (length code) 1) (number-to-string second)
                  (format "%02d" second)))
            (?m
-            ;; Minutes after an hour or before seconds; else the month.
+            ;; Minutes after an hour or a second or before seconds;
+            ;; else the month.
             (if (and (<= (length code) 2)
-                     (or (and previous (memq (aref previous 0) '(?h)))
+                     (or (and previous (memq (aref previous 0) '(?h ?s)))
                          (cl-loop for tok in rest
                                   when (memq (car tok) '(date elapsed))
                                   return (eq (aref (cadr tok) 0) ?s))))
@@ -454,184 +469,295 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
                   (_ (aref grid-calc--month-full-names (1- month))))))))
          out))
        (_ (setq skip-digits nil))))
-    (apply #'concat (nreverse out))))
+    (concat sign (apply #'concat (nreverse out)))))
 
 (defun grid-calc--weekday-of (serial)
   "Return the day of the week of SERIAL, 0 for Sunday."
-  (mod (1- (floor serial)) 7))
+  (mod (1- (+ (floor serial) (grid-format-date-offset))) 7))
 
-(defun grid-calc--group-thousands (digits)
-  "Return DIGITS, a string of them, with commas between thousands."
-  (let ((out "") (n (length digits)))
-    (dotimes (i n)
-      (setq out (concat out (string (aref digits i))))
-      (when (and (< i (1- n)) (= (% (- n i 1) 3) 0)) (setq out (concat out ","))))
-    out))
+(defun grid-calc--digit-p (token)
+  "Return non-nil when TOKEN is a digit placeholder."
+  (eq (car token) 'digit))
 
-(defun grid-calc--fill-integer (digits placeholders grouping)
-  "Return DIGITS, the whole part, put into PLACEHOLDERS, characters 0 # ?.
-Digits beyond the placeholders go before the first; GROUPING puts
-commas between thousands."
-  (let* ((digits (if (equal digits "0") "" digits))
-         (needed (length placeholders))
-         (padded (if (< (length digits) needed)
-                     (concat (make-string (- needed (length digits)) ?\s) digits)
-                   digits))
-         (lead (- (length padded) needed))
-         (out (substring padded 0 lead)))
-    (cl-loop for i from 0 below needed
-             for char = (aref padded (+ lead i))
-             for placeholder = (aref placeholders i)
-             do (setq out (concat out
-                                  (if (eq char ?\s)
-                                      (pcase placeholder (?0 "0") (?? " ") (_ ""))
-                                    (string char)))))
-    (if grouping
-        (let ((spaces (and (string-match "\\`\\( *\\)" out) (match-string 1 out))))
-          (concat spaces (grid-calc--group-thousands (substring out (length spaces)))))
-      out)))
+(defun grid-calc--pad (placeholder)
+  "Return what PLACEHOLDER, 0 # or ?, shows where it has no digit."
+  (pcase placeholder (?0 "0") (?? " ") (_ "")))
+
+(defun grid-calc--fill-whole (digits placeholders &optional grouping pad)
+  "Return DIGITS, a whole number's, put into PLACEHOLDERS, one string each.
+The digits fill from the right; those beyond the placeholders go into
+the first.  Where a placeholder has no digit it shows (funcall PAD
+PLACEHOLDER), `grid-calc--pad' by default.  GROUPING puts a comma
+between thousands, a space where the digit left of it is a space."
+  (let* ((pad (or pad #'grid-calc--pad))
+         (places (length placeholders))
+         (count (max places (length digits)))
+         ;; Characters from the right, the Kth for the Kth position.
+         (shown (cl-loop for k from 1 to count
+                         collect (if (<= k (length digits))
+                                     (string (aref digits (- (length digits) k)))
+                                   (funcall pad (aref placeholders (- places k))))))
+         (slots (make-vector (max places 1) "")))
+    (cl-loop for k from 1 to count
+             for text = (nth (1- k) shown)
+             for left = (nth k shown)
+             for separator = (if (and grouping (= (% k 3) 0) left)
+                                 (cond ((string= left " ") " ")
+                                       ((string= left "") "")
+                                       (t ","))
+                               "")
+             for slot = (max 0 (- places k))
+             do (aset slots slot (concat separator text (aref slots slot))))
+    (append slots nil)))
 
 (defun grid-calc--fill-fraction (digits placeholders)
-  "Return DIGITS after the point put into PLACEHOLDERS, characters 0 # ?."
+  "Return DIGITS after the point put into PLACEHOLDERS, one string each."
   (let ((out (cl-loop for i below (length placeholders)
-                      concat (string (aref digits i)))))
+                      collect (string (aref digits i)))))
     ;; Trailing zeros at # go, at ? become spaces.
-    (let ((i (1- (length placeholders))))
-      (while (and (>= i 0) (eq (aref out i) ?0) (not (eq (aref placeholders i) ?0)))
-        (aset out i (if (eq (aref placeholders i) ??) ?\s ?\0))
-        (setq i (1- i))))
-    (remove ?\0 out)))
+    (cl-loop for i downfrom (1- (length placeholders)) to 0
+             while (and (equal (nth i out) "0") (not (eq (aref placeholders i) ?0)))
+             do (setf (nth i out) (grid-calc--pad (aref placeholders i))))
+    out))
+
+(defun grid-calc--placeholders (tokens)
+  "Return the digit placeholders among TOKENS as a string."
+  (concat (cl-loop for tok in tokens when (grid-calc--digit-p tok) collect (cadr tok))))
+
+(defun grid-calc--token-width (tokens)
+  "Return how many characters TOKENS take when every placeholder shows one."
+  (cl-loop for tok in tokens
+           sum (pcase (car tok) ('lit (length (cadr tok))) ((or 'digit 'slash) 1) (_ 0))))
+
+(defun grid-calc--write-tokens (tokens slots)
+  "Return TOKENS written, each digit placeholder by the next of SLOTS."
+  (mapconcat (lambda (tok)
+               (pcase (car tok)
+                 ('lit (cadr tok))
+                 ('digit (or (pop slots) ""))
+                 ('slash "/")
+                 (_ "")))
+             tokens ""))
+
+(defun grid-calc--best-fraction (part max-den)
+  "Return (NUMERATOR . DENOMINATOR) nearest PART, the denominator at most MAX-DEN."
+  (let ((best-num 0) (best-den 1) (best-err 2.0))
+    (cl-loop for den from 1 to max-den
+             for num = (round (* part den))
+             for err = (abs (- part (/ (float num) den)))
+             when (< err (- best-err 1e-12))
+             do (setq best-err err best-num num best-den den))
+    (cons best-num best-den)))
 
 (defun grid-calc--format-fraction (number tokens)
-  "Return NUMBER written as a fraction after TOKENS, as # ?/? or ?/8."
-  (let* ((slash (cl-position '(slash) tokens :test #'equal))
+  "Return NUMBER written as a fraction after TOKENS, as # ?/? or ?/8.
+The placeholders right before the slash take the numerator, those
+after it the denominator, and any before them, past the literal text
+between, the whole part; without them the fraction is improper."
+  (let* ((slash (cl-position 'slash tokens :key #'car))
          (before (cl-subseq tokens 0 slash))
          (after (nthcdr (1+ slash) tokens))
-         (denominator-digits (cl-loop for tok in after
-                                      while (eq (car tok) 'digit) collect (cadr tok)))
-         (fixed (let ((text (cl-loop for tok in after
-                                     while (memq (car tok) '(digit lit))
-                                     concat (if (eq (car tok) 'lit) (cadr tok) ""))))
-                  (and (string-match "\\`[1-9][0-9]*\\'" text)
-                       (null denominator-digits)
-                       (string-to-number text))))
-         (whole-tokens (let ((gap (cl-position-if (lambda (tok) (eq (car tok) 'lit))
-                                                  before :from-end t)))
-                         (and gap (cl-some (lambda (tok) (eq (car tok) 'digit))
-                                           (cl-subseq before 0 gap))
-                              (cl-subseq before 0 gap))))
+         ;; The numerator: the run of placeholders nearest the slash.
+         (num-end (1+ (or (cl-position-if #'grid-calc--digit-p before :from-end t) -1)))
+         (num-start (let ((i num-end))
+                      (while (and (> i 0) (grid-calc--digit-p (nth (1- i) before)))
+                        (setq i (1- i)))
+                      i))
+         (whole-end (1+ (or (cl-position-if #'grid-calc--digit-p before
+                                            :end num-start :from-end t)
+                            -1)))
+         (whole-start (or (cl-position-if #'grid-calc--digit-p before) 0))
+         (improper (= whole-end 0))
+         (prefix (cl-subseq before 0 (if improper num-start whole-start)))
+         (whole-tokens (unless improper (cl-subseq before whole-start whole-end)))
+         (separator (unless improper (cl-subseq before whole-end num-start)))
+         (num-tokens (cl-subseq before num-start num-end))
+         (to-slash (nthcdr num-end before))
+         ;; A denominator written as a number, as in ?/8 or ?/10.
+         (fixed-tokens (cl-loop for tok in after
+                                while (or (and (eq (car tok) 'lit)
+                                               (string-match-p "\\`[0-9]+\\'" (cadr tok)))
+                                          (equal tok '(digit ?0)))
+                                collect tok))
+         (fixed-text (mapconcat (lambda (tok) (if (eq (car tok) 'lit) (cadr tok) "0"))
+                                fixed-tokens ""))
+         (fixed (and (string-match-p "\\`[1-9]" fixed-text) (string-to-number fixed-text)))
+         (den-start (if fixed 0 (or (cl-position-if #'grid-calc--digit-p after)
+                                    (length after))))
+         (den-end (if fixed (length fixed-tokens)
+                    (let ((i den-start))
+                      (while (and (< i (length after)) (grid-calc--digit-p (nth i after)))
+                        (setq i (1+ i)))
+                      i)))
+         (from-slash (cl-subseq after 0 den-start))
+         (den-tokens (cl-subseq after den-start den-end))
+         (suffix (nthcdr den-end after))
+         (whole-places (grid-calc--placeholders whole-tokens))
+         (num-places (grid-calc--placeholders num-tokens))
+         (den-places (if fixed "" (grid-calc--placeholders den-tokens)))
          (sign (if (< number 0) "-" ""))
-         (number (abs number))
-         (whole (if whole-tokens (floor number) 0))
-         (part (- number whole))
-         (max-den (if fixed fixed (1- (expt 10 (max 1 (length denominator-digits))))))
-         (best-num 0) (best-den 1))
-    (if fixed
-        (setq best-den fixed best-num (round (* part fixed)))
-      (let ((best-err 2.0))
-        (cl-loop for den from 1 to max-den
-                 for num = (round (* part den))
-                 for err = (abs (- part (/ (float num) den)))
-                 when (< err (- best-err 1e-12))
-                 do (setq best-err err best-num num best-den den))))
-    (when (and whole-tokens (= best-num best-den)) (setq whole (1+ whole) best-num 0))
-    (concat sign
-            (if whole-tokens
-                (concat (if (and (= whole 0) (> best-num 0)) "" (number-to-string whole))
-                        (if (> best-num 0) " " ""))
-              "")
-            (if (and whole-tokens (= best-num 0)) ""
-              (format "%s/%s" (if whole-tokens best-num
-                                (+ best-num (* whole best-den)))
-                      best-den)))))
+         (value (abs number))
+         (whole (if improper 0 (floor value)))
+         (best (if fixed (cons (round (* (- value whole) fixed)) fixed)
+                 (grid-calc--best-fraction
+                  (- value whole) (1- (expt 10 (max 1 (length den-places)))))))
+         (num (car best)) (den (cdr best)))
+    (when (and (not improper) (= num den)) (setq whole (1+ whole) num 0))
+    (let* ((hidden (and (not improper) (= num 0) (not (string-search "0" num-places))))
+           (any-blank (string-search "?" (concat whole-places num-places den-places)))
+           (whole-slots
+            (unless improper
+              (grid-calc--fill-whole
+               (cond ((> whole 0) (number-to-string whole)) (hidden "0") (t ""))
+               whole-places nil
+               (lambda (placeholder)
+                 (pcase placeholder
+                   (?0 "0")
+                   (?? (if (and (= num 0) (= value 0)) "0" " "))
+                   (_ ""))))))
+           (whole-text (grid-calc--write-tokens whole-tokens whole-slots))
+           (whole-shown (string-match-p "[0-9]" (apply #'concat whole-slots)))
+           (num-text (grid-calc--write-tokens
+                      num-tokens (grid-calc--fill-whole (number-to-string num) num-places)))
+           (den-text
+            (cond (fixed (number-to-string den))
+                  ((string-search "0" den-places)
+                   (grid-calc--write-tokens
+                    den-tokens (grid-calc--fill-whole (number-to-string den) den-places)))
+                  (t (let ((digits (number-to-string den)))
+                       (grid-calc--write-tokens
+                        den-tokens
+                        (cl-loop for i below (length den-places)
+                                 collect (if (< i (length digits)) (string (aref digits i))
+                                           (grid-calc--pad (aref den-places i)))))))))
+           (fraction-text
+            (cond (hidden
+                   (if any-blank
+                       (make-string (grid-calc--token-width
+                                     (append separator num-tokens to-slash '((slash))
+                                             from-slash den-tokens))
+                                    ?\s)
+                     ""))
+                  (t (concat
+                      (cond (improper "")
+                            (whole-shown (grid-calc--write-tokens separator nil))
+                            ((string-search "?" (concat whole-places num-places))
+                             (make-string (grid-calc--token-width separator) ?\s))
+                            (t ""))
+                      num-text
+                      (grid-calc--write-tokens to-slash nil) "/"
+                      (grid-calc--write-tokens from-slash nil)
+                      den-text)))))
+      (concat sign (grid-calc--write-tokens prefix nil) whole-text fraction-text
+              (grid-calc--write-tokens suffix nil)))))
+
+(defun grid-calc--comma-roles (tokens)
+  "Return what each comma among TOKENS does, a list as long as TOKENS.
+A comma before any placeholder is written as one; one between two
+placeholders of the whole part groups thousands; any other after a
+placeholder divides by a thousand, as #, or 0.0,, do."
+  (let* ((point-at (cl-position 'point tokens :key #'car))
+         (exp-at (cl-position 'exp tokens :key #'car))
+         (whole-end (or point-at exp-at (length tokens))))
+    (cl-loop for tok in tokens
+             for i from 0
+             collect
+             (when (eq (car tok) 'comma)
+               (let ((digit-before (cl-some #'grid-calc--digit-p (cl-subseq tokens 0 i)))
+                     (digit-after-in-part
+                      (cl-some #'grid-calc--digit-p
+                               (cl-subseq tokens (1+ i)
+                                          (cond ((< i whole-end) whole-end)
+                                                ((and exp-at (< i exp-at)) exp-at)
+                                                (t (length tokens)))))))
+                 (cond ((not digit-before) 'literal)
+                       ((and exp-at (> i exp-at)) 'ignore)
+                       ((and (< i whole-end) digit-after-in-part) 'group)
+                       (digit-after-in-part 'ignore)
+                       (t 'scale)))))))
 
 (defun grid-calc--format-number (number tokens negative-shown)
   "Return NUMBER written after TOKENS, a number code's.
 NEGATIVE-SHOWN says the section shows a minus sign for a negative."
-  (cond
-   ((cl-some (lambda (tok) (eq (car tok) 'slash)) tokens)
-    (grid-calc--format-fraction (if negative-shown number (abs number)) tokens))
-   (t
-    (let* ((digit-index (lambda (pred)
-                          (cl-position-if pred tokens)))
-           (point-at (funcall digit-index (lambda (tok) (eq (car tok) 'point))))
-           (exp-at (funcall digit-index (lambda (tok) (eq (car tok) 'exp))))
-           (last-digit (cl-position-if (lambda (tok) (eq (car tok) 'digit)) tokens
-                                       :end (or point-at exp-at (length tokens))
-                                       :from-end t))
-           (percents (cl-count-if (lambda (tok) (eq (car tok) 'percent)) tokens))
-           ;; Commas right after the last whole digit divide by 1000 each.
-           (scale-commas (if last-digit
-                             (cl-loop for tok in (nthcdr (1+ last-digit) tokens)
-                                      while (eq (car tok) 'comma) count t)
-                           0))
-           (grouping (and last-digit
-                          (cl-loop for tok in (cl-subseq tokens 0 last-digit)
-                                   thereis (eq (car tok) 'comma))))
-           (int-places (concat (cl-loop for tok in (cl-subseq tokens 0 (or point-at exp-at
-                                                                           (length tokens)))
-                                        when (eq (car tok) 'digit) collect (cadr tok))))
+  (if (and (assq 'slash tokens)
+           (not (assq 'point tokens)) (not (assq 'exp tokens)))
+      (grid-calc--format-fraction (if negative-shown number (abs number)) tokens)
+    (let* ((roles (grid-calc--comma-roles tokens))
+           (point-at (cl-position 'point tokens :key #'car))
+           (exp-at (cl-position 'exp tokens :key #'car))
+           (whole-end (or point-at exp-at (length tokens)))
+           (frac-end (or exp-at (length tokens)))
+           (int-places (grid-calc--placeholders (cl-subseq tokens 0 whole-end)))
            (frac-places (if point-at
-                            (concat (cl-loop for tok in (cl-subseq tokens (1+ point-at)
-                                                                   (or exp-at (length tokens)))
-                                             when (eq (car tok) 'digit) collect (cadr tok)))
+                            (grid-calc--placeholders (cl-subseq tokens (1+ point-at) frac-end))
                           ""))
-           (exp-places (if exp-at
-                           (concat (cl-loop for tok in (nthcdr (1+ exp-at) tokens)
-                                            when (eq (car tok) 'digit) collect (cadr tok)))
-                         ""))
-           (value (* (abs number) (expt 100 percents) (expt 1000.0 (- scale-commas))))
+           (exp-places (if exp-at (grid-calc--placeholders (nthcdr (1+ exp-at) tokens)) ""))
+           (grouping (memq 'group roles))
+           ;; Scientific notation neither scales by % nor by commas.
+           (value (if exp-at (abs number)
+                    (* (abs number)
+                       (expt 100 (cl-count 'percent tokens :key #'car))
+                       (expt 1000.0 (- (cl-count 'scale roles))))))
+           (decimals (length frac-places))
            (exponent 0))
       (when exp-at
-        (if (zerop value) (setq exponent 0)
-          ;; As many whole digits as placeholders, the exponent a multiple
-          ;; of their count when # leads, as engineering notation.
+        (unless (zerop value)
+          ;; The exponent a multiple of the whole part's placeholders.
           (let* ((places (max 1 (length int-places)))
                  (power (floor (log value 10))))
-            (setq exponent (if (and (> (length int-places) 1)
-                                    (eq (aref int-places 0) ?#))
-                               (* places (floor power places))
-                             (- power (1- places))))
-            (setq value (/ value (expt 10.0 exponent)))
-            (when (>= (grid-calc--round-to value (length frac-places) 'nearest)
-                      (expt 10.0 (if (and (> (length int-places) 1)
-                                          (eq (aref int-places 0) ?#))
-                                     places
-                                   places)))
-              (setq value (/ value 10) exponent (1+ exponent))))))
-      (let* ((rounded (grid-calc--round-to value (length frac-places) 'nearest))
-             (text (format (format "%%.%df" (length frac-places)) rounded))
+            (when (>= value (expt 10.0 (1+ power))) (setq power (1+ power)))
+            (when (< value (expt 10.0 power)) (setq power (1- power)))
+            (setq exponent (* places (floor power places)))
+            (when (>= (grid-calc--round-to (/ value (expt 10.0 exponent)) decimals 'nearest)
+                      (expt 10.0 places))
+              (setq exponent (+ exponent places)))
+            (setq value (/ value (expt 10.0 exponent))))))
+      (let* ((rounded (grid-calc--round-to value decimals 'nearest))
+             (text (format (format "%%.%df" decimals) rounded))
              (point (string-search "." text))
              (whole (if point (substring text 0 point) text))
-             (fraction (if point (substring text (1+ point)) ""))
-             (whole-text (grid-calc--fill-integer whole int-places grouping))
-             (fraction-text (grid-calc--fill-fraction fraction frac-places))
-             (sign (if (and negative-shown (< number 0)
-                            (string-match-p "[1-9]" text))
-                       "-" ""))
-             (out '()) (whole-done nil) (fraction-done nil) (exp-done nil))
-        (dolist (tok tokens)
-          (pcase (car tok)
-            ('lit (push (cadr tok) out))
-            ('digit
-             (cond ((and exp-at (> (cl-position tok tokens :test #'eq) exp-at))
-                    (unless exp-done
-                      (setq exp-done t)
-                      (push (format (format "%%0%dd" (length exp-places)) (abs exponent)) out)))
-                   ((and point-at (> (cl-position tok tokens :test #'eq) point-at))
-                    (unless fraction-done (setq fraction-done t) (push fraction-text out)))
-                   (t (unless whole-done (setq whole-done t) (push whole-text out)))))
-            ('point (unless whole-done (setq whole-done t) (push whole-text out))
-                    (push "." out))
-            ('exp (unless whole-done (setq whole-done t) (push whole-text out))
-                  (push (concat "E" (cond ((< exponent 0) "-")
-                                          ((equal (cadr tok) "+") "+")
-                                          (t "")))
-                        out))
-            ('general (push (grid-calc--general-text (abs number)) out))))
-        (unless (or whole-done (not (cl-some (lambda (tok) (eq (car tok) 'digit)) tokens)))
-          (push whole-text out))
-        (concat sign (apply #'concat (nreverse out))))))))
+             (whole-slots (grid-calc--fill-whole
+                           (if (equal whole "0") "" whole)
+                           ;; A zero in scientific notation fills every place.
+                           (if (and exp-at (zerop value))
+                               (make-string (length int-places) ?0)
+                             int-places)
+                           grouping))
+             (frac-slots (grid-calc--fill-fraction (if point (substring text (1+ point)) "")
+                                                   frac-places))
+             (exp-text (let ((slots (grid-calc--fill-whole
+                                     (if (= exponent 0) "" (number-to-string (abs exponent)))
+                                     exp-places)))
+                         (if (string-match-p "[0-9]" (apply #'concat slots))
+                             (apply #'concat slots)
+                           ;; The exponent shows at least its last digit.
+                           (concat (apply #'concat (butlast slots))
+                                   (let ((last (car (last slots))))
+                                     (if (string= last "") "0"
+                                       (concat (substring last 0 -1) "0")))))))
+             (sign (if (and negative-shown (< number 0) (string-match-p "[1-9]" text)) "-" ""))
+             (exp-sign (and exp-at
+                            (cond ((< exponent 0) "-")
+                                  ((equal (nth 1 (nth exp-at tokens)) "+") "+")
+                                  (t ""))))
+             (exp-done nil)
+             (out '()))
+        (cl-loop
+         for tok in tokens
+         for role in roles
+         for i from 0
+         do (pcase (car tok)
+              ('lit (push (cadr tok) out))
+              ('comma (when (eq role 'literal) (push "," out)))
+              ('digit
+               (cond ((and exp-at (> i exp-at))
+                      (unless exp-done (setq exp-done t) (push (concat exp-sign exp-text) out)))
+                     ((and point-at (> i point-at)) (push (or (pop frac-slots) "") out))
+                     (t (push (or (pop whole-slots) "") out))))
+              ('point (push "." out))
+              ('exp (push (nth 2 tok) out))
+              ('general (push (grid-calc--general-text (abs number)) out))))
+        (concat sign (apply #'concat (nreverse out)))))))
 
 (defun grid-calc--general-text (number)
   "Return NUMBER as the General format writes it, in 11 characters."
@@ -679,19 +805,21 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
                                                 (grid-calc--section-matches tokens value)))
                                          sections)
                          (cl-position-if-not (lambda (tokens) (assq 'cond tokens))
-                                             sections)
-                         0))
+                                             sections)))
                     ((and (< value 0) (>= count 2)) 1)
                     ((and (= value 0) (>= count 3)) 2)
                     (t 0)))
-             (tokens (nth section-index sections))
+             ;; A value no section takes is written as General writes it.
+             (tokens (if section-index (nth section-index sections) '((general))))
              ;; Only the first section, and conditional ones, write the
              ;; minus sign; the others are written as a negative's own.
-             (negative-shown (or (= section-index 0) conditional)))
+             (negative-shown (or (eql section-index 0) conditional)))
         (cond
          ((assq 'at tokens) (grid-calc-raise "#VALUE!"))
          ((grid-calc--date-code-p tokens)
-          (unless (<= 0 value grid-calc--last-serial*) (grid-calc-raise "#VALUE!"))
+          (unless (if (assq 'elapsed tokens) (<= (abs value) grid-calc--last-serial*)
+                    (<= 0 value grid-calc--last-serial*))
+            (grid-calc-raise "#VALUE!"))
           (grid-calc--format-date value tokens))
          ((and (assq 'general tokens)
                (not (cl-some (lambda (tok) (eq (car tok) 'digit)) tokens)))
