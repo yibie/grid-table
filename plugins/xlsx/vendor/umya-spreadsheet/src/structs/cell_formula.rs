@@ -373,9 +373,13 @@ impl CellFormula {
 
         let formula_type_str = self.formula_type.value_string();
         if self.formula_type.has_value() {
-            // Not SUPPORT Array
-            if self.formula_type.value() != &CellFormulaValues::Array {
-                attributes.push(("t", formula_type_str).into());
+            // grid-table: an array formula is written as one, over the
+            // cells it fills; upstream left out both.
+            attributes.push(("t", formula_type_str).into());
+            if self.formula_type.value() == &CellFormulaValues::Array
+                && self.reference.has_value()
+            {
+                attributes.push(("ref", self.reference.value_str()).into());
             }
         }
 

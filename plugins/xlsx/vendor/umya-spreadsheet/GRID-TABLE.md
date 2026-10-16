@@ -21,6 +21,7 @@ spreadsheet projects (`make test-corpus`).
 | `structs/drawing/charts/formula.rs` | A chart's `c:f` is escaped, so `Sheet&8` stays well-formed XML | as above |
 | `structs/cell.rs`, `structs/row.rs` | A cell whose `r` leaves out its row, or is missing, takes the place its row and order give it, as POI reads it | POI `invalid_cell_reference.xlsx` |
 | `structs/table.rs`, `reader/xlsx/table.rs`, `writer/xlsx/table.rs` | A table keeps `headerRowCount`, so one without a header row stays without | xlsxwriter `table07.xlsx`, POI `SingleCellTable.xlsx` |
+| `structs/cell_formula.rs` | An array formula is written with `t="array"` and the `ref` it fills; upstream wrote it as a plain formula | grid-table spills, CSE formulas in POI files |
 | `helper/formula.rs`, `structs/workbook.rs` | Follow `split_address` returning the name it unquoted | |
 
 To move to a newer umya-spreadsheet, check whether each of these is
