@@ -1457,6 +1457,46 @@
       (delete-file file))))
 
 ;; The text table needs a data source and nothing else.
+(ert-deftest grid-table-tables-follow-inserted-and-deleted-lines ()
+  (let* ((data (make-default-data-source
+                '("" "" "")
+                '(("Item" "Qty" "") ("a" "2" "") ("b" "3" "")
+                  ("" "" "=SUM(Table1[Qty])"))))
+         (workbook (grid-workbook-create (list (cons "Data" data))))
+         (table (lambda () (cdr (car (grid-workbook-tables workbook))))))
+    (setf (grid-workbook-tables workbook)
+          (list (list "Table1" "Data" 0 0 2 1 1 0 '("Item" "Qty"))))
+    (grid-workbook-recalculate workbook t)
+    (should (equal (grid-get-computed-value-at data 3 2) 5))
+    ;; A row above moves it; the table's name is no cell to move.
+    (let ((before (gethash :model data)))
+      (funcall (gethash :add-row data) data -1)
+      (should (equal (funcall table) '("Data" 1 0 3 1 1 0 ("Item" "Qty"))))
+      (should (equal (grid-get-raw-value-at data 4 2) "=SUM(Table1[Qty])"))
+      (should (equal (grid-get-computed-value-at data 4 2) 5))
+      ;; Undone, it goes back.
+      (grid-workbook-model-restored data (gethash :model data) before)
+      (puthash :model before data)
+      (should (equal (funcall table) '("Data" 0 0 2 1 1 0 ("Item" "Qty")))))
+    ;; A row inside makes it longer, a column inside wider, with a name
+    ;; in its header cell.
+    (funcall (gethash :add-row data) data 0)
+    (should (equal (funcall table) '("Data" 0 0 3 1 1 0 ("Item" "Qty"))))
+    (funcall (gethash :add-column data) data 1)
+    (should (equal (funcall table)
+                   '("Data" 0 0 3 2 1 0 ("Item" "Column1" "Qty"))))
+    (should (equal (grid-get-raw-value-at data 0 1) "Column1"))
+    (grid-set-raw-value-at data 1 2 "4")
+    (should (equal (grid-get-computed-value-at data 4 3) 9))
+    ;; Deleted lines inside make it smaller again.
+    (funcall (gethash :delete-column data) data 1)
+    (funcall (gethash :delete-row data) data 0)
+    (should (equal (funcall table) '("Data" 0 0 2 1 1 0 ("Item" "Qty"))))
+    (should (equal (grid-get-computed-value-at data 3 2) 5))
+    ;; Without its header row the table goes.
+    (funcall (gethash :delete-row data) data -1)
+    (should-not (grid-workbook-tables workbook))))
+
 (ert-deftest grid-table-text-follows-excel-format-codes ()
   "TEXT writes numbers, fractions, times and dates as Excel does.
 The cases and what Excel made of them come from Apache POI's format

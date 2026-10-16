@@ -2473,15 +2473,19 @@ This function is duplicated from grid-table-parser.el for now, will be refactore
 (defun grid-calc--reference-at (formula pos &optional _continued)
   "Return the reference that starts at POS in FORMULA, or nil.
 The value is (END COL-ANCHOR COL ROW-ANCHOR ROW), with COL zero-based and
-ROW the number written.  The tail of a name and the name of a function
-are not references."
+ROW the number written.  The tail of a name, the name of a function and
+the name of a table, such as Table1 in Table1[Qty], are not references,
+and nor is a column past XFD."
   (let ((len (length formula)))
     (when (and (eq (string-match grid-calc--reference-regexp formula pos) pos)
+               (<= (length (match-string 2 formula)) 3)
+               (<= (grid-calc-col-letter-to-number (match-string 2 formula))
+                   16383)
                (not (and (> pos 0)
                          (string-match-p "[A-Za-z0-9_.$]"
                                          (substring formula (1- pos) pos))))
                (not (and (< (match-end 0) len)
-                         (string-match-p "[A-Za-z0-9_.(!]"
+                         (string-match-p "[A-Za-z0-9_.(![]"
                                          (substring formula (match-end 0)
                                                     (1+ (match-end 0)))))))
       (list (match-end 0)

@@ -592,24 +592,118 @@ moved, as when a line is added at the end."
       (:add-column (and index (< -1 index cols) (list 'col index 1)))
       (:delete-column (and index (list 'col index -1))))))
 
+(defun grid-workbook--new-column-name (names)
+  "Return the name Excel gives a column added to a table of column NAMES."
+  (cl-loop for n from 1
+           for name = (format "Column%d" n)
+           unless (member-ignore-case name names) return name))
+
+(defun grid-workbook--shift-table (table axis at delta)
+  "Return TABLE moved for a line inserted or deleted, or nil when it goes.
+TABLE is (NAME SHEET TOP LEFT BOTTOM RIGHT HEADERS TOTALS COLUMNS) and
+AXIS, AT and DELTA are as for `grid-calc-restructure-formula'.  A line
+inserted before a table moves it, and one inserted inside it, or just
+above its totals row, makes it a line longer; a column inserted so gets
+a name of its own.  A deleted line inside it makes it shorter.  A table
+whose header row is deleted, or that is left no data row or no column,
+goes."
+  (pcase-let* ((`(,name ,sheet ,top ,left ,bottom ,right ,headers ,totals ,columns)
+                table)
+               (lines (if (listp at) at (list at)))
+               (before (lambda (index &optional inclusive)
+                         (cl-count-if (lambda (line)
+                                        (if inclusive (<= line index) (< line index)))
+                                      lines))))
+    (if (eq axis 'row)
+        (if (> delta 0)
+            (list name sheet (if (<= at top) (1+ top) top) left
+                  (if (<= at bottom) (1+ bottom) bottom) right
+                  headers totals columns)
+          (let* ((totals (if (and (> totals 0) (memq bottom lines)) 0 totals))
+                 (new-top (- top (funcall before top)))
+                 (new-bottom (- bottom (funcall before bottom t))))
+            (unless (or (and (> headers 0) (memq top lines))
+                        (< (- new-bottom new-top -1 headers totals) 1))
+              (list name sheet new-top left new-bottom right
+                    headers totals columns))))
+      (if (> delta 0)
+          (cond ((<= at left)
+                 (list name sheet top (1+ left) bottom (1+ right)
+                       headers totals columns))
+                ((<= at right)
+                 (let ((index (- at left)))
+                   (list name sheet top left bottom (1+ right) headers totals
+                         (append (seq-take columns index)
+                                 (list (grid-workbook--new-column-name columns))
+                                 (seq-drop columns index)))))
+                (t table))
+        (let ((kept (cl-loop for column in columns
+                             for index from left
+                             unless (memq index lines) collect column)))
+          (when kept
+            (list name sheet top (- left (funcall before left)) bottom
+                  (- right (funcall before right t)) headers totals kept)))))))
+
+(defun grid-workbook--shift-tables (workbook source change)
+  "Move WORKBOOK's tables on the sheet SOURCE along CHANGE, (AXIS AT DELTA).
+A column added inside a table has its name written in the table's
+header cell, as the file wants it there.  Return the tables as they
+were, or nil when none changed."
+  (let* ((old (grid-workbook-tables workbook))
+         (new (delq nil
+                    (mapcar
+                     (lambda (table)
+                       (if (grid-calc--same-sheet-p
+                            (nth 1 table) (grid-workbook-sheet-name source))
+                           (apply #'grid-workbook--shift-table table change)
+                         table))
+                     old))))
+    (unless (equal old new)
+      (when (and (eq (nth 0 change) 'col) (> (nth 2 change) 0))
+        (let ((model (gethash :model source))
+              (at (nth 1 change)))
+          (dolist (table new)
+            (pcase-let ((`(,_ ,sheet ,top ,left ,_ ,right ,headers ,_ ,columns)
+                         table))
+              (when (and (> headers 0) (< left at) (<= at right)
+                         (grid-calc--same-sheet-p
+                          sheet (grid-workbook-sheet-name source)))
+                (set-grid-cell-raw-input
+                 (grid-model-get-cell model top at)
+                 (nth (- at left) columns)))))))
+      (setf (grid-workbook-tables workbook) new)
+      (or old t))))
+
 (defun grid-workbook--changed (workbook source key args old-model)
   "Bring WORKBOOK up to date after KEY, called with ARGS, changed SOURCE.
 The other sheets' references into SOURCE follow a line that moved, and
-every sheet is recalculated."
+so do the tables on SOURCE; every sheet is recalculated."
   (let ((model (gethash :model source))
         (change (and old-model (grid-workbook--line-change key args old-model)))
-        (name (grid-workbook-sheet-name source)))
+        (name (grid-workbook-sheet-name source))
+        tables)
     (when (and change (not (eq model old-model)))
-      (when-let* ((changes
-                   (grid-workbook--rewrite-formulas
-                    workbook
-                    (lambda (formula home)
-                      (grid-calc-restructure-formula
-                       formula (nth 0 change) (nth 1 change) (nth 2 change)
-                       home name))
-                    source)))
-        (puthash model changes grid-workbook--rewrites)))
-    (grid-workbook-recalculate workbook)))
+      (let* ((changes
+              (grid-workbook--rewrite-formulas
+               workbook
+               (lambda (formula home)
+                 (grid-calc-restructure-formula
+                  formula (nth 0 change) (nth 1 change) (nth 2 change)
+                  home name))
+               source))
+             (old-tables (grid-workbook--shift-tables workbook source change)))
+        (when old-tables
+          (setq tables t)
+          (push (list :tables nil nil
+                      (and (listp old-tables) old-tables)
+                      (grid-workbook-tables workbook))
+                changes))
+        (when changes
+          (puthash model changes grid-workbook--rewrites))))
+    ;; Formulas that name a table read other cells now.
+    (when tables
+      (mapc #'grid-calc-forget (grid-workbook--models workbook)))
+    (grid-workbook-recalculate workbook tables)))
 
 (defun grid-workbook-model-restored (source from to)
   "Bring SOURCE's workbook up to date after its model went from FROM to TO.
@@ -619,6 +713,9 @@ change rewrote in other sheets go back with it."
     (cl-flet ((put-back (entries pick)
                 (pcase-dolist (`(,sheet ,row ,col ,old ,new) entries)
                   (cond
+                   ((eq sheet :tables)
+                    (setf (grid-workbook-tables workbook) (funcall pick old new))
+                    (mapc #'grid-calc-forget (grid-workbook--models workbook)))
                    ((eq sheet :name)
                     (when-let* ((entry (assoc-string
                                         row (grid-workbook-names workbook) t)))
