@@ -674,12 +674,19 @@ the header row."
                        (make-default-data-source
                         (copy-sequence (car values)) values sheet)))
              (model (gethash :model source))
+             ;; A dynamic array spills, as a formula typed today does;
+             ;; only the others are array formulas.
              (arrays (delq nil (mapcar (lambda (cell)
-                                         (when-let* ((range (plist-get (nthcdr 3 cell)
-                                                                       :array)))
+                                         (when-let* ((more (nthcdr 3 cell))
+                                                     (range (plist-get more :array))
+                                                     ((not (plist-get more :dynamic))))
                                            (cons (cons (nth 0 cell) (nth 1 cell))
                                                  range)))
                                        cells)))
+             (dynamic (let ((table (make-hash-table :test 'equal)))
+                        (dolist (cell cells table)
+                          (when (plist-get (nthcdr 3 cell) :dynamic)
+                            (puthash (cons (nth 0 cell) (nth 1 cell)) t table)))))
              (rules (grid-table-xlsx--rules (plist-get data :conditionals))))
         ;; A merge that reaches down from the first row, such as a title
         ;; over two rows, only exists in a sheet without a header row.
@@ -736,11 +743,20 @@ the header row."
          (let ((cols (grid-data-model-cols model))
                (cells (grid-data-model-cells model))
                found)
-           (dotimes (index (length cells) found)
-             (when (grid-calc--formula-p (grid-cell-raw-input (aref cells index)))
-               (push (cons (/ index cols) (% index cols)) found)))))
+           (dotimes (index (length cells))
+             (let ((at (cons (/ index cols) (% index cols))))
+               (when (and (grid-calc--formula-p
+                           (grid-cell-raw-input (aref cells index)))
+                          (not (gethash at dynamic)))
+                 (push at found))))
+           found))
         (when arrays
-          (grid-model-set-arrays model arrays)
+          (grid-model-set-arrays model arrays))
+        ;; The sheet was computed with every formula read as a file's;
+        ;; a dynamic array is computed again, and spills.
+        (when (> (hash-table-count dynamic) 0)
+          (grid-calc-forget model))
+        (when (or arrays (> (hash-table-count dynamic) 0))
           (grid-model-recalculate-all model))
         (puthash :xlsx-tables (plist-get data :tables) source)
         (puthash :xlsx-file file source)
@@ -817,10 +833,26 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
           "")
         (or (grid-format-to-code (plist-get style :format)) "")))
 
+(defun grid-table-xlsx--array-kind (model row col)
+  "Return the record kind of the formula at ROW and COL of MODEL, or nil.
+a:RANGE for an array formula filling RANGE, d:RANGE for a formula that
+spills over RANGE, which a workbook marks as a dynamic array; nil for a
+plain formula."
+  (cond
+   ((grid-model-array-at model row col)
+    (concat "a:" (grid-model-array-at model row col)))
+   ((grid-calc-spill-range model row col)
+    (concat "d:" (grid-calc-spill-range model row col)))
+   ;; Blocked, it is still a dynamic array, of its own cell; so is one
+   ;; giving a single value that a file's formula would compute otherwise.
+   ((or (grid-calc-spill-blocked-p model row col)
+        (grid-calc-legacy-differs-p model row col))
+    (format "d:%s%d" (grid-calc-col-number-to-letter col) (1+ row)))))
+
 (defun grid-table-xlsx--cell-record (row col raw style &optional array)
   "Return the record for the cell at ROW and COL, or nil for nothing.
 RAW is its raw input and STYLE its style.  ARRAY, for an array formula,
-is the range of the cells it fills."
+is its record kind, as `grid-table-xlsx--array-kind' gives it."
   (let* ((case-fold-search t)
          (text (grid-table-xlsx--clean (format "%s" (or raw ""))))
          (kind (cond
@@ -834,7 +866,7 @@ is the range of the cells it fills."
                             grid-table-xlsx--own-formula-regexp text)))
                  (setq text (grid-table-xlsx--prefix-functions
                              (substring text 1)))
-                 (if array (concat "a:" array) "f"))
+                 (or array "f"))
                 ((string-match-p grid-table-xlsx--number-regexp text) "n")
                 ((member text '("TRUE" "FALSE")) "b")
                 (t "s"))))
@@ -930,9 +962,15 @@ and rows it covers."
 (defun grid-table-xlsx--payload (source &optional sheet)
   "Return the records that describe the data source SOURCE.
 SHEET is the name SOURCE is written as, which its charts' ranges name."
-  (let ((rows (grid-get-row-count source))
-        (cols (grid-get-column-count source))
-        records)
+  (let* ((rows (grid-get-row-count source))
+         (cols (grid-get-column-count source))
+         ;; Formulas are computed again to tell how a workbook reads
+         ;; them, among the sheet's workbook as a recalculation is.
+         (workbook (grid-workbook-of source))
+         (grid-calc-sheets (and workbook (grid-workbook--resolver workbook)))
+         (grid-calc-names (and workbook (grid-workbook--names-resolver workbook)))
+         (grid-calc-tables (and workbook (grid-workbook--tables-resolver workbook)))
+         records)
     (dotimes (row rows)
       (dotimes (col cols)
         (when-let* ((record
@@ -946,11 +984,8 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
                         (if (and format (not (plist-get style :format)))
                             (plist-put (copy-sequence style) :format format)
                           style))
-                      ;; A formula that spills is saved as an array
-                      ;; formula over the cells it fills.
-                      (let ((model (gethash :model source)))
-                        (or (grid-model-array-at model row col)
-                            (grid-calc-spill-range model row col))))))
+                      (grid-table-xlsx--array-kind
+                       (gethash :model source) row col))))
           (push record records))
         (let ((style (grid-get-style-at source row col)))
           (dolist (entry '((:note . "N") (:link . "L")))

@@ -126,6 +126,10 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             if let Some(formula) = cell.formula_obj() {
                 if *formula.formula_type() == CellFormulaValues::Array {
                     keyword(out, ":array", formula.reference());
+                    // A dynamic array, which spills, rather than {=...}.
+                    if cell.is_dynamic_array() {
+                        out.push_str(" :dynamic t");
+                    }
                 }
             }
             // What the writer last computed for the formula, to check
@@ -527,7 +531,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
         let fields: Vec<&str> = record.split(FIELD).collect();
         match fields[0] {
             // C row col kind text bold italic color fill align format
-            // KIND is f, a:RANGE, n, b or s.
+            // KIND is f, a:RANGE, d:RANGE, n, b or s.
             "C" if fields.len() >= 5 => {
                 let row: u32 = fields[1].parse()?;
                 let col: u32 = fields[2].parse()?;
@@ -539,13 +543,15 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                         "f" => {
                             cell.set_formula(text);
                         }
-                        // An array formula, a:RANGE with the cells it fills
-                        kind if kind.starts_with("a:") => {
+                        // An array formula, a:RANGE with the cells it
+                        // fills; d:RANGE for a dynamic one, which spills.
+                        kind if kind.starts_with("a:") || kind.starts_with("d:") => {
                             let mut formula = umya_spreadsheet::CellFormula::default();
                             formula.set_text(text);
                             formula.set_formula_type(CellFormulaValues::Array);
                             formula.set_reference(&kind[2..]);
                             cell.cell_value_mut().set_formula_obj(formula);
+                            cell.set_dynamic_array(kind.starts_with("d:"));
                         }
                         "n" => {
                             cell.set_value_number(text.parse::<f64>()?);

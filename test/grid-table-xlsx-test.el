@@ -241,17 +241,46 @@
                                     (grid-get-display-value-at source row col)))))
         (should (equal (shown source)
                        '(("1" "2") ("3" "4") ("5" "6") ("21" ""))))
-        ;; A formula that spills is saved as an array formula over the
-        ;; cells it fills, which reads back filling them the same.
+        ;; A formula that spills is saved as a dynamic array over the
+        ;; cells it fills, and reads back spilling, not as {=...}.
+        (should (equal (grid-table-xlsx--array-kind (gethash :model source) 0 0)
+                       "d:A1:B3"))
         (grid-table-xlsx-write-data-source source file "Spill")
-        (let ((back (grid-table-xlsx-create-data-source file "Spill")))
+        (let* ((back (grid-table-xlsx-create-data-source file "Spill"))
+               (model (gethash :model back)))
           (should (equal (shown back) (shown source)))
-          (should (equal (grid-model-array-at (gethash :model back) 0 0) "A1:B3"))
+          (should-not (grid-model-array-at model 0 0))
+          (should-not (grid-model-legacy-at model 0 0))
+          (should (equal (grid-calc-spill-range model 0 0) "A1:B3"))
           (should (equal (grid-get-raw-value-at back 1 0) ""))
           ;; Saved again, it stays so.
           (grid-table-xlsx-write-data-source back file "Spill")
           (should (equal (shown (grid-table-xlsx-create-data-source file "Spill"))
-                         (shown source))))))))
+                         (shown source))))
+        ;; Blocked, it is a dynamic array of its own cell, and still
+        ;; blocked when read back.
+        (grid-model-set-raw-value (gethash :model source) 2 1 "x")
+        (grid-model-recalculate-all (gethash :model source))
+        (should (equal (grid-table-xlsx--array-kind (gethash :model source) 0 0)
+                       "d:A1"))
+        (grid-table-xlsx-write-data-source source file "Spill")
+        (should (equal (grid-get-display-value-at
+                        (grid-table-xlsx-create-data-source file "Spill") 0 0)
+                       "#SPILL!"))
+        ;; One value from a range is marked too, which Excel before
+        ;; dynamic arrays would read otherwise; a formula of single
+        ;; cells is left plain.
+        (let ((model (gethash :model source)))
+          (grid-model-set-raw-value model 3 1 "=MAX(ABS(A1:B1))")
+          (grid-model-set-raw-value model 3 2 "=A1+1")
+          (grid-model-recalculate-all model)
+          (should (equal (grid-table-xlsx--array-kind model 3 1) "d:B4"))
+          (should-not (grid-table-xlsx--array-kind model 3 2))
+          (grid-table-xlsx-write-data-source source file "Spill")
+          (let ((model (gethash :model
+                                (grid-table-xlsx-create-data-source file "Spill"))))
+            (should-not (grid-model-legacy-at model 3 1))
+            (should (equal (grid-table-xlsx--array-kind model 3 1) "d:B4"))))))))
 
 (ert-deftest grid-table-xlsx-test-round-trip ()
   (skip-unless grid-table-xlsx-test--available)
