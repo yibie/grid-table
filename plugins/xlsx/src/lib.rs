@@ -18,7 +18,7 @@ use umya_spreadsheet::{
 use umya_spreadsheet::helper::coordinate::string_from_column_index;
 use umya_spreadsheet::structs::drawing::Theme;
 use umya_spreadsheet::structs::drawing::charts::{
-    AreaChartSeries, BarDirectionValues, CategoryAxisData, ChartText, GroupingValues,
+    AreaChartSeries, BarDirectionValues, CategoryAxisData, ChartText, GroupingValues, NumericValue,
     ScatterStyleValues, Smooth, StringReference,
 };
 use umya_spreadsheet::structs::drawing::spreadsheet::MarkerType;
@@ -269,6 +269,20 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
                 write!(out, "({} ", role)?;
                 quote(out, reference);
                 out.push(')');
+                out.push(' ');
+            }
+            // Each series' name: nil, its cells, or (text TEXT).
+            out.push_str(") (");
+            for name in &info.names {
+                match name {
+                    SeriesName::None => out.push_str("nil"),
+                    SeriesName::Cells(range) => quote(out, range),
+                    SeriesName::Text(text) => {
+                        out.push_str("(text ");
+                        quote(out, text);
+                        out.push(')');
+                    }
+                }
                 out.push(' ');
             }
             out.push_str("))");
@@ -732,6 +746,16 @@ struct ChartInfo {
     /// The ranges the chart reads, each with what it holds: v values,
     /// x the x values of a scatter chart, c categories, n a series name
     refs: Vec<(char, String)>,
+    /// Each series' name as the chart gives it: its cells, its text, or
+    /// none
+    names: Vec<SeriesName>,
+}
+
+/// The name of a series of a chart.
+enum SeriesName {
+    None,
+    Cells(String),
+    Text(String),
 }
 
 /// Describe CHART of the sheet named SHEET, or None when grid-table
@@ -763,7 +787,25 @@ fn chart_info(chart: &Chart, sheet: &str) -> Option<ChartInfo> {
         return None;
     };
     let mut refs = Vec::new();
+    let mut names = Vec::new();
     for series in list.area_chart_series() {
+        let text = series.chart_text();
+        names.push(
+            if let Some(reference) = text.and_then(|t| t.string_reference()) {
+                SeriesName::Cells(reference.formula().address().range().range())
+            } else if let Some(value) = text.and_then(|t| t.numeric_value()) {
+                SeriesName::Text(value.text().to_string())
+            } else if let Some(rich) = text.and_then(|t| t.rich_text()) {
+                SeriesName::Text(
+                    rich.paragraph()
+                        .iter()
+                        .flat_map(|p| p.run().iter().map(|r| r.text().to_string()))
+                        .collect(),
+                )
+            } else {
+                SeriesName::None
+            },
+        );
         let formulas = [
             ('v', series.values().map(|v| v.number_reference().formula())),
             ('x', series.x_values().map(|v| v.number_reference().formula())),
@@ -824,6 +866,7 @@ fn chart_info(chart: &Chart, sheet: &str) -> Option<ChartInfo> {
         from: (anchor.from_marker().row(), anchor.from_marker().col()),
         to: (anchor.to_marker().row(), anchor.to_marker().col()),
         refs,
+        names,
     })
 }
 
@@ -931,14 +974,23 @@ fn chart(fields: &[&str]) -> Result<Chart> {
             field.split(ITEM).map(String::from).collect()
         }
     };
-    // The series names are read from their cells too.
+    // The series names are read from their cells too; an empty item is
+    // a series with no name, and one starting with " a name of its own.
     let names = items(fields[5]);
     let list = chart.area_chart_series_list_mut().area_chart_series_mut();
     for (series, name) in list.iter_mut().zip(names.iter()) {
-        let mut reference = StringReference::default();
-        reference.formula_mut().set_address_str(name);
         let mut text = ChartText::default();
-        text.set_string_reference(reference);
+        if name.is_empty() {
+            continue;
+        } else if let Some(literal) = name.strip_prefix('"') {
+            let mut value = NumericValue::default();
+            value.set_text(literal);
+            text.set_numeric_value(value);
+        } else {
+            let mut reference = StringReference::default();
+            reference.formula_mut().set_address_str(name);
+            text.set_string_reference(reference);
+        }
         series.set_chart_text(text);
     }
     // A doughnut is built from labels and values in turn; with no labels

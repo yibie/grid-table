@@ -587,6 +587,29 @@ grid reads them back without it."
                                                "My Data"))
                          (cdr written))))))))
 
+(ert-deftest grid-table-xlsx-test-chart-series-names-of-their-own ()
+  "Series named by text, by cells elsewhere or not at all keep those names."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "" "")
+                  '(("1" "2" "3") ("4" "5" "6") ("" "" "")
+                    ("Top" "" "") ("Half" "" ""))))
+           (workbook (grid-workbook-create (list (cons "Sheet1" data))))
+           (chart (list :anchor '(6 . 0) :size '(42 . 12) :type 'column
+                        :range "A1:C2" :by 'columns :title nil
+                        :labels 'none :names 'none
+                        :series-names '(nil (text "Apple") "$A$4:$A$5"))))
+      (grid-table-set-charts data (list chart))
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                       "Sheet1")))
+        (should (equal (grid-table-charts back) (list chart)))
+        ;; A name across two cells joins their text, as Excel shows it.
+        (should (equal (mapcar #'car (plist-get (grid-table-chart-data back chart)
+                                                :series))
+                       '("Series 1" "Apple" "Top Half")))))))
+
 (ert-deftest grid-table-xlsx-test-export-keeps-other-sheets ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

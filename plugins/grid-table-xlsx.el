@@ -539,14 +539,26 @@ With KEEP, the names FILE has besides are kept; otherwise they go."
                           (grid-table-xlsx--clean (substring (cdr entry) 1))))
                 names grid-table-xlsx--record))))
 
+(defun grid-table-xlsx--series-count (chart)
+  "Return how many series the floating CHART draws from its block."
+  (pcase-let ((`(,top ,left ,bottom ,right)
+               (grid-chart-svg-parse-range (plist-get chart :range))))
+    (- (if (eq (plist-get chart :by) 'rows)
+           (1+ (- bottom top))
+         (1+ (- right left)))
+       (if (eq (plist-get chart :labels) t) 1 0))))
+
 (defun grid-table-xlsx--chart (source entry)
   "Return the floating chart of SOURCE that ENTRY, read from a workbook, is.
-ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL REFS), each of REFS
-\(ROLE RANGE) with ROLE v for values, x for x values, c for categories
-and n for a series name.  The chart draws the block covering the
-ranges, its series running the way its first values do.  Return nil
-for an ENTRY that reads no cells."
-  (pcase-let* ((`(,type ,title ,top ,left ,bottom ,right ,refs) entry)
+ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL REFS NAMES), each
+of REFS (ROLE RANGE) with ROLE v for values, x for x values, c for
+categories and n for a series name, and NAMES each series' name: nil,
+its cells or (text TEXT).  The chart draws the block covering the
+ranges, its series running the way its first values do.  Names that
+are not the block's first row or column, as text of their own or cells
+elsewhere, are kept as :series-names, and the block leaves them out.
+Return nil for an ENTRY that reads no cells."
+  (pcase-let* ((`(,type ,title ,top ,left ,bottom ,right ,refs . ,given) entry)
                (refs (delq nil (mapcar (lambda (ref)
                                          (when-let* ((box (grid-chart-svg-parse-range
                                                            (cadr ref))))
@@ -598,6 +610,18 @@ for an ENTRY that reads no cells."
                                t)))))
              (labels (and by (funcall place '(c x) (if (eq by 'columns) 'col 'row))))
              (names (and by (funcall place '(n) (if (eq by 'columns) 'row 'col)))))
+        (if-let* (((cl-some #'identity (car given)))
+                  ((or (not (eq names t))
+                       (cl-some #'consp (car given))))
+                  ;; Names grid-table would not find in the block.
+                  (chart (grid-table-xlsx--chart
+                          source
+                          (list type title top left bottom right
+                                (cl-remove 'n (nth 6 entry) :key #'car))))
+                  ;; One for each series the block gives, or the chart
+                  ;; holds series of its own that the block cannot.
+                  ((= (length (car given)) (grid-table-xlsx--series-count chart))))
+            (append chart (list :series-names (car given)))
         (append
          (list :anchor (cons top left)
                ;; Columns count their width in characters; a row is a line.
@@ -611,7 +635,7 @@ for an ENTRY that reads no cells."
                :by by
                :title (and (not (string-empty-p title)) title))
          (and labels (list :labels labels))
-         (and names (list :names names)))))))
+         (and names (list :names names))))))))
 
 (defun grid-table-xlsx-create-data-source (file &optional sheet)
   "Return a data source holding sheet SHEET of the xlsx FILE.
@@ -957,7 +981,25 @@ and rows it covers."
               (grid-table-xlsx--cell-name (car anchor) (cdr anchor))
               (grid-table-xlsx--cell-name (+ (car anchor) (cdr size)) right)
               (grid-table-xlsx--clean (or (plist-get chart :title) ""))
-              (mapconcat absolute (plist-get data :names) grid-table-xlsx--item)
+              (let ((given (plist-get chart :series-names)))
+                (if (and given (= (length given) (length ranges)))
+                    ;; Names of their own: none, text, or cells elsewhere.
+                    (mapconcat (lambda (name)
+                                 (pcase name
+                                   (`(text ,text)
+                                    (concat "\"" (grid-table-xlsx--clean text)))
+                                   ((pred stringp)
+                                    (pcase (grid-chart-svg-parse-range name)
+                                      (`(,top ,left ,top ,left)
+                                       (format "%s$%s$%d" prefix
+                                               (grid-table-xlsx--column-name left)
+                                               (1+ top)))
+                                      ((and box (pred consp))
+                                       (funcall absolute box))
+                                      (_ "")))
+                                   (_ "")))
+                               given grid-table-xlsx--item)
+                  (mapconcat absolute (plist-get data :names) grid-table-xlsx--item)))
               ;; The cells holding the category labels; none when the
               ;; categories are only numbered.
               (if (and labels (not (eq type 'scatter)))
