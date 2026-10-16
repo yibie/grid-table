@@ -312,14 +312,43 @@ as \"Yes,No\" or a reference."
             (push (append bounds (list 'list spec)) rules)))))
     (nreverse rules)))
 
-(defun grid-table-xlsx--names (file)
-  "Return the names defined across the workbook of the xlsx FILE.
-An alist from each name to its definition as a formula; names
-grid-table cannot take are left out."
+(defun grid-table-xlsx--all-names (file)
+  "Return the names of the xlsx FILE as (NAME DEFINITION SHEET) entries.
+DEFINITION is a formula; SHEET is the sheet a name belongs to, or nil
+for one of the whole workbook.  Names grid-table cannot take are left
+out."
   (cl-remove-if
    (lambda (entry) (grid-calc-name-problem (car entry)))
-   (mapcar (lambda (entry) (cons (car entry) (concat "=" (cdr entry))))
+   (mapcar (pcase-lambda (`(,name ,definition ,sheet))
+             (list name (concat "=" definition) sheet))
            (car (read-from-string (grid-table-xlsx-module-names file))))))
+
+(defun grid-table-xlsx--names (file)
+  "Return the names defined across the workbook of the xlsx FILE.
+An alist from each name to its definition as a formula; names that
+belong to one sheet, and names grid-table cannot take, are left out."
+  (delq nil (mapcar (pcase-lambda (`(,name ,definition ,sheet))
+                      (unless sheet (cons name definition)))
+                    (grid-table-xlsx--all-names file))))
+
+(defun grid-table-xlsx-give-names (workbook file)
+  "Give WORKBOOK the names defined in the xlsx FILE it was read from.
+A name that belongs to one sheet is kept with that sheet, and the tables
+of its sheets are kept for the formulas that name them; both are read,
+not written, as the file keeps them."
+  (let (global local tables)
+    (pcase-dolist (`(,name ,definition ,sheet) (grid-table-xlsx--all-names file))
+      (if sheet
+          (push (cons (cons sheet name) definition) local)
+        (push (cons name definition) global)))
+    (dolist (source (grid-workbook-sheets workbook))
+      (pcase-dolist (`(,name . ,place) (gethash :xlsx-tables source))
+        (push (cons name (cons (grid-workbook-sheet-name source) place))
+              tables)))
+    (setf (grid-workbook-local-names workbook) (nreverse local))
+    (setf (grid-workbook-tables workbook) (nreverse tables))
+    (when (or global local tables)
+      (grid-workbook-set-names workbook (nreverse global)))))
 
 (defun grid-table-xlsx--write-names (file names &optional keep)
   "Give the xlsx FILE the defined NAMES, an alist from name to formula.
@@ -458,9 +487,17 @@ the header row."
         (aset (aref table (nth 0 cell)) (nth 1 cell)
               (grid-table-xlsx--raw cell)))
       (let* ((values (mapcar (lambda (row) (append row nil)) table))
-             (source (make-default-data-source
-                      (copy-sequence (car values)) values sheet))
+             ;; Formulas read as Excel reads a file's.
+             (source (let ((grid-calc-legacy-arrays t))
+                       (make-default-data-source
+                        (copy-sequence (car values)) values sheet)))
              (model (gethash :model source))
+             (arrays (delq nil (mapcar (lambda (cell)
+                                         (when-let* ((range (plist-get (nthcdr 3 cell)
+                                                                       :array)))
+                                           (cons (cons (nth 0 cell) (nth 1 cell))
+                                                 range)))
+                                       cells)))
              (rules (grid-table-xlsx--rules (plist-get data :conditionals))))
         ;; A merge that reaches down from the first row, such as a title
         ;; over two rows, only exists in a sheet without a header row.
@@ -510,6 +547,11 @@ the header row."
          source (delq nil (mapcar (lambda (entry)
                                     (grid-table-xlsx--chart source entry))
                                   (plist-get data :charts))))
+        (grid-model-set-legacy model t)
+        (when arrays
+          (grid-model-set-arrays model arrays)
+          (grid-model-recalculate-all model))
+        (puthash :xlsx-tables (plist-get data :tables) source)
         (puthash :xlsx-file file source)
         (puthash :xlsx-sheet sheet source)
         (puthash :xlsx-skipped-conditionals (cdr rules) source)
@@ -525,8 +567,7 @@ the header row."
                   (or (grid-table-xlsx-sheet-names file)
                       (error "No sheet in %s" file)))
           t)))
-    (when-let* ((names (grid-table-xlsx--names (expand-file-name file))))
-      (grid-workbook-set-names workbook names))
+    (grid-table-xlsx-give-names workbook (expand-file-name file))
     workbook))
 
 ;;;###autoload
@@ -585,9 +626,10 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
           "")
         (or (grid-format-to-code (plist-get style :format)) "")))
 
-(defun grid-table-xlsx--cell-record (row col raw style)
+(defun grid-table-xlsx--cell-record (row col raw style &optional array)
   "Return the record for the cell at ROW and COL, or nil for nothing.
-RAW is its raw input and STYLE its style."
+RAW is its raw input and STYLE its style.  ARRAY, for an array formula,
+is the range of the cells it fills."
   (let* ((case-fold-search t)
          (text (grid-table-xlsx--clean (format "%s" (or raw ""))))
          (kind (cond
@@ -601,7 +643,7 @@ RAW is its raw input and STYLE its style."
                             grid-table-xlsx--own-formula-regexp text)))
                  (setq text (grid-table-xlsx--prefix-functions
                              (substring text 1)))
-                 "f")
+                 (if array (concat "a:" array) "f"))
                 ((string-match-p grid-table-xlsx--number-regexp text) "n")
                 ((member text '("TRUE" "FALSE")) "b")
                 (t "s"))))
@@ -712,7 +754,8 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
                             (format (grid-table-cell-format source row col)))
                         (if (and format (not (plist-get style :format)))
                             (plist-put (copy-sequence style) :format format)
-                          style)))))
+                          style))
+                      (grid-model-array-at (gethash :model source) row col))))
           (push record records))
         (let ((style (grid-get-style-at source row col)))
           (dolist (entry '((:note . "N") (:link . "L")))

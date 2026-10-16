@@ -8,7 +8,7 @@ use emacs::{defun, Env, Result};
 use std::fmt::Write;
 use std::path::Path;
 use umya_spreadsheet::{
-    reader, writer, Color, ConditionalFormatValues, ConditionalFormatting,
+    reader, writer, CellFormulaValues, CellRawValue, Color, ConditionalFormatValues, ConditionalFormatting,
     ConditionalFormattingOperatorValues, ConditionalFormattingRule, DataValidation,
     Comment, DataValidationValues, DataValidations, DefinedName, Formula, Hyperlink,
     HorizontalAlignmentValues, Pane,
@@ -121,6 +121,32 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
         // give, only the value it shows.
         if cell.is_formula() && !cell.formula().is_empty() {
             quote(out, &format!("={}", cell.formula()));
+            // An array formula computes over whole ranges and fills the
+            // cells of its reference; a plain one takes one cell of each.
+            if let Some(formula) = cell.formula_obj() {
+                if *formula.formula_type() == CellFormulaValues::Array {
+                    keyword(out, ":array", formula.reference());
+                }
+            }
+            // What the writer last computed for the formula, to check
+            // grid-table's own result against.
+            match cell.raw_value() {
+                CellRawValue::Numeric(number) if number.is_finite() => {
+                    write!(out, " :cached {number:?}")?;
+                }
+                CellRawValue::Bool(truth) => {
+                    out.push_str(if *truth { " :cached :true" } else { " :cached :false" });
+                }
+                CellRawValue::Error(error) => {
+                    out.push_str(" :cached (:error ");
+                    quote(out, &error.to_string());
+                    out.push(')');
+                }
+                CellRawValue::String(_) | CellRawValue::RichText(_) => {
+                    keyword(out, ":cached", &cell.value());
+                }
+                _ => {}
+            }
         } else {
             let value = cell.value();
             quote(out, &value);
@@ -241,6 +267,31 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             }
             out.push_str("))");
         }
+    }
+    out.push(')');
+    // Tables, for formulas that name them, as Table1[Qty]: each is
+    // (NAME TOP LEFT BOTTOM RIGHT HEADER-ROWS TOTALS-ROWS (COLUMN...)),
+    // zero-based and inclusive.
+    out.push_str(" :tables (");
+    for table in sheet.tables() {
+        let (start, end) = table.area();
+        out.push('(');
+        quote(out, table.display_name());
+        write!(
+            out,
+            " {} {} {} {} {} {} (",
+            start.row_num() - 1,
+            start.col_num() - 1,
+            end.row_num() - 1,
+            end.col_num() - 1,
+            table.header_row_count(),
+            table.totals_row_count()
+        )?;
+        for column in table.columns() {
+            quote(out, column.name());
+            out.push(' ');
+        }
+        out.push_str("))");
     }
     out.push(')');
     if let Some(pane) = frozen_pane(sheet) {
@@ -476,6 +527,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
         let fields: Vec<&str> = record.split(FIELD).collect();
         match fields[0] {
             // C row col kind text bold italic color fill align format
+            // KIND is f, a:RANGE, n, b or s.
             "C" if fields.len() >= 5 => {
                 let row: u32 = fields[1].parse()?;
                 let col: u32 = fields[2].parse()?;
@@ -486,6 +538,14 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                     match fields[3] {
                         "f" => {
                             cell.set_formula(text);
+                        }
+                        // An array formula, a:RANGE with the cells it fills
+                        kind if kind.starts_with("a:") => {
+                            let mut formula = umya_spreadsheet::CellFormula::default();
+                            formula.set_text(text);
+                            formula.set_formula_type(CellFormulaValues::Array);
+                            formula.set_reference(&kind[2..]);
+                            cell.cell_value_mut().set_formula_obj(formula);
                         }
                         "n" => {
                             cell.set_value_number(text.parse::<f64>()?);
@@ -835,24 +895,47 @@ fn builtin_name(name: &DefinedName) -> bool {
     name.name().starts_with("_xlnm.") || name.hidden() || name.has_local_sheet_id()
 }
 
-/// Return the names defined across the workbook of the xlsx file PATH, as
-/// a printed alist from each name to its reference.  Names that belong to
-/// one sheet or to the workbook itself are left out.
+/// Return the names defined in the workbook of the xlsx file PATH, as a
+/// printed list of (NAME DEFINITION SHEET): SHEET is the name of the sheet
+/// a name belongs to, or nil for one of the whole workbook.  The names the
+/// workbook keeps for itself, as print areas, and hidden ones are left out.
 #[defun]
 fn names(path: String) -> Result<String> {
     let book = reader::xlsx::lazy_read(Path::new(&path)).map_err(fail)?;
+    let sheets = book.sheet_collection_no_check();
     let mut out = String::from("(");
-    let sheet_names = book
-        .sheet_collection_no_check()
+    let mut push = |name: &DefinedName, sheet: Option<&str>| {
+        if name.name().starts_with("_xlnm.") || name.hidden() {
+            return;
+        }
+        out.push('(');
+        quote(&mut out, name.name());
+        out.push(' ');
+        quote(&mut out, &name.address());
+        match sheet {
+            Some(sheet) => {
+                out.push(' ');
+                quote(&mut out, sheet);
+            }
+            None => out.push_str(" nil"),
+        }
+        out.push(')');
+    };
+    // umya keeps a name with the sheet its reference points into, so
+    // whether a name belongs to one sheet is told by its localSheetId,
+    // not by where umya keeps it.
+    let names = book
+        .defined_names()
         .iter()
-        .flat_map(|sheet| sheet.defined_names().iter());
-    for name in book.defined_names().iter().chain(sheet_names) {
-        if !builtin_name(name) {
-            out.push('(');
-            quote(&mut out, name.name());
-            out.push_str(" . ");
-            quote(&mut out, &name.address());
-            out.push(')');
+        .chain(sheets.iter().flat_map(|sheet| sheet.defined_names().iter()));
+    for name in names {
+        if name.has_local_sheet_id() {
+            match sheets.get(name.local_sheet_id() as usize) {
+                Some(sheet) => push(name, Some(sheet.name())),
+                None => continue,
+            }
+        } else {
+            push(name, None);
         }
     }
     out.push(')');
