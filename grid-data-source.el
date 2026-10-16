@@ -217,8 +217,14 @@ TITLE is an optional string for the grid title."
 (cl-defstruct (grid-workbook (:constructor grid-workbook--create))
   "Sheets kept together: SHEETS is the list of their data sources, in order.
 NAMES is an alist of the defined names, from each to its definition as a
-formula, such as =Sheet1!$B$2:$B$9."
-  sheets names)
+formula, such as =Sheet1!$B$2:$B$9.  LOCAL-NAMES holds the names that
+belong to one sheet, as a workbook file may have them: an alist from
+\(SHEET . NAME) to definition.  A formula on that sheet, or one naming
+the sheet as SHEET!NAME, finds such a name before one of the workbook.
+TABLES holds the tables a workbook file has, for references such as
+Table1[Qty]: each is (NAME SHEET TOP LEFT BOTTOM RIGHT HEADERS TOTALS
+COLUMNS), as `grid-calc-tables' describes."
+  sheets names local-names tables)
 
 (defvar grid-workbook--parsed-names (make-hash-table :test 'equal)
   "Definitions of names already parsed, from their text.")
@@ -227,15 +233,55 @@ formula, such as =Sheet1!$B$2:$B$9."
   "Return the definition of NAME in WORKBOOK, ignoring case, or nil."
   (cdr (assoc-string name (grid-workbook-names workbook) t)))
 
+(defun grid-workbook--local-definition (workbook sheet name)
+  "Return the definition of NAME belonging to the sheet called SHEET, or nil."
+  (cl-loop for ((owner . local) . definition) in (grid-workbook-local-names workbook)
+           when (and (string-equal-ignore-case local name)
+                     (grid-calc--same-sheet-p owner sheet))
+           return definition))
+
 (defun grid-workbook--names-resolver (workbook)
-  "Return the function that finds the parsed definition of a name of WORKBOOK."
-  (lambda (name)
-    (when-let* ((text (grid-workbook-name-definition workbook name)))
+  "Return the function that finds the parsed definition of a name of WORKBOOK.
+It takes the NAME, the SHEET it was qualified with or nil, and the MODEL
+of the formula using it.  A name of SHEET, or else of MODEL's own sheet,
+comes before one of the workbook."
+  (lambda (name &optional sheet model)
+    (when-let* ((text
+                 (or (and (grid-workbook-local-names workbook)
+                          (let ((owner (or sheet
+                                           (and model
+                                                (cl-loop for source in (grid-workbook-sheets workbook)
+                                                         when (eq (gethash :model source) model)
+                                                         return (grid-workbook-sheet-name source))))))
+                            (and owner
+                                 (grid-workbook--local-definition workbook owner name))))
+                     (grid-workbook-name-definition workbook name))))
       (with-memoization (gethash text grid-workbook--parsed-names)
         (condition-case nil
-            (let ((ast (grid-parser-parse (substring text 1))))
-              (and (memq (car-safe ast) '(CELL-REF RANGE)) ast))
+            (grid-parser-parse (substring text 1))
           (error nil))))))
+
+(defun grid-workbook--tables-resolver (workbook)
+  "Return the function that finds a table of WORKBOOK, as `grid-calc-tables'."
+  (when (grid-workbook-tables workbook)
+    (lambda (name &optional model row col)
+      (cl-flet ((found (table)
+                  (when-let* ((source (cl-find (nth 1 table)
+                                               (grid-workbook-sheets workbook)
+                                               :key #'grid-workbook-sheet-name
+                                               :test #'grid-calc--same-sheet-p)))
+                    (cons (gethash :model source) (nthcdr 2 table)))))
+        (if name
+            (when-let* ((table (cl-find name (grid-workbook-tables workbook)
+                                        :key #'car
+                                        :test #'string-equal-ignore-case)))
+              (found table))
+          (cl-loop for table in (grid-workbook-tables workbook)
+                   for result = (found table)
+                   when (and result (eq (car result) model) row col
+                             (<= (nth 1 result) row (nth 3 result))
+                             (<= (nth 2 result) col (nth 4 result)))
+                   return result))))))
 
 (defun grid-workbook-set-names (workbook names)
   "Give WORKBOOK the defined NAMES, an alist from name to definition.
@@ -388,6 +434,7 @@ non-nil, as it has to be when the sheets themselves changed."
       (push workbook grid-workbook--held)
   (let ((grid-calc-sheets (grid-workbook--resolver workbook))
         (grid-calc-names (grid-workbook--names-resolver workbook))
+        (grid-calc-tables (grid-workbook--tables-resolver workbook))
         (grid-calc-defer nil))
     (grid-table-calc-evaluate-models (grid-workbook--models workbook)
                                      everything))))
@@ -587,6 +634,7 @@ change rewrote in other sheets go back with it."
                   (grid-model-carry-widths old-model model at delta)
                   (grid-model-carry-frozen old-model model 'col at delta)
                   (grid-model-carry-hidden old-model model 'col at delta)
+                  (grid-model-carry-arrays old-model model 'col at delta)
                   (grid-model-carry-validations
                    old-model model 'col at delta (grid-workbook-sheet-name s))
                   (grid-model-carry-charts
@@ -595,6 +643,7 @@ change rewrote in other sheets go back with it."
                   (grid-model-carry-widths old-model model)
                   (grid-model-carry-frozen old-model model 'row at delta)
                   (grid-model-carry-hidden old-model model 'row at delta)
+                  (grid-model-carry-arrays old-model model 'row at delta)
                   (grid-model-carry-validations
                    old-model model 'row at delta (grid-workbook-sheet-name s))
                   (grid-model-carry-charts
@@ -603,6 +652,7 @@ change rewrote in other sheets go back with it."
                     (grid-model-carry-frozen old-model model)
                     (grid-model-carry-validations old-model model)
                     (grid-model-carry-charts old-model model)
+                    (grid-model-carry-arrays old-model model)
                     ;; A sort moved the hidden rows along itself.
                     (unless (eq key :sort-by-column)
                       (grid-model-carry-hidden old-model model)))))))))

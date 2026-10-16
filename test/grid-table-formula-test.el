@@ -130,7 +130,7 @@
       ;; Only one row or one column; a cell shows one value.
       (should (equal (value "=UNIQUE(A2:B6)") "#VALUE!"))
       (should (equal (value "=B2:B4") "#VALUE!"))
-      (should (equal (value "=B3:B3") "20"))
+      (should (equal (value "=B3:B3") 20))
       (should (equal (value "=UNIQUE(A2:A2)") "x")))))
 
 (ert-deftest grid-table-formula-multi-branch-functions-return ()
@@ -140,7 +140,7 @@
   (should (equal (car (car (grid-table-formula-test--values
                             '(("=VLOOKUP(\"b\",B1:C2,2,FALSE)" "a" "1")
                               ("" "b" "2")))))
-                 "2"))
+                 2))
   (should (equal (car (car (grid-table-formula-test--values
                             '(("=COUNTIFS(B1:B3,\">1\",C1:C3,\"x\")" "1" "x")
                               ("" "2" "x")
@@ -429,10 +429,10 @@
     (should (equal (funcall value "=SUM($1:$2)") 21))
     (should (equal (funcall value "=SUM(D:D)") "#CYCLE!"))
     ;; XLOOKUP
-    (should (equal (funcall value "=XLOOKUP(4,A:A,C:C)") "6"))
+    (should (equal (funcall value "=XLOOKUP(4,A:A,C:C)") 6))
     (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2,\"none\")") "none"))
     (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2)") "#N/A"))
-    (should (equal (funcall value "=XLOOKUP(1,A1:A2,B1:B2,1/0)") "2"))))
+    (should (equal (funcall value "=XLOOKUP(1,A1:A2,B1:B2,1/0)") 2))))
 
 (ert-deftest grid-table-formula-rewrites-follow-whole-columns-and-rows ()
   ;; Copying moves the relative ones.
@@ -805,9 +805,11 @@
                   '(("1" "2" "3" "=INDEX(A1:A2,3)" "=INDEX(A1:C1,2)")
                     ("4" "5" "6" "=INDEX(A1:C3,2,3)" "=INDEX(A1:A3,3)")
                     ("7" "8" "9" "=INDEX(A1:C3,0,1)" "=INDEX(A1:C3,2,4)")))
-                 '(("1" "2" "3" "#REF!" "2")
-                   ("4" "5" "6" "6" "7")
-                   ("7" "8" "9" "#REF!" "#REF!")))))
+                 ;; A formula that comes to several values, as a whole
+                 ;; column of INDEX does, is #VALUE! in a cell.
+                 '(("1" "2" "3" "#REF!" 2)
+                   ("4" "5" "6" 6 7)
+                   ("7" "8" "9" "#VALUE!" "#REF!")))))
 
 (ert-deftest grid-table-formula-match-compares-numbers-by-value ()
   (should (equal (grid-table-formula-test--values
@@ -911,7 +913,7 @@
     (should (= (grid-table-formula-test--computed
                 (lambda () (grid-model-set-raw-value model 3 3 "6")))
                2))
-    (should (equal (grid-model-get-computed-value model 2 1) "6"))
+    (should (equal (grid-model-get-computed-value model 2 1) 6))
     ;; A1 reaches B1, C1, the sum, what reads the sum, and the column.
     (should (= (grid-table-formula-test--computed
                 (lambda () (grid-model-set-raw-value model 0 0 "10")))
@@ -1062,7 +1064,7 @@
     (should (equal (grid-get-computed-value-at two 0 1) 111))
     ;; A formula that stops reading a cell is no longer reached from it.
     (grid-set-raw-value-at two 0 0 "=S1!C1")
-    (should (equal (grid-get-computed-value-at two 0 0) "3"))
+    (should (equal (grid-get-computed-value-at two 0 0) 3))
     (should (= (grid-table-formula-test--computed
                 (lambda () (grid-set-raw-value-at one 1 1 "60")))
                1))
@@ -1070,7 +1072,7 @@
     (grid-set-raw-value-at one 0 2 "=S2!A1")
     (should (equal (grid-get-computed-value-at one 0 2) "#CYCLE!"))
     (grid-set-raw-value-at two 0 0 "=S1!C2")
-    (should (equal (grid-get-computed-value-at one 0 2) "6"))
+    (should (equal (grid-get-computed-value-at one 0 2) 6))
     (ignore workbook)))
 
 (ert-deftest grid-table-formula-graph-across-sheets-matches-full-recalc ()
@@ -1153,15 +1155,77 @@
             (should (equal (grid-workbook-names (grid-workbook-of loaded))
                            (grid-workbook-names workbook)))
             (should (equal (grid-get-computed-value-at other 0 0) 6)))
-          ;; A name can only be one that no reference or function takes.
+          ;; A name can only be one that no reference takes.  It may
+          ;; share a function's name, as Excel allows: Rate is one.
           (should (grid-calc-name-problem "TAX1"))
           (should (grid-calc-name-problem "Q1Sales"))
-          (should (grid-calc-name-problem "Sum"))
+          (should-not (grid-calc-name-problem "Sum"))
           (should (grid-calc-name-problem "TRUE"))
           (should-not (grid-calc-name-problem "Sales_2024"))
           (grid-workbook-delete-name workbook "rate")
           (should (equal (grid-get-computed-value-at one 3 0) "#NAME?")))
       (delete-file file))))
+
+;; Tables a workbook file has, named by references such as T[Qty]
+(ert-deftest grid-table-formula-table-references ()
+  (let* ((one (make-default-data-source
+               '("" "" "" "")
+               '(("Item" "Q1" "Price" "=SUM(Sales[Q1])")
+                 ("a" "2" "5" "=Sales[@Q1]*Sales[@Price]")
+                 ("b" "3" "7" "=Sales[@Q1]*2")
+                 ("Total" "=SUBTOTAL(109,[Q1])" "" "=ROWS(Sales[#All])")
+                 ("=Sales[[#Headers],[Price]]" "=COUNTA(Sales[[#Data],[#Totals],[Item]])"
+                  "=SUM(Sales[[Q1]:[Price]])" "=Sales[Nope]"))))
+         (workbook (grid-workbook-create (list (cons "One" one)))))
+    (setf (grid-workbook-tables workbook)
+          '(("Sales" "One" 0 0 3 2 1 1 ("Item" "Q1" "Price"))))
+    (grid-workbook-set-names workbook nil)
+    (should (equal (grid-get-computed-value-at one 0 3) 5))
+    (should (equal (grid-get-computed-value-at one 1 3) 10))
+    (should (equal (grid-get-computed-value-at one 2 3) 6))
+    (should (equal (grid-get-computed-value-at one 3 1) 5))
+    (should (equal (grid-get-computed-value-at one 3 3) 4))
+    (should (equal (grid-get-computed-value-at one 4 0) "Price"))
+    (should (equal (grid-get-computed-value-at one 4 1) 3))
+    (should (equal (grid-get-computed-value-at one 4 2) 17))
+    (should (equal (grid-get-computed-value-at one 4 3) "#REF!"))
+    ;; An edit inside the table reaches the formulas naming it.
+    (grid-set-raw-value-at one 1 1 "4")
+    (should (equal (grid-get-computed-value-at one 0 3) 7))
+    ;; What is inside the brackets names columns, so moving lines
+    ;; leaves it as it is.
+    (should (equal (grid-calc-shift-formula
+                    "=Sales[Q1]+B2+Sales[[#This Row],[Q1]]" 1 0)
+                   "=Sales[Q1]+B3+Sales[[#This Row],[Q1]]"))))
+
+;; A workbook file may give a name to one sheet only, define it by a
+;; formula, or leave its references unanchored, read as from A1.
+(ert-deftest grid-table-formula-names-as-a-workbook-file-has-them ()
+  (let* ((one (make-default-data-source
+               '("" "" "") '(("1" "=Rate" "=Above") ("2" "=Two!Rate" "=Above")
+                             ("3" "=Twice" "=Loop"))))
+         (two (make-default-data-source '("") '(("10") ("=Rate"))))
+         (workbook (grid-workbook-create (list (cons "One" one)
+                                               (cons "Two" two)))))
+    (setf (grid-workbook-local-names workbook)
+          '((("Two" . "Rate") . "=Two!$A$1")
+            (("One" . "Above") . "=One!$A1048576")))
+    (grid-workbook-set-names workbook '(("Rate" . "=One!$A$3")
+                                        ("Twice" . "=Rate*2")
+                                        ("Loop" . "=Loop+1")))
+    ;; The sheet's own name comes first; elsewhere the workbook's.
+    (should (equal (grid-get-computed-value-at one 0 1) 3))
+    (should (equal (grid-get-computed-value-at two 1 0) 10))
+    (should (equal (grid-get-computed-value-at one 1 1) 10))
+    ;; A name defined by a formula, and one defined by way of itself
+    (should (equal (grid-get-computed-value-at one 2 1) 6))
+    (should (equal (grid-get-computed-value-at one 2 2) "#NAME?"))
+    ;; $A1048576 read from row 2 is the row above it, going round
+    (should (equal (grid-get-computed-value-at one 1 2) 1))
+    (should (equal (grid-get-computed-value-at one 0 2) 0))
+    ;; It follows the cell it reads.
+    (grid-set-raw-value-at one 0 0 "5")
+    (should (equal (grid-get-computed-value-at one 1 2) 5))))
 
 (ert-deftest grid-table-formula-names-on-a-lone-sheet-are-saved ()
   (let* ((source (make-default-data-source

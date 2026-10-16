@@ -22,7 +22,8 @@
 (defconst grid-parser-token-type-error 'ERROR)
 
 (defconst grid-parser-error-literals
-  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!")
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!"
+    "#SPILL!" "#GETTING_DATA")
   "Error values a formula may hold as written text, as `#REF!' left by a
 deleted cell.")
 
@@ -88,68 +89,188 @@ prefix starts there."
 ;;; Lexical Analyzer (Tokenizer)
 ;;;----------------------------------------------------------------------
 
+(defun grid-parser--name-start-p (char)
+  "Return non-nil when CHAR may start a name, a function or a reference."
+  (or (and (>= char ?A) (<= char ?Z))
+      (and (>= char ?a) (<= char ?z))
+      (memq char '(?$ ?_ ?\\))
+      (and (> char 127)
+           (memq (get-char-code-property char 'general-category)
+                 '(Lu Ll Lt Lm Lo)))))
+
+(defun grid-parser--name-char-p (char)
+  "Return non-nil when CHAR may stand inside a name."
+  (or (grid-parser--name-start-p char)
+      (and (>= char ?0) (<= char ?9))
+      (memq char '(?. ??))
+      (and (> char 127)
+           (memq (get-char-code-property char 'general-category) '(Nd Mn Mc)))))
+
+(defconst grid-parser--cell-regexp "\\`\\$?\\([A-Z]\\{1,3\\}\\)\\$?\\([0-9]\\{1,7\\}\\)\\'"
+  "Matches the text of one cell, such as $B$2, in capitals.")
+
+(defun grid-parser--cell-text-p (text)
+  "Return non-nil when TEXT, in capitals, is a cell on a sheet's grid.
+LOG10 is a cell, as XFD1048576 is; TAX2020 and A0 are not."
+  (and (string-match grid-parser--cell-regexp text)
+       (let ((column (match-string 1 text))
+             (row (string-to-number (match-string 2 text))))
+         (and (<= 1 row 1048576)
+              (or (< (length column) 3) (not (string< "XFD" column)))))))
+
+(defun grid-parser--column-text-p (text)
+  "Return non-nil when TEXT, in capitals, is a whole column such as $C."
+  (and (string-match "\\`\\$?\\([A-Z]\\{1,3\\}\\)\\'" text)
+       (let ((column (match-string 1 text)))
+         (or (< (length column) 3) (not (string< "XFD" column))))))
+
+(defconst grid-parser--function-prefixes
+  '("_XLFN._XLWS." "_XLFN." "_XLWS." "_XLPM.")
+  "Prefixes a workbook file writes before newer functions and LET names.")
+
+(defun grid-parser--strip-prefix (name)
+  "Return NAME, in capitals, without a workbook file's function prefix."
+  (let ((prefix (cl-find-if (lambda (prefix) (string-prefix-p prefix name))
+                            grid-parser--function-prefixes)))
+    (if prefix (substring name (length prefix)) name)))
+
+(defun grid-parser--bracket-end (text pos)
+  "Return the position after the bracket that closes the one at POS in TEXT.
+Brackets nest; an apostrophe makes the character after it plain."
+  (let ((depth 0) (len (length text)) end)
+    (while (and (not end) (< pos len))
+      (pcase (aref text pos)
+        (?' (setq pos (1+ pos)))
+        (?\[ (setq depth (1+ depth)))
+        (?\] (setq depth (1- depth))
+             (when (= depth 0) (setq end (1+ pos)))))
+      (setq pos (1+ pos)))
+    (or end (error "Unclosed ["))))
+
+(defun grid-parser--word-at (text pos)
+  "Return (END . WORD) for the name that starts at POS in TEXT."
+  (let ((end pos) (len (length text)))
+    (while (and (< end len) (grid-parser--name-char-p (aref text end)))
+      (setq end (1+ end)))
+    (cons end (substring text pos end))))
+
+(defun grid-parser--reference-end (text pos)
+  "Return (END . TEXT) for a reference that starts at POS in TEXT, or nil.
+That is a cell such as $A$1, a range such as A1:B5, whole columns such
+as A:C or whole rows such as 2:5, in capitals.  A name followed by an
+opening parenthesis is a function, not a reference."
+  (let ((case-fold-search t)
+        (len (length text)))
+    (cond
+     ((eq (string-match grid-parser--whole-rows-regexp text pos) pos)
+      (cons (match-end 0) (match-string 0 text)))
+     ((eq (string-match "\\$?[A-Za-z]+\\$?[0-9]*" text pos) pos)
+      (let* ((first-end (match-end 0))
+             (first (upcase (match-string 0 text))))
+        (unless (or (and (< first-end len)
+                         (or (grid-parser--name-char-p (aref text first-end))
+                             (memq (aref text first-end) '(?\( ?\[))))
+                    (not (or (grid-parser--cell-text-p first)
+                             (grid-parser--column-text-p first))))
+          (let ((range (and (< first-end len) (eq (aref text first-end) ?:)
+                            (eq (string-match "\\$?[A-Za-z]+\\$?[0-9]*"
+                                              text (1+ first-end))
+                                (1+ first-end))
+                            (let ((second-end (match-end 0))
+                                  (second (upcase (match-string 0 text))))
+                              (and (not (and (< second-end len)
+                                             (or (grid-parser--name-char-p
+                                                  (aref text second-end))
+                                                 (eq (aref text second-end) ?\())))
+                                   (if (grid-parser--cell-text-p first)
+                                       (grid-parser--cell-text-p second)
+                                     (grid-parser--column-text-p second))
+                                   (cons second-end
+                                         (concat first ":" second)))))))
+            (cond (range range)
+                  ;; A column alone is a name, as a function's is
+                  ((grid-parser--cell-text-p first) (cons first-end first))))))))))
+
 (defun grid-parser-tokenize (formula-str)
-  "Tokenizes a formula string into a list of tokens."
+  "Return the tokens of FORMULA-STR, a formula without its equals sign.
+Whitespace between two references, where it intersects them, is a SPACE
+token; elsewhere it separates tokens and is dropped."
   (let ((tokens '())
         (pos 0)
         (len (length formula-str)))
     (while (< pos len)
       (let ((char (aref formula-str pos)))
         (cond
-         ;; Skip whitespace
-         ((member char '(?\s ?\t ?\n))
-          (setq pos (1+ pos)))
+         ((memq char '(?\s ?\t ?\n ?\r))
+          (let ((start pos))
+            (while (and (< pos len) (memq (aref formula-str pos) '(?\s ?\t ?\n ?\r)))
+              (setq pos (1+ pos)))
+            ;; A1:B5 C3:D4 is where the two ranges meet
+            (when (and tokens (< pos len)
+                       (memq (caar tokens) '(CELL-REF RPAREN STRUCT NAME-REF))
+                       (or (grid-parser--name-start-p (aref formula-str pos))
+                           (memq (aref formula-str pos) '(?' ?\())))
+              (push (list 'SPACE (substring formula-str start pos)) tokens))))
 
          ;; A reference into another sheet (e.g., Sheet2!A1, 'My Sheet'!A1:B5)
          ((when-let* ((prefix (grid-parser-sheet-prefix-at formula-str pos)))
-            (cond
-             ((eq (string-match grid-parser--cells-regexp
-                                formula-str (car prefix))
-                  (car prefix))
-              (push (list grid-parser-token-type-cell-ref
-                          (upcase (match-string 0 formula-str))
-                          (cdr prefix))
-                    tokens)
-              (setq pos (match-end 0)))
-             ;; A deleted reference keeps its sheet: Sheet2!#REF!
-             ((grid-parser--error-literal-at formula-str (car prefix))
-              (let ((text (grid-parser--error-literal-at
-                           formula-str (car prefix))))
-                (push (grid-parser-make-token grid-parser-token-type-error text)
+            (let ((reference (grid-parser--reference-end formula-str (car prefix))))
+              (cond
+               (reference
+                (push (list grid-parser-token-type-cell-ref (cdr reference)
+                            (cdr prefix))
                       tokens)
-                (setq pos (+ (car prefix) (length text))))))))
+                (setq pos (car reference)))
+               ;; A deleted reference keeps its sheet: Sheet2!#REF!
+               ((grid-parser--error-literal-at formula-str (car prefix))
+                (let ((text (grid-parser--error-literal-at
+                             formula-str (car prefix))))
+                  (push (grid-parser-make-token grid-parser-token-type-error text)
+                        tokens)
+                  (setq pos (+ (car prefix) (length text)))))
+               ;; A name the sheet keeps: Sheet2!Total
+               ((and (< (car prefix) len)
+                     (grid-parser--name-start-p (aref formula-str (car prefix))))
+                (let ((word (grid-parser--word-at formula-str (car prefix))))
+                  (push (list 'NAME-REF (upcase (cdr word)) (cdr prefix)) tokens)
+                  (setq pos (car word))))))))
 
-         ;; Whole rows (e.g., 2:5, $2:$5)
-         ((and (or (eq char ?$) (and (>= char ?0) (<= char ?9)))
-               (eq (string-match grid-parser--whole-rows-regexp formula-str pos)
-                   pos))
-          (push (grid-parser-make-token grid-parser-token-type-cell-ref
-                                        (match-string 0 formula-str))
+         ;; A reference: A1, $A$1, A1:B5, A:C or 2:5
+         ((and (or (grid-parser--name-start-p char) (and (>= char ?0) (<= char ?9)))
+               (when-let* ((reference (grid-parser--reference-end formula-str pos)))
+                 (push (grid-parser-make-token grid-parser-token-type-cell-ref
+                                               (cdr reference))
+                       tokens)
+                 (setq pos (car reference)))))
+
+         ;; Numbers: 12, 1.5, .5, 1E+3
+         ((or (and (>= char ?0) (<= char ?9))
+              (and (eq char ?.) (< (1+ pos) len)
+                   (<= ?0 (aref formula-str (1+ pos)) ?9)))
+          (string-match "[0-9]*\\.?[0-9]*\\(?:[eE][-+]?[0-9]+\\)?" formula-str pos)
+          (push (grid-parser-make-token grid-parser-token-type-number
+                                        (string-to-number (match-string 0 formula-str)))
                 tokens)
           (setq pos (match-end 0)))
 
-         ;; Numbers (integers and floats)
-         ((or (and (>= char ?0) (<= char ?9)) (eq char ?.))
-          (let ((start pos))
-            (while (and (< pos len)
-                        (or (and (>= (aref formula-str pos) ?0)
-                                 (<= (aref formula-str pos) ?9))
-                            (eq (aref formula-str pos) ?.)))
-              (setq pos (1+ pos)))
-            (push (grid-parser-make-token grid-parser-token-type-number
-                                          (string-to-number (substring formula-str start pos)))
-                  tokens)))
-
-         ;; Strings (e.g., "hello world")
+         ;; Strings, where "" stands for one quotation mark
          ((eq char ?\")
-          (setq pos (1+ pos)) ; Consume opening quote
-          (let ((start pos))
-            (while (and (< pos len) (not (eq (aref formula-str pos) ?\")))
-              (setq pos (1+ pos)))
+          (let ((start (1+ pos)) (parts '()) done)
+            (setq pos start)
+            (while (not done)
+              (cond
+               ((>= pos len) (error "Unclosed string"))
+               ((and (eq (aref formula-str pos) ?\")
+                     (< (1+ pos) len) (eq (aref formula-str (1+ pos)) ?\"))
+                (push (substring formula-str start (1+ pos)) parts)
+                (setq pos (+ pos 2) start pos))
+               ((eq (aref formula-str pos) ?\")
+                (push (substring formula-str start pos) parts)
+                (setq pos (1+ pos) done t))
+               (t (setq pos (1+ pos)))))
             (push (grid-parser-make-token grid-parser-token-type-string
-                                          (substring formula-str start pos))
-                  tokens)
-            (setq pos (1+ pos)))) ; Consume closing quote
+                                          (apply #'concat (nreverse parts)))
+                  tokens)))
 
          ;; Error values written in the formula (e.g., #REF!)
          ((and (eq char ?#) (grid-parser--error-literal-at formula-str pos))
@@ -157,43 +278,37 @@ prefix starts there."
             (push (grid-parser-make-token grid-parser-token-type-error text) tokens)
             (setq pos (+ pos (length text)))))
 
-         ;; Parentheses and comma
-         ((eq char ?\()
-          (push (grid-parser-make-token grid-parser-token-type-lparen char) tokens)
-          (setq pos (1+ pos)))
-         ((eq char ?\))
-          (push (grid-parser-make-token grid-parser-token-type-rparen char) tokens)
-          (setq pos (1+ pos)))
-         ((eq char ?,)
-          (push (grid-parser-make-token grid-parser-token-type-comma char) tokens)
+         ;; A table's columns: Table1[Price], [@Price], Table1[[#Totals],[Price]]
+         ((eq char ?\[)
+          (let ((end (grid-parser--bracket-end formula-str pos)))
+            (push (list 'STRUCT nil (substring formula-str pos end)) tokens)
+            (setq pos end)))
+
+         ((memq char '(?\( ?\) ?, ?\; ?{ ?}))
+          (push (grid-parser-make-token
+                 (pcase char (?\( 'LPAREN) (?\) 'RPAREN) (?, 'COMMA)
+                        (?\; 'SEMICOLON) (?{ 'LBRACE) (?} 'RBRACE))
+                 char)
+                tokens)
           (setq pos (1+ pos)))
 
-         ;; Cell references (e.g., A1, $A$1, A1:B5), TRUE/FALSE or function
-         ;; names (e.g., SUM).  Letters are read in either case.
-         ((or (and (>= char ?A) (<= char ?Z))
-              (and (>= char ?a) (<= char ?z))
-              (eq char ?$))
-          (let ((start pos))
-            (while (and (< pos len)
-                        (let ((c (aref formula-str pos)))
-                          (or (and (>= c ?A) (<= c ?Z))
-                              (and (>= c ?a) (<= c ?z))
-                              (and (>= c ?0) (<= c ?9))
-                              (memq c '(?$ ?: ?_ ?.)))))
-              (setq pos (1+ pos)))
-            (let ((text (upcase (substring formula-str start pos))))
-              (push
-               (cond
-                ((string-match "^\\(\\$?[A-Z]+\\$?[0-9]+\\)\\(:\\$?[A-Z]+\\$?[0-9]+\\)?$" text)
-                 (grid-parser-make-token grid-parser-token-type-cell-ref text))
-                ;; Whole columns (e.g., A:A, $B:$D)
-                ((string-match-p "^\\$?[A-Z]+:\\$?[A-Z]+$" text)
-                 (grid-parser-make-token grid-parser-token-type-cell-ref text))
-                ((member text '("TRUE" "FALSE"))
-                 (grid-parser-make-token grid-parser-token-type-boolean
-                                         (equal text "TRUE")))
-                (t (grid-parser-make-token grid-parser-token-type-function text)))
-               tokens))))
+         ;; Function names, defined names, TRUE and FALSE
+         ((grid-parser--name-start-p char)
+          (pcase-let* ((`(,end . ,word) (grid-parser--word-at formula-str pos))
+                       (name (grid-parser--strip-prefix (upcase word))))
+            (setq pos end)
+            (cond
+             ((and (< pos len) (eq (aref formula-str pos) ?\[))
+              (let ((end (grid-parser--bracket-end formula-str pos)))
+                (push (list 'STRUCT word (substring formula-str pos end)) tokens)
+                (setq pos end)))
+             ((and (member name '("TRUE" "FALSE"))
+                   (not (and (< pos len) (eq (aref formula-str pos) ?\())))
+              (push (grid-parser-make-token grid-parser-token-type-boolean
+                                            (equal name "TRUE"))
+                    tokens))
+             (t (push (grid-parser-make-token grid-parser-token-type-function name)
+                      tokens)))))
 
          ;; Two-character comparison operators
          ((and (< (1+ pos) len)
@@ -209,9 +324,18 @@ prefix starts there."
                                         (char-to-string char))
                 tokens)
           (setq pos (1+ pos))))))
-    ;; Add EOF token
-    (push (grid-parser-make-token grid-parser-token-type-eof nil) tokens)
-    (nreverse tokens)))
+    ;; Whitespace kept before something that turned out no reference
+    (setq tokens (nreverse tokens))
+    (let ((kept '()))
+      (while tokens
+        (let ((token (pop tokens)))
+          (unless (and (eq (car token) 'SPACE)
+                       (not (memq (caar tokens) '(CELL-REF LPAREN STRUCT NAME-REF)))
+                       (not (and (eq (caar tokens) 'FUNCTION)
+                                 (not (eq (caadr tokens) 'LPAREN)))))
+            (push token kept))))
+      (nreverse (cons (grid-parser-make-token grid-parser-token-type-eof nil)
+                      kept)))))
 
 (defun grid-parser--error-literal-at (formula pos)
   "Return the error value written in FORMULA at POS, or nil."
@@ -479,8 +603,78 @@ Returns (ast . remaining-tokens)."
            (operand (car result))
            (remaining (cdr result)))
       (cons (grid-ast-make-unary-op 'NOT operand) remaining)))
+   ;; @A1:A9, the cell of the range in the formula's own row or column
+   ((and tokens (grid-parser-token-is-p (car tokens) grid-parser-token-type-operator "@"))
+    (pop tokens)
+    (let ((result (grid-parser-parse-unary-expression tokens)))
+      (cons (grid-ast-make-unary-op '@ (car result)) (cdr result))))
    (t
-    (grid-parser-parse-primary-expression tokens))))
+    (grid-parser-parse-intersection-expression tokens))))
+
+(defun grid-parser-parse-intersection-expression (tokens)
+  "Parse references joined by spaces, the cells they have in common.
+Returns (ast . remaining-tokens)."
+  (let* ((result (grid-parser-parse-range-expression tokens))
+         (left (car result))
+         (remaining (cdr result)))
+    (while (eq (caar remaining) 'SPACE)
+      (pop remaining)
+      (let ((right (grid-parser-parse-range-expression remaining)))
+        (setq left (list 'INTERSECT left (car right))
+              remaining (cdr right))))
+    (cons left remaining)))
+
+(defun grid-parser-parse-range-expression (tokens)
+  "Parse references joined by colons, as A1:INDEX(B1:B9,3).
+Returns (ast . remaining-tokens)."
+  (let* ((result (grid-parser-parse-primary-expression tokens))
+         (left (car result))
+         (remaining (cdr result)))
+    (while (grid-parser-token-is-p (car remaining)
+                                   grid-parser-token-type-operator ":")
+      (pop remaining)
+      (let ((right (grid-parser-parse-primary-expression remaining)))
+        (setq left (list 'RANGE-OP left (car right))
+              remaining (cdr right))))
+    (cons left remaining)))
+
+(defun grid-parser--parse-arguments (tokens close)
+  "Parse expressions separated by commas up to the token type CLOSE.
+An argument left empty, as in IF(A1,,2), is (MISSING).  Returns
+\(ARGUMENTS . TOKENS-AFTER-CLOSE)."
+  (let ((args '()) done)
+    (if (eq (caar tokens) close)
+        (setq done t)
+      (while (not done)
+        (if (memq (caar tokens) (list 'COMMA close))
+            (push (list 'MISSING) args)
+          (let ((result (grid-parser-parse-expression tokens)))
+            (push (car result) args)
+            (setq tokens (cdr result))))
+        (if (eq (caar tokens) 'COMMA)
+            (pop tokens)
+          (setq done t))))
+    (unless (eq (caar tokens) close)
+      (error "Expected %s" (if (eq close 'RPAREN) "')'" close)))
+    (cons (nreverse args) (cdr tokens))))
+
+(defun grid-parser--parse-array (tokens)
+  "Parse an array constant after its opening brace, as {1,2;3,4}.
+Returns ((ARRAY ROWS) . remaining-tokens), each row a list of nodes."
+  (let ((rows '()) (row '()) done)
+    (while (not done)
+      (let ((result (grid-parser-parse-unary-expression tokens)))
+        (push (car result) row)
+        (setq tokens (cdr result)))
+      (pcase (caar tokens)
+        ('COMMA (pop tokens))
+        ('SEMICOLON (pop tokens) (push (nreverse row) rows) (setq row nil))
+        ('RBRACE (pop tokens) (push (nreverse row) rows) (setq done t))
+        (_ (error "Expected '}'"))))
+    (setq rows (nreverse rows))
+    (unless (cl-every (lambda (r) (= (length r) (length (car rows)))) rows)
+      (error "Rows of an array must be as long as each other"))
+    (cons (list 'ARRAY rows) tokens)))
 
 (defun grid-parser-parse-primary-expression (tokens)
   "Parses primary expressions (numbers, strings, cell references, function calls, parenthesized expressions)."
@@ -534,40 +728,40 @@ Returns (ast . remaining-tokens)."
             ;; defined names do.
             (cons (list 'NAME func-name) tokens)
         (pop tokens) ; Consume '('
+        (let ((result (grid-parser--parse-arguments tokens 'RPAREN)))
+          (cons (grid-ast-make-function-call func-name (car result))
+                (cdr result))))))
 
-        ;; Parse argument list
-        (let ((args '())
-              (remaining-tokens tokens))
-          (unless (and remaining-tokens (grid-parser-token-is-p (car remaining-tokens) grid-parser-token-type-rparen))
-            (let* ((arg-result (grid-parser-parse-expression remaining-tokens))
-                   (arg (car arg-result))
-                   (new-remaining (cdr arg-result)))
-              (push arg args)
-              (setq remaining-tokens new-remaining)
-              (while (and remaining-tokens (grid-parser-token-is-p (car remaining-tokens) grid-parser-token-type-comma))
-                (pop remaining-tokens) ; Consume ','
-                (let* ((next-arg-result (grid-parser-parse-expression remaining-tokens))
-                       (next-arg (car next-arg-result))
-                       (next-remaining (cdr next-arg-result)))
-                  (push next-arg args)
-                  (setq remaining-tokens next-remaining)))))
+     ;; A name a sheet keeps: Sheet2!Total
+     ((eq (car token) 'NAME-REF)
+      (pop tokens)
+      (cons (list 'NAME (nth 1 token) (nth 2 token)) tokens))
 
-          (unless (and remaining-tokens (grid-parser-token-is-p (car remaining-tokens) grid-parser-token-type-rparen))
-            (error "Expected ')' after function arguments"))
-          (pop remaining-tokens) ; Consume ')'
+     ;; A table's columns: Table1[Price]
+     ((eq (car token) 'STRUCT)
+      (pop tokens)
+      (cons (list 'STRUCT-REF (nth 1 token) (nth 2 token)) tokens))
 
-          (cons (grid-ast-make-function-call func-name (nreverse args)) remaining-tokens)))))
+     ;; An array constant: {1,2;3,4}
+     ((eq (car token) 'LBRACE)
+      (grid-parser--parse-array (cdr tokens)))
 
-     ;; Parenthesized expressions
+     ;; Parenthesized expressions; (A1:A3,C1:C3) is both ranges
      ((grid-parser-token-is-p token grid-parser-token-type-lparen)
       (pop tokens) ; Consume '('
       (let* ((expr-result (grid-parser-parse-expression tokens))
-             (expr (car expr-result))
+             (parts (list (car expr-result)))
              (remaining (cdr expr-result)))
+        (while (eq (caar remaining) 'COMMA)
+          (pop remaining)
+          (let ((next (grid-parser-parse-expression remaining)))
+            (push (car next) parts)
+            (setq remaining (cdr next))))
         (unless (and remaining (grid-parser-token-is-p (car remaining) grid-parser-token-type-rparen))
           (error "Expected ')' after expression"))
         (pop remaining) ; Consume ')'
-        (cons expr remaining)))
+        (cons (if (cdr parts) (cons 'UNION (nreverse parts)) (car parts))
+              remaining)))
 
      (t
       (error "Unexpected token: %s" token)))))

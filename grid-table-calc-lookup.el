@@ -1,0 +1,572 @@
+;;; grid-table-calc-lookup.el --- Lookup, reference and array functions -*- lexical-binding: t -*-
+
+;;; Commentary:
+
+;; Finding values (MATCH, VLOOKUP, XLOOKUP and their kin), making
+;; references (INDEX, OFFSET, INDIRECT), saying where a reference is
+;; (ROW, COLUMN, ADDRESS) and reshaping several values (SORT, FILTER).
+
+;;; Code:
+
+(require 'grid-table-calc)
+(require 'grid-table-parser)
+
+;;;----------------------------------------------------------------------
+;;; Tables of values
+;;;----------------------------------------------------------------------
+;;
+;; A lookup reads a range or an array the same way: as a number of rows
+;; and columns and the value at each, without first copying a range out
+;; of its sheet.
+
+(defun grid-calc--table-size (value)
+  "Return (ROWS . COLS) of VALUE, a `values' argument.
+Rows of a range past its sheet's cells are not counted."
+  (cond ((grid-calc-ref-p value)
+         (cons (grid-calc-ref-filled-rows value) (grid-calc-ref-cols value)))
+        ((grid-calc-array-p value)
+         (cons (grid-calc-array-rows value) (grid-calc-array-cols value)))
+        (t (cons 1 1))))
+
+(defun grid-calc--table-full-size (value)
+  "Return (ROWS . COLS) of VALUE, a range counted whole."
+  (if (grid-calc-ref-p value)
+      (cons (grid-calc-ref-rows value) (grid-calc-ref-cols value))
+    (grid-calc--table-size value)))
+
+(defun grid-calc--table-at (value row col)
+  "Return the value at ROW and COL of VALUE, a `values' argument."
+  (cond ((grid-calc-ref-p value) (grid-calc-ref-cell value row col))
+        ((grid-calc-array-p value) (grid-calc-aref value row col))
+        (t value)))
+
+(defun grid-calc--line-of (value)
+  "Return (LENGTH . GETTER) for VALUE, one row or one column of values.
+GETTER takes a position from 0.  Several rows and columns are #N/A."
+  (pcase-let ((`(,rows . ,cols) (grid-calc--table-size value))
+              (`(,full-rows . ,_) (grid-calc--table-full-size value)))
+    (cond ((= cols 1)
+           (cons rows (lambda (i) (grid-calc--table-at value i 0))))
+          ((or (= rows 1) (= full-rows 1))
+           (cons cols (lambda (i) (grid-calc--table-at value 0 i))))
+          ;; A range of rows the sheet does not have
+          ((= rows 0) (cons 0 #'ignore))
+          (t (grid-calc-raise "#N/A")))))
+
+(defun grid-calc--part (value top left rows cols)
+  "Return ROWS by COLS of VALUE from TOP and LEFT, counted from 0.
+A range gives a range, anything else an array."
+  (if (grid-calc-ref-p value)
+      (grid-calc-ref--make (grid-calc-ref-model value)
+                           (+ (grid-calc-ref-top value) top)
+                           (+ (grid-calc-ref-left value) left)
+                           (+ (grid-calc-ref-top value) top rows -1)
+                           (+ (grid-calc-ref-left value) left cols -1))
+    (let ((value (if (grid-calc-array-p value) value
+                   (grid-calc-array--make 1 1 (vector value)))))
+      (grid-calc-array rows cols
+                       (lambda (row col)
+                         (grid-calc-aref value (+ top row) (+ left col)))))))
+
+;;;----------------------------------------------------------------------
+;;; Comparing as lookups do
+;;;----------------------------------------------------------------------
+
+(defun grid-calc-wildcard-regexp (pattern)
+  "Return a regexp matching the whole of text that PATTERN matches.
+In PATTERN * stands for any characters, ? for any one, and ~ makes the
+character after it plain."
+  (let ((parts '()) (i 0) (len (length pattern)))
+    (while (< i len)
+      (let ((char (aref pattern i)))
+        (cond
+         ((and (eq char ?~) (< (1+ i) len))
+          (setq i (1+ i))
+          (push (regexp-quote (string (aref pattern i))) parts))
+         ((eq char ?*) (push "\\(?:.\\|\n\\)*" parts))
+         ((eq char ??) (push "\\(?:.\\|\n\\)" parts))
+         (t (push (regexp-quote (string char)) parts))))
+      (setq i (1+ i)))
+    (concat "\\`" (apply #'concat (nreverse parts)) "\\'")))
+
+(defun grid-calc-wildcard-p (text)
+  "Return non-nil when TEXT holds a wildcard, * ? or ~."
+  (string-match-p "[*?~]" text))
+
+(defun grid-calc--lookup-order (left right)
+  "Return -1, 0 or 1 as LEFT sorts before, with or after RIGHT, or nil.
+Only values of one kind compare: numbers, text without regard to case,
+and TRUE and FALSE.  Blanks and error values compare with nothing."
+  (cond
+   ((and (numberp left) (numberp right))
+    (cond ((grid-calc--numbers-equal-p left right) 0) ((< left right) -1) (t 1)))
+   ((and (stringp left) (stringp right))
+    (let ((a (downcase left)) (b (downcase right)))
+      (cond ((string= a b) 0) ((string< a b) -1) (t 1))))
+   ((and (grid-calc-boolean-p left) (grid-calc-boolean-p right))
+    (cond ((eq left right) 0) ((eq left :false) -1) (t 1)))))
+
+(defun grid-calc--matcher (wanted wildcards)
+  "Return a function telling whether a value equals WANTED.
+With WILDCARDS, text WANTED is a pattern; see `grid-calc-wildcard-regexp'."
+  (if (and wildcards (stringp wanted) (grid-calc-wildcard-p wanted))
+      (let ((regexp (grid-calc-wildcard-regexp wanted)))
+        (lambda (value)
+          (and (stringp value)
+               (let ((case-fold-search t)) (string-match-p regexp value)))))
+    (lambda (value) (eql (grid-calc--lookup-order value wanted) 0))))
+
+(defun grid-calc--find-exact (wanted length getter &optional from-end wildcards)
+  "Return the first position from 0 whose value equals WANTED, or nil.
+LENGTH values are read with GETTER; FROM-END searches from the last."
+  (let ((match (grid-calc--matcher wanted wildcards)))
+    (if from-end
+        (cl-loop for i downfrom (1- length) to 0
+                 when (funcall match (funcall getter i)) return i)
+      (cl-loop for i below length
+               when (funcall match (funcall getter i)) return i))))
+
+(defun grid-calc--find-sorted (wanted length getter &optional descending)
+  "Return the position of WANTED among LENGTH sorted values, or nil.
+That is the last value not past WANTED: not above it, or not below it
+when DESCENDING.  Values of another kind than WANTED are passed over."
+  (let ((found nil) (i 0))
+    (while (< i length)
+      (let ((order (grid-calc--lookup-order (funcall getter i) wanted)))
+        (cond ((null order))
+              ((= order 0) (setq found i))
+              ((if descending (> order 0) (< order 0)) (setq found i))
+              (t (setq i length))))
+      (setq i (1+ i)))
+    found))
+
+(defun grid-calc--find-nearest (wanted length getter direction &optional from-end)
+  "Return the position of WANTED among LENGTH values, or of the nearest.
+Values need not be sorted.  DIRECTION -1 takes the largest value below
+WANTED when none equals it, 1 the smallest above it."
+  (let (best best-value)
+    (dotimes (n length)
+      (let* ((i (if from-end (- length n 1) n))
+             (value (funcall getter i))
+             (order (grid-calc--lookup-order value wanted)))
+        (when order
+          (cond
+           ((= order 0) (unless (and best (eql (grid-calc--lookup-order
+                                                 best-value wanted) 0))
+                          (setq best i best-value value)))
+           ((and (= order direction)
+                 (not (and best (eql (grid-calc--lookup-order best-value wanted) 0)))
+                 (or (null best)
+                     (eql (grid-calc--lookup-order value best-value)
+                          (- direction))))
+            (setq best i best-value value))))))
+    best))
+
+;;;----------------------------------------------------------------------
+;;; Finding values
+;;;----------------------------------------------------------------------
+
+(grid-calc-define match ((wanted any) (values values) &optional (type integer 1))
+  "The position of WANTED in VALUES, one row or column, counted from 1.
+TYPE 0 finds a value equal to WANTED, where text may hold wildcards;
+1 the last not above it in values sorted up; -1 the last not below it in
+values sorted down.  #N/A when there is none."
+  (when (grid-calc-blank-p wanted) (grid-calc-raise "#N/A"))
+  (pcase-let ((`(,length . ,getter) (grid-calc--line-of values)))
+    (let ((found (cond ((= type 0)
+                        (grid-calc--find-exact wanted length getter nil t))
+                       ((> type 0) (grid-calc--find-sorted wanted length getter))
+                       (t (grid-calc--find-sorted wanted length getter t)))))
+      (if found (1+ found) (grid-calc-err "#N/A")))))
+
+(defun grid-calc--xfind (wanted length getter mode search)
+  "Return the position XMATCH and XLOOKUP find for WANTED, or nil.
+MODE and SEARCH are their match_mode and search_mode."
+  (unless (memq mode '(0 -1 1 2)) (grid-calc-raise "#VALUE!"))
+  (unless (memq search '(1 -1 2 -2)) (grid-calc-raise "#VALUE!"))
+  (let ((from-end (memq search '(-1 -2))))
+    (pcase mode
+      (0 (grid-calc--find-exact wanted length getter from-end))
+      (2 (grid-calc--find-exact wanted length getter from-end t))
+      (_ (grid-calc--find-nearest wanted length getter mode from-end)))))
+
+(grid-calc-define xmatch ((wanted any) (values values)
+                          &optional (mode integer 0) (search integer 1))
+  "The position of WANTED in VALUES, counted from 1; #N/A when not found.
+MODE 0 matches exactly, -1 takes the next smaller value too, 1 the next
+larger, 2 matches text with wildcards.  SEARCH 1 starts at the first
+value, -1 at the last."
+  (pcase-let ((`(,length . ,getter) (grid-calc--line-of values)))
+    (let ((found (grid-calc--xfind wanted length getter mode search)))
+      (if found (1+ found) (grid-calc-err "#N/A")))))
+
+(defun grid-calc--table-lookup (wanted table index approximate across)
+  "Look WANTED up in the first column of TABLE and give column INDEX.
+ACROSS looks along the first row and gives row INDEX instead, as HLOOKUP
+does.  APPROXIMATE takes the last value not above WANTED."
+  (when (grid-calc-blank-p wanted) (grid-calc-raise "#N/A"))
+  (pcase-let ((`(,rows . ,cols) (grid-calc--table-size table))
+              (`(,full-rows . ,full-cols) (grid-calc--table-full-size table)))
+    (unless (<= 1 index (if across full-rows full-cols))
+      (grid-calc-raise (if (< index 1) "#VALUE!" "#REF!")))
+    (let* ((length (if across cols rows))
+           (getter (if across (lambda (i) (grid-calc--table-at table 0 i))
+                     (lambda (i) (grid-calc--table-at table i 0))))
+           (found (if approximate
+                      (grid-calc--find-sorted wanted length getter)
+                    (grid-calc--find-exact wanted length getter nil t))))
+      (cond ((null found) (grid-calc-err "#N/A"))
+            (across (grid-calc--table-at table (1- index) found))
+            (t (grid-calc--table-at table found (1- index)))))))
+
+(grid-calc-define vlookup ((wanted any) (table values) (column integer)
+                           &optional (approximate bool t))
+  "The value in COLUMN of the row of TABLE whose first cell is WANTED.
+APPROXIMATE, the default, takes the last row not above WANTED in a
+first column sorted up; FALSE matches exactly, text with wildcards."
+  (grid-calc--table-lookup wanted table column approximate nil))
+
+(grid-calc-define hlookup ((wanted any) (table values) (row integer)
+                           &optional (approximate bool t))
+  "The value in ROW of the column of TABLE whose first cell is WANTED.
+See VLOOKUP."
+  (grid-calc--table-lookup wanted table row approximate t))
+
+(grid-calc-define lookup ((wanted any) (values values) &optional (results values))
+  "The value matching WANTED in sorted VALUES, or the same place of RESULTS.
+Without RESULTS, VALUES wider than tall is looked along its first row
+and gives its last row; otherwise along its first column, giving its
+last column."
+  (pcase-let ((`(,rows . ,cols) (grid-calc--table-size values)))
+    (let* ((across (and (null results) (> cols rows)))
+           (length (cond (results (car (grid-calc--line-of values)))
+                         (across cols) (t rows)))
+           (getter (cond (results (cdr (grid-calc--line-of values)))
+                         (across (lambda (i) (grid-calc--table-at values 0 i)))
+                         (t (lambda (i) (grid-calc--table-at values i 0)))))
+           (found (grid-calc--find-sorted wanted length getter)))
+      (cond ((null found) (grid-calc-err "#N/A"))
+            (results
+             (pcase-let ((`(,r-rows . ,r-cols) (grid-calc--table-full-size results)))
+               (if (and (= r-rows 1) (> r-cols 1))
+                   (grid-calc--table-at results 0 found)
+                 (grid-calc--table-at results found 0))))
+            (across (grid-calc--table-at values (1- rows) found))
+            (t (grid-calc--table-at values found (1- cols)))))))
+
+(grid-calc-define xlookup ((wanted any) (values values) (results values)
+                           &optional (missing lazy) (mode integer 0)
+                           (search integer 1))
+  "The part of RESULTS at the place of WANTED in VALUES.
+VALUES is one row or column; RESULTS as tall gives that row of it, as
+wide that column.  MISSING is given when nothing matches, else #N/A.
+MODE and SEARCH are as XMATCH's."
+  (pcase-let ((`(,length . ,getter) (grid-calc--line-of values))
+              (`(,r-rows . ,r-cols) (grid-calc--table-full-size results))
+              (`(,v-rows . ,_) (grid-calc--table-full-size values)))
+    (let ((down (> v-rows 1))
+          (found (grid-calc--xfind wanted length getter mode search)))
+      (cond
+       ((null found)
+        (if (and missing (not (equal missing '(MISSING))))
+            (grid-calc-arg missing 'values)
+          (grid-calc-err "#N/A")))
+       ((if down (/= r-rows v-rows) (/= r-cols length))
+        (grid-calc-err "#VALUE!"))
+       (down (grid-calc--part results found 0 1 r-cols))
+       (t (grid-calc--part results 0 found r-rows 1))))))
+
+;;;----------------------------------------------------------------------
+;;; Making references
+;;;----------------------------------------------------------------------
+
+(grid-calc-define index ((source values) (row integer)
+                         &optional (column integer) (_area integer))
+  "The value at ROW and COLUMN of SOURCE, counted from 1.
+SOURCE of one row takes a lone ROW as its column.  ROW 0 gives the
+whole column and COLUMN 0 the whole row.  A range gives a reference."
+  (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size source)))
+    (when (and (null column) (= rows 1) (> cols 1))
+      (setq column row row 1))
+    (setq column (or column (if (= cols 1) 1 0)))
+    (when (and (null column) (> cols 1)) (grid-calc-raise "#REF!"))
+    (unless (and (<= 0 row rows) (<= 0 column cols))
+      (grid-calc-raise "#REF!"))
+    (grid-calc--part source
+                     (if (= row 0) 0 (1- row)) (if (= column 0) 0 (1- column))
+                     (if (= row 0) rows 1) (if (= column 0) cols 1))))
+
+(defconst grid-calc--max-rows 1048576 "Rows a sheet may have.")
+(defconst grid-calc--max-cols 16384 "Columns a sheet may have.")
+
+(defun grid-calc--checked-ref (model top left bottom right)
+  "Return the reference from TOP LEFT to BOTTOM RIGHT of MODEL.
+#REF! when it reaches past a sheet's edges."
+  (unless (and (<= 0 top bottom) (< bottom grid-calc--max-rows)
+               (<= 0 left right) (< right grid-calc--max-cols))
+    (grid-calc-raise "#REF!"))
+  (grid-calc-ref--make model top left bottom right))
+
+(grid-calc-define offset ((reference ref) (rows integer) (cols integer)
+                          &optional (height integer) (width integer))
+  "The reference ROWS down and COLS across from REFERENCE.
+It is HEIGHT by WIDTH, by default as large as REFERENCE."
+  (let ((height (or height (grid-calc-ref-rows reference)))
+        (width (or width (grid-calc-ref-cols reference)))
+        (top (+ (grid-calc-ref-top reference) rows))
+        (left (+ (grid-calc-ref-left reference) cols)))
+    (when (or (= height 0) (= width 0)) (grid-calc-raise "#REF!"))
+    ;; A negative size reaches up or left of the corner.
+    (when (< height 0) (setq top (+ top height 1) height (- height)))
+    (when (< width 0) (setq left (+ left width 1) width (- width)))
+    (grid-calc--checked-ref (grid-calc-ref-model reference)
+                            top left (+ top height -1) (+ left width -1))))
+
+(defun grid-calc--r1c1-part (text here letter)
+  "Return the row or column TEXT gives after LETTER, R or C, from 0.
+TEXT is empty for HERE, [N] for N away from HERE, or N."
+  (cond ((string-empty-p text) here)
+        ((string-match "\\`\\[\\([-+]?[0-9]+\\)\\]\\'" text)
+         (and here (+ here (string-to-number (match-string 1 text)))))
+        ((string-match "\\`[0-9]+\\'" text) (1- (string-to-number text)))
+        (t (ignore letter) nil)))
+
+(defun grid-calc--r1c1-reference (text model)
+  "Return the reference R1C1-style TEXT names, from MODEL's sheet, or nil."
+  (let ((sheet nil) (case-fold-search t))
+    (when-let* ((prefix (and (> (length text) 0)
+                             (grid-parser-sheet-prefix-at text 0))))
+      (setq sheet (cdr prefix) text (substring text (car prefix))))
+    (let* ((cell "R\\(\\[[-+]?[0-9]+\\]\\|[0-9]*\\)C\\(\\[[-+]?[0-9]+\\]\\|[0-9]*\\)")
+           (here-row (nth 1 grid-calc--here))
+           (here-col (nth 2 grid-calc--here)))
+      (when (string-match (concat "\\`" cell "\\(?::" cell "\\)?\\'") text)
+        (let* ((r1 (grid-calc--r1c1-part (match-string 1 text) here-row ?R))
+               (c1 (grid-calc--r1c1-part (match-string 2 text) here-col ?C))
+               (r2 (if (match-beginning 3)
+                       (grid-calc--r1c1-part (match-string 3 text) here-row ?R)
+                     r1))
+               (c2 (if (match-beginning 4)
+                       (grid-calc--r1c1-part (match-string 4 text) here-col ?C)
+                     c1)))
+          (when (and r1 c1 r2 c2)
+            (grid-calc--checked-ref (grid-calc--sheet-model model sheet)
+                                    (min r1 r2) (min c1 c2)
+                                    (max r1 r2) (max c1 c2))))))))
+
+(grid-calc-define indirect ((text text) &optional (a1 bool t))
+  "The reference TEXT names, as \"B2\", \"Sheet2!A1:C3\" or a defined name.
+With A1 false TEXT is in R1C1 style, as \"R2C3\" or \"R[-1]C\"."
+  (let ((text (string-trim text)))
+    (or (if a1
+            (let ((ast (ignore-errors (grid-parser-parse text))))
+              (pcase (car-safe ast)
+                ((or 'CELL-REF 'RANGE 'NAME 'RANGE-OP)
+                 (let ((value (grid-calc--eval grid-calc--model ast)))
+                   (and (grid-calc-ref-p value) value)))))
+          (grid-calc--r1c1-reference text grid-calc--model))
+        (grid-calc-err "#REF!"))))
+
+(defun grid-calc--anchor-array (reference)
+  "Return what the formula in the corner of REFERENCE gives, all of it."
+  (let* ((model (grid-calc-ref-model reference))
+         (row (grid-calc-ref-top reference))
+         (col (grid-calc-ref-left reference))
+         (raw (grid-calc--raw-at reference)))
+    (if (not (grid-calc--formula-p raw))
+        (grid-calc-ref-cell reference 0 0)
+      (let ((grid-calc--here (list model row col))
+            (grid-calc--array-context t)
+            (grid-calc--locals nil))
+        (grid-calc--deref
+         (grid-calc--eval model (grid-parser-parse (substring raw 1))))))))
+
+(grid-calc-define anchorarray ((reference ref))
+  "All the values the formula at REFERENCE gives, as A1# names them."
+  (grid-calc--anchor-array reference))
+
+;;;----------------------------------------------------------------------
+;;; Where a reference is
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--here-or-raise (index)
+  "Return element INDEX of `grid-calc--here', or signal #VALUE!."
+  (or (nth index grid-calc--here) (grid-calc-raise "#VALUE!")))
+
+(grid-calc-define row (&optional (reference ref))
+  "The row number of REFERENCE, or of the formula's own cell.
+A range of several rows gives each of their numbers."
+  (if (null reference)
+      (1+ (grid-calc--here-or-raise 1))
+    (let ((top (grid-calc-ref-top reference)))
+      (if (= (grid-calc-ref-rows reference) 1) (1+ top)
+        (grid-calc-array (grid-calc-ref-rows reference) 1
+                         (lambda (row _) (+ top row 1)))))))
+
+(grid-calc-define column (&optional (reference ref))
+  "The column number of REFERENCE, or of the formula's own cell.
+A range of several columns gives each of their numbers."
+  (if (null reference)
+      (1+ (grid-calc--here-or-raise 2))
+    (let ((left (grid-calc-ref-left reference)))
+      (if (= (grid-calc-ref-cols reference) 1) (1+ left)
+        (grid-calc-array 1 (grid-calc-ref-cols reference)
+                         (lambda (_ col) (+ left col 1)))))))
+
+(grid-calc-define rows ((value values))
+  "How many rows VALUE has."
+  (car (grid-calc--table-full-size value)))
+
+(grid-calc-define columns ((value values))
+  "How many columns VALUE has."
+  (cdr (grid-calc--table-full-size value)))
+
+(grid-calc-define areas ((reference ref))
+  "How many areas REFERENCE has, as (A1:B2,D4) has 2."
+  (if (eq (car-safe reference) 'union) (length (cdr reference)) 1))
+
+(grid-calc-define address ((row integer) (column integer)
+                           &optional (absolute integer 1) (a1 bool t)
+                           (sheet text))
+  "The text of the reference to ROW and COLUMN, as $B$3.
+ABSOLUTE 1 fixes both, 2 the row, 3 the column and 4 neither.  With A1
+false the text is in R1C1 style; SHEET is put before it."
+  (unless (and (<= 1 row grid-calc--max-rows) (<= 1 column grid-calc--max-cols)
+               (<= 1 absolute 4))
+    (grid-calc-raise "#VALUE!"))
+  (let ((fixed-row (memq absolute '(1 2)))
+        (fixed-col (memq absolute '(1 3))))
+    (concat
+     (and sheet (not (string-empty-p sheet)) (grid-calc-sheet-prefix sheet))
+     (if a1
+         (concat (and fixed-col "$") (grid-calc-col-number-to-letter (1- column))
+                 (and fixed-row "$") (number-to-string row))
+       (concat "R" (if fixed-row (number-to-string row) (format "[%d]" row))
+               "C" (if fixed-col (number-to-string column)
+                     (format "[%d]" column)))))))
+
+(grid-calc-define cell ((info text) &optional (reference ref))
+  "What INFO says of the cell REFERENCE names, or of the formula's own:
+\"address\", \"row\", \"col\", \"contents\", \"type\" (b blank, l text,
+v anything else) or \"filename\"."
+  (let ((reference (or reference
+                       (grid-calc-ref--make grid-calc--model
+                                            (grid-calc--here-or-raise 1)
+                                            (grid-calc--here-or-raise 2)
+                                            (nth 1 grid-calc--here)
+                                            (nth 2 grid-calc--here)))))
+    (pcase (downcase info)
+      ("address" (concat "$" (grid-calc-col-number-to-letter
+                              (grid-calc-ref-left reference))
+                         "$" (number-to-string (1+ (grid-calc-ref-top reference)))))
+      ("row" (1+ (grid-calc-ref-top reference)))
+      ("col" (1+ (grid-calc-ref-left reference)))
+      ("contents" (let ((value (grid-calc-ref-cell reference 0 0)))
+                    (if (grid-calc-blank-p value) 0 value)))
+      ("type" (let ((value (grid-calc-ref-cell reference 0 0)))
+                (cond ((grid-calc-blank-p value) "b") ((stringp value) "l")
+                      (t "v"))))
+      ("filename" "")
+      (_ (grid-calc-err "#VALUE!")))))
+
+(grid-calc-define hyperlink ((link any) &optional (label any))
+  "LABEL, or LINK without it: what a link shows."
+  (if (or (null label) (grid-calc-blank-p label)) link label))
+
+(grid-calc-define getpivotdata (&rest (_arguments values))
+  "#REF!: grid-table has no pivot tables."
+  (grid-calc-err "#REF!"))
+
+;;;----------------------------------------------------------------------
+;;; Reshaping several values
+;;;----------------------------------------------------------------------
+
+(grid-calc-define transpose ((array array))
+  "ARRAY with its rows made columns."
+  (grid-calc-array (grid-calc-array-cols array) (grid-calc-array-rows array)
+                   (lambda (row col) (grid-calc-aref array col row))))
+
+(grid-calc-define chooserows ((array array) &rest (rows values))
+  "The rows of ARRAY whose numbers are ROWS, counting from 1; a negative
+number counts from the last."
+  (let* ((height (grid-calc-array-rows array))
+         (picked (mapcar (lambda (n)
+                           (let ((n (truncate n)))
+                             (cond ((<= 1 n height) (1- n))
+                                   ((<= 1 (- n) height) (+ height n))
+                                   (t (grid-calc-raise "#VALUE!")))))
+                         (grid-calc-numbers rows))))
+    (unless picked (grid-calc-raise "#VALUE!"))
+    (grid-calc-array (length picked) (grid-calc-array-cols array)
+                     (lambda (row col) (grid-calc-aref array (nth row picked) col)))))
+
+(grid-calc-define sequence ((rows integer) &optional (cols integer 1)
+                            (start number 1) (step number 1))
+  "ROWS by COLS numbers from START, each STEP more than the one before."
+  (unless (and (> rows 0) (> cols 0)) (grid-calc-raise "#CALC!"))
+  (grid-calc-array rows cols
+                   (lambda (row col)
+                     (grid-calc--tidy-number (+ start (* step (+ (* row cols) col)))))))
+
+(defun grid-calc--lines (array by-col)
+  "Return the rows of ARRAY as lists, or its columns when BY-COL."
+  (grid-calc-array-rows-list (if by-col
+                                 (grid-calc-array (grid-calc-array-cols array)
+                                                  (grid-calc-array-rows array)
+                                                  (lambda (r c) (grid-calc-aref array c r)))
+                               array)))
+
+(defun grid-calc--from-lines (lines by-col)
+  "Return LINES, lists of values, as the rows of an array, or its columns."
+  (let ((array (grid-calc-array-from-rows lines)))
+    (if by-col
+        (grid-calc-array (grid-calc-array-cols array) (grid-calc-array-rows array)
+                         (lambda (r c) (grid-calc-aref array c r)))
+      array)))
+
+(grid-calc-define sort ((array array) &optional (index integer 1)
+                        (order integer 1) (by-col bool))
+  "ARRAY with its rows sorted by their INDEXth value, or its columns with
+BY-COL.  ORDER 1 sorts up, -1 down."
+  (unless (memq order '(1 -1)) (grid-calc-raise "#VALUE!"))
+  (let ((lines (grid-calc--lines array by-col)))
+    (unless (<= 1 index (length (car lines))) (grid-calc-raise "#VALUE!"))
+    (grid-calc--from-lines
+     (cl-stable-sort (copy-sequence lines)
+                     (lambda (a b)
+                       (let ((order-of (grid-calc-compare (nth (1- index) a)
+                                                          (nth (1- index) b))))
+                         (if (= order 1) (< order-of 0) (> order-of 0)))))
+     by-col)))
+
+(grid-calc-define unique ((array array) &optional (by-col bool) (once bool))
+  "The rows of ARRAY each once, in the order they come, or its columns
+with BY-COL.  With ONCE only rows that come only once."
+  (let* ((lines (grid-calc--lines array by-col))
+         (same (lambda (a b) (cl-every #'grid-calc-equal-p a b)))
+         (kept (if once
+                   (cl-remove-if (lambda (line)
+                                   (> (cl-count line lines :test same) 1))
+                                 lines)
+                 (cl-remove-duplicates lines :test same :from-end t))))
+    (if kept (grid-calc--from-lines kept by-col) (grid-calc-err "#CALC!"))))
+
+(grid-calc-define filter ((array array) (include array) &optional (empty lazy))
+  "The rows of ARRAY whose value in INCLUDE is true, or its columns when
+INCLUDE is a row.  EMPTY is given when none is; without it #CALC!."
+  (let* ((by-col (and (= (grid-calc-array-rows include) 1)
+                      (> (grid-calc-array-cols include) 1)))
+         (lines (grid-calc--lines array by-col))
+         (keep (grid-calc-array-values include)))
+    (unless (= (length keep) (length lines)) (grid-calc-raise "#VALUE!"))
+    (let ((kept (cl-loop for line in lines
+                         for flag in keep
+                         when (grid-calc-truth flag) collect line)))
+      (cond (kept (grid-calc--from-lines kept by-col))
+            ((and empty (not (equal empty '(MISSING))))
+             (grid-calc-arg empty 'values))
+            (t (grid-calc-err "#CALC!"))))))
+
+(provide 'grid-table-calc-lookup)
+
+;;; grid-table-calc-lookup.el ends here

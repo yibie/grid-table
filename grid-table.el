@@ -302,6 +302,8 @@ in what it gives are left out."
              (grid-calc-sheets (and workbook (grid-workbook--resolver workbook)))
              (grid-calc-names (and workbook
                                    (grid-workbook--names-resolver workbook)))
+             (grid-calc-tables (and workbook
+                                    (grid-workbook--tables-resolver workbook)))
              (value (condition-case nil
                         (grid-calc-eval-ast (gethash :model source)
                                             (grid-parser-parse (substring spec 1)))

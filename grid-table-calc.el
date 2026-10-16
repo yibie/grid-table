@@ -3,10 +3,15 @@
 (require 'grid-table-parser)
 (require 'grid-table-format)
 
+(defvar grid-calc-functions)
+(defvar grid-table-allow-elisp)
+
 (defvar grid-cell--parsed)
 (defvar grid-cell--reads)
 (declare-function grid-data-model-styles "grid-data-model")
 (declare-function grid-data-model-cols "grid-data-model")
+(declare-function grid-data-model-legacy-p "grid-data-model")
+(declare-function grid-model-array-at "grid-data-model")
 
 ;;;----------------------------------------------------------------------
 ;;; Main Calculation Entry Point
@@ -16,7 +21,8 @@
 (define-error 'grid-calc-cycle "Circular reference" 'grid-calc-error)
 
 (defconst grid-calc-error-values
-  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!" "#CYCLE!" "#ERROR!")
+  '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!" "#SPILL!"
+    "#GETTING_DATA" "#CYCLE!" "#ERROR!")
   "Values a cell shows when its formula cannot be computed.")
 
 (defvar grid-calc--pass nil
@@ -30,29 +36,90 @@ sheets is found.")
 
 (defvar grid-calc-sheets nil
   "Function that returns the model of the sheet with a given name, or nil.
-Bound by whoever keeps several sheets together; without it a reference
-into another sheet is #REF!.")
+Called with :names instead of a name, it returns the names of all the
+sheets in order, for a reference through several of them such as
+Sheet1:Sheet3!A1.  Bound by whoever keeps several sheets together;
+without it a reference into another sheet is #REF!.")
 
 (defvar grid-calc-names nil
   "Function that returns the parsed definition of a defined name, or nil.
-A definition is a cell or range reference, such as Sheet1!$B$2:$B$9.
-Bound by whoever keeps the names; without it every name is #NAME?.")
+A definition is a formula, most often a cell or range reference such as
+Sheet1!$B$2:$B$9.  Bound by whoever keeps the names; without it every
+name is #NAME?.")
 
-(defun grid-calc--name-ast (name)
-  "Return the parsed definition of NAME, or nil when it is not defined."
-  (and grid-calc-names (funcall grid-calc-names name)))
+(defvar grid-calc-tables nil
+  "Function that finds a table, as a reference such as Table1[Qty] names.
+Called with a table NAME, or with nil and the MODEL, ROW and COL of a
+cell to find the table that cell is in.  It returns (MODEL TOP LEFT
+BOTTOM RIGHT HEADERS TOTALS COLUMNS) or nil: the table's sheet, its
+corners, zero-based and inclusive, how many header and totals rows it
+has, and the names of its columns.  Bound by whoever keeps the tables;
+without it every such reference is #REF!.")
 
-(defun grid-calc--deref (ast)
-  "Return AST, or the definition it names when it is a defined name."
-  (or (and (eq (car-safe ast) 'NAME) (grid-calc--name-ast (cadr ast)))
-      ast))
+(defvar grid-calc--names-open nil
+  "The defined names being evaluated, in capitals, innermost first.")
+
+(defvar grid-calc--locals nil
+  "Names LET gives values to, an alist from name in capitals to value.")
+
+(defvar grid-calc--here)
+(defvar grid-calc-legacy-arrays)
+(defvar grid-calc--array-formula)
+
+(defun grid-calc--name-ast (name &optional sheet model)
+  "Return the parsed definition of NAME, or nil when it is not defined.
+SHEET is the sheet NAME was qualified with, as in Sheet1!Rate, or nil;
+MODEL the sheet of the formula using it, by default the one computed."
+  (and grid-calc-names
+       (funcall grid-calc-names name sheet (or model (car grid-calc--here)))))
+
+(defconst grid-calc--cell-text-regexp
+  "\\`\\(\\$?\\)\\([A-Za-z]\\{1,3\\}\\)\\(\\$?\\)\\([0-9]+\\)\\'"
+  "Matches a cell reference, its four parts in groups 1 to 4.")
+
+(defun grid-calc--relative-p (ast)
+  "Return non-nil when AST holds a cell reference with a part not anchored."
+  (pcase ast
+    (`(CELL-REF ,text . ,_)
+     (and (string-match grid-calc--cell-text-regexp text)
+          (or (string-empty-p (match-string 1 text))
+              (string-empty-p (match-string 3 text)))))
+    ((pred consp) (cl-some #'grid-calc--relative-p ast))))
+
+(defun grid-calc--relative-to (ast row col)
+  "Return the definition AST of a name as the cell at ROW and COL reads it.
+A workbook file holds a name's references as the cell A1 would read
+them: a part not anchored by $ moves with the cell using the name, and
+goes round past the sheet's last row or column, so XFD1 is the column
+to the left and A1048576 the row above."
+  (pcase ast
+    (`(CELL-REF ,text . ,sheet)
+     (if (not (string-match grid-calc--cell-text-regexp text))
+         ast
+       (let* ((col-anchor (match-string 1 text))
+              (row-anchor (match-string 3 text))
+              (at-col (grid-calc-col-letter-to-number
+                       (upcase (match-string 2 text))))
+              (at-row (1- (string-to-number (match-string 4 text)))))
+         (when (string-empty-p col-anchor)
+           (setq at-col (mod (+ at-col col) 16384)))
+         (when (string-empty-p row-anchor)
+           (setq at-row (mod (+ at-row row) 1048576)))
+         `(CELL-REF ,(format "%s%s%s%d" col-anchor
+                             (grid-calc-col-number-to-letter at-col)
+                             row-anchor (1+ at-row))
+                    . ,sheet))))
+    ((pred consp) (mapcar (lambda (part) (grid-calc--relative-to part row col))
+                          ast))
+    (_ ast)))
 
 (defun grid-calc-name-problem (name)
   "Return why NAME cannot be a defined name, or nil when it can.
 A name starts with a letter or an underscore and goes on with letters,
 digits, underscores and dots.  It may not read as a cell, column or row
-reference, nor start like a cell reference (Q1Sales), nor be TRUE,
-FALSE or a function's name."
+reference, nor start like a cell reference (Q1Sales), nor be TRUE or
+FALSE.  It may share a function's name, as Excel allows: RATE is the
+name and RATE(...) the function."
   (let ((upper (and (stringp name) (upcase name))))
     (cond
      ((not (and upper (string-match-p "\\`[A-Za-z_][A-Za-z0-9_.]*\\'" name)))
@@ -60,9 +127,7 @@ FALSE or a function's name."
      ((> (length name) 255) "A name cannot be longer than 255 characters")
      ((string-match-p "\\`\\$?[A-Za-z]+\\$?[0-9]" name)
       "A name cannot start like a cell reference")
-     ((member upper '("TRUE" "FALSE")) "TRUE and FALSE cannot be names")
-     ((gethash upper grid-calc-functions)
-      (format "%s is a function" upper)))))
+     ((member upper '("TRUE" "FALSE")) "TRUE and FALSE cannot be names"))))
 
 (defvar grid-calc-current-sheet nil
   "Name of the sheet whose model is being changed, when it has one.")
@@ -134,48 +199,44 @@ instead of stopping the recalculation."
         (pass (grid-calc--pass-of model)))
     (pcase (if (vectorp pass) (aref pass index) (gethash index pass 'done))
       ('done nil)
-      ('visiting (signal 'grid-calc-cycle nil))
+      ;; The signal names the cell the cycle comes back to.
+      ('visiting (signal 'grid-calc-cycle (list model index)))
       (_
        (if (vectorp pass)
            (aset pass index 'visiting)
          (puthash index 'visiting pass))
        (let ((raw (grid-cell-raw-input cell))
-             cycle)
+             cycle-head)
          (set-grid-cell-computed-value
           cell
           (if (and (> (length raw) 0) (eq (aref raw 0) ?=))
               (condition-case err
                   (let* ((grid-calc--depth (1+ grid-calc--depth))
-                         (ast (grid-calc--parsed cell raw))
-                         (value (grid-calc-eval-ast model ast)))
-                    ;; A cell shows one value, not the several of a range.
-                    ;; A chart is a plist and an Elisp cell anything.
-                    (cond ((or (atom value) (keywordp (car value))
-                               (eq (car-safe ast) 'ELISP-CODE))
-                           value)
-                          ((null (cdr value)) (car value))
-                          (t "#VALUE!")))
-                (grid-calc-cycle (setq cycle t) "#CYCLE!")
+                         (grid-calc--locals nil)
+                         (cols (grid-data-model-cols model))
+                         (row (/ index cols))
+                         (col (% index cols))
+                         (grid-calc-legacy-arrays
+                          (or (grid-data-model-legacy-p model)
+                              grid-calc-legacy-arrays))
+                         (grid-calc--array-formula
+                          (and (grid-model-array-at model row col) t)))
+                    (grid-calc--eval-formula model (grid-calc--parsed cell raw)
+                                             row col))
+                (grid-calc-cycle (setq cycle-head (cdr err)) "#CYCLE!")
                 (error (grid-calc--error-value err)))
             (grid-calc--typed-value raw)))
          (if (vectorp pass)
              (aset pass index 'done)
            (puthash index 'done pass))
          ;; Every formula on a cycle is part of it, not only the one that
-         ;; closed it.
-         (when (and cycle (> grid-calc--depth 0))
-           (signal 'grid-calc-cycle nil)))))))
-
-(defun grid-calc--value (model row col)
-  "Return the computed value at ROW and COL of MODEL for a formula.
-During a recalculation the cell is computed first, so a formula never
-reads a stale value.  An error value is signaled on to the reader."
-  (when grid-calc--pass
-    (grid-calc--compute-cell model (+ (* row (grid-data-model-cols model)) col)))
-  (let ((value (grid-model-get-computed-value model row col)))
-    (if (and (stringp value) (member value grid-calc-error-values))
-        (signal 'grid-calc-error (list value))
-      value)))
+         ;; closed it: the signal goes on up to the cell the cycle comes
+         ;; back to.  A formula that only reads that cell, from outside
+         ;; the cycle, sees its #CYCLE! as any error value, whichever of
+         ;; them is computed first.
+         (when (and cycle-head (> grid-calc--depth 0)
+                    (not (equal cycle-head (list model index))))
+           (signal 'grid-calc-cycle cycle-head)))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Recalculating only what an edit reaches
@@ -191,8 +252,12 @@ every recalculation.")
   "How many range checks finding the cells to recalculate may take.
 Past it, computing every cell is the faster way.")
 
-(defconst grid-calc--volatile-functions '("TODAY" "NOW" "RAND" "RANDBETWEEN")
-  "Functions whose value changes without any cell changing.")
+(defconst grid-calc--volatile-functions
+  '("TODAY" "NOW" "RAND" "RANDBETWEEN" "RANDARRAY"
+    ;; These read cells their arguments do not name, or what is not in
+    ;; a cell at all.
+    "OFFSET" "INDIRECT" "CELL" "INFO" "SUBTOTAL" "AGGREGATE" "ANCHORARRAY")
+  "Functions whose value changes without any cell they name changing.")
 
 (defvar grid-calc--known-functions (make-hash-table :test 'equal)
   "Functions that read nothing but their arguments.
@@ -214,9 +279,7 @@ same as CELLS and RANGES for formulas on other sheets, each named by
   (maphash (lambda (name _function)
              (unless (member name grid-calc--volatile-functions)
                (puthash name t grid-calc--known-functions)))
-           grid-calc-functions)
-  (dolist (name '("IF" "IFS" "IFERROR" "INDEX" "VLOOKUP" "XLOOKUP"))
-    (puthash name t grid-calc--known-functions)))
+           grid-calc-functions))
 
 (defun grid-calc-touch (model row col)
   "Note that the cell at ROW and COL of MODEL changed.
@@ -273,11 +336,29 @@ changes by itself, or runs Lisp."
                   (throw 'always 'always))
                 (mapc #'walk arguments))
                (`(ELISP-CODE . ,_) (throw 'always 'always))
+               ;; A table reference reads the whole table, which is
+               ;; found again should its sheet change.
+               (`(STRUCT-REF ,name ,_)
+                (pcase (and grid-calc-tables
+                            (if name
+                                (funcall grid-calc-tables name)
+                              (throw 'always 'always)))
+                  (`(,target ,top ,left ,bottom ,right . ,_)
+                   (push (if (eq target model)
+                             (list top bottom left right)
+                           (list target top bottom left right))
+                         reads))
+                  (_ (throw 'always 'always))))
                ;; A name reads what it is defined as; one not defined
                ;; reads nothing until defining it recomputes everything.
-               (`(NAME ,name)
+               (`(NAME ,name . ,qualifier)
                 (unless grid-calc-names (throw 'always 'always))
-                (when-let* ((definition (grid-calc--name-ast name)))
+                (when-let* ((definition (grid-calc--name-ast
+                                         name (car qualifier) model)))
+                  ;; What a name with references not anchored reads
+                  ;; depends on the cell using it.
+                  (when (grid-calc--relative-p definition)
+                    (throw 'always 'always))
                   (walk definition)))
                ((pred consp)
                 (dolist (part node)
@@ -313,9 +394,10 @@ that holds no formula, or one that does not parse, reads nothing."
              (`(CELL-REF ,ref . ,sheet) (add (car sheet) ref ref))
              (`(RANGE (CELL-REF ,start . ,sheet) (CELL-REF ,end . ,_))
               (add (car sheet) start end))
-             (`(NAME ,name)
-              (when-let* ((definition (grid-calc--name-ast name)))
-                (walk definition)))
+             (`(NAME ,name . ,qualifier)
+              (when-let* ((definition (grid-calc--name-ast
+                                       name (car qualifier) model)))
+                (walk (grid-calc--relative-to definition row col))))
              ((pred consp)
               (dolist (part node)
                 (when (consp part) (walk part)))))))
@@ -506,176 +588,314 @@ EVERYTHING."
   (unless grid-calc-defer
     (grid-table-calc-evaluate-models (list model) everything)))
 
-(defvar grid-calc-functions (make-hash-table :test 'equal))
-
-(defmacro grid-calc-defun (name args &rest body)
-  "Defines a built-in calculation function and registers it."
-  `(puthash ,(symbol-name name)
-            (lambda (model . ,args) ; All functions receive model as first arg
-              ,@body)
-            grid-calc-functions))
 
 ;;;----------------------------------------------------------------------
-;;; Cell Formula Management
+;;; Values
 ;;;----------------------------------------------------------------------
+;;
+;; Inside a formula a value is one of these:
+;;
+;;   a number;
+;;   a string, which is text, whatever it reads as;
+;;   t or `:false', TRUE and FALSE;
+;;   `:blank', what an empty cell holds;
+;;   a `grid-calc-err', an error value such as #N/A;
+;;   a `grid-calc-array', several values in rows and columns;
+;;   a `grid-calc-ref', cells not read yet, as A1:B5 is until a function
+;;   or an operator reads it.
+;;
+;; nil is no value: an argument left out.  A cell stores what a formula
+;; gives in another form, the one the rest of grid-table reads; see
+;; `grid-calc--store' and `grid-calc--from-result'.
 
-(defun grid-table-calc-set-cell-formula (model cell-coords formula)
-  "Set a formula for a cell and trigger recalculation.
-MODEL: The grid data model.
-CELL-COORDS: A cons cell (row . col) representing the cell coordinates.
-FORMULA: The formula string to set."
-  (let* ((row (car cell-coords))
-         (col (cdr cell-coords))
-         (cell (grid-model-get-cell model row col)))
-    (when cell
-      (set-grid-cell-raw-input cell formula)
-      (grid-calc-touch model row col)
-      (grid-table-calc-evaluate model))))
+(cl-defstruct (grid-calc-err (:constructor grid-calc--make-err (code)))
+  "An error value, such as #N/A; CODE is its text."
+  code)
 
-;;;----------------------------------------------------------------------
-;;; AST Evaluator
-;;;----------------------------------------------------------------------
+(defconst grid-calc--errors
+  (mapcar (lambda (code) (cons code (grid-calc--make-err code)))
+          grid-calc-error-values)
+  "The error values, one object each, from their text.")
 
-(defun grid-calc-eval-ast (model ast)
-  "Evaluates an AST node in the context of a grid model.
-MODEL: The grid data model, used for cell references.
-AST: The Abstract Syntax Tree to evaluate."
-  (pcase ast
-    ;; Special function handlers
-    (`(FUNCTION-CALL "INDEX" ,args)
-     (grid-calc-eval-index-function model args))
-    (`(FUNCTION-CALL "IFERROR" ,args)
-     (grid-calc-eval-iferror-function model args))
-    (`(FUNCTION-CALL "IFS" ,args)
-     (grid-calc-eval-ifs-function model args))
-    (`(FUNCTION-CALL "VLOOKUP" ,args)
-     (grid-calc-eval-vlookup-function model args))
-    (`(FUNCTION-CALL "XLOOKUP" ,args)
-     (grid-calc-eval-xlookup-function model args))
-    (`(FUNCTION-CALL "IF" ,args)
-     (grid-calc-eval-if-function model args))
+(defun grid-calc-err (code)
+  "Return the error value whose text is CODE."
+  (or (cdr (assoc code grid-calc--errors))
+      (error "No error value %s" code)))
 
-    ;; Elisp code execution
-    (`(ELISP-CODE ,code-str)
-     ;; only if user opted-in to elisp evaluation
-     (if grid-table-allow-elisp
-         (let ((cell (lambda (ref) (grid-calc-get-cell-value model ref))))
-           (condition-case err
-               (eval (read code-str))
-             (error (format "Elisp Error: %s" (error-message-string err)))))
-       (error "Elisp disabled: see `grid-table-allow-elisp'")))
+(defun grid-calc-raise (code)
+  "Make the function being computed give the error value CODE."
+  (signal 'grid-calc-error (list code)))
 
-    ;; Number literal
-    (`(NUMBER ,value) value)
+(cl-defstruct (grid-calc-array (:constructor grid-calc-array--make
+                                              (rows cols data)))
+  "ROWS by COLS values, DATA holding them row after row."
+  rows cols data)
 
-    ;; TRUE and FALSE
-    (`(LITERAL ,value) value)
+(defun grid-calc-array (rows cols &optional function)
+  "Return a ROWS by COLS array of what FUNCTION gives for each ROW and COL.
+Without FUNCTION every value is blank."
+  (let ((data (make-vector (* rows cols) :blank)))
+    (when function
+      (dotimes (row rows)
+        (dotimes (col cols)
+          (aset data (+ (* row cols) col) (funcall function row col)))))
+    (grid-calc-array--make rows cols data)))
 
-    ;; An error value written in the formula, as #REF! left by a deletion
-    (`(ERROR ,value) (signal 'grid-calc-error (list value)))
+(defun grid-calc-array-from-list (values &optional across)
+  "Return VALUES as an array of one column, or of one row when ACROSS."
+  (let ((data (vconcat values)))
+    (if across
+        (grid-calc-array--make 1 (length data) data)
+      (grid-calc-array--make (length data) 1 data))))
 
-    ;; A defined name stands for its definition.
-    (`(NAME ,name)
-     (if-let* ((definition (grid-calc--name-ast name)))
-         (grid-calc-eval-ast model definition)
-       (signal 'grid-calc-error '("#NAME?"))))
-    
-    ;; String literal
-    (`(STRING ,value) value)
-    
-    ;; Cell reference
-    (`(CELL-REF ,ref-str)
-     (grid-calc-get-cell-value model ref-str))
-    (`(CELL-REF ,ref-str ,sheet)
-     (grid-calc-get-cell-value (grid-calc--sheet-model model sheet) ref-str))
-    
-    ;; Range reference
-    (`(RANGE ,start-cell-ref-ast ,end-cell-ref-ast)
-     (grid-calc-get-range-values model start-cell-ref-ast end-cell-ref-ast))
-    
-    ;; Binary operation
-    (`(BINARY-OP ,op ,left-ast ,right-ast)
-     (let ((left-val (grid-calc-eval-ast model left-ast))
-           (right-val (grid-calc-eval-ast model right-ast)))
-       (grid-calc--each (lambda (left right)
-                          (grid-calc-apply-binary-op op left right))
-                        left-val right-val)))
+(defun grid-calc-array-from-rows (rows)
+  "Return an array of ROWS, a list of rows each a list of values."
+  (let ((height (length rows)) (width (length (car rows))))
+    (grid-calc-array--make height width (vconcat (apply #'append rows)))))
 
-    ;; Unary operation
-    (`(UNARY-OP ,op ,operand-ast)
-     (let ((operand-val (grid-calc-eval-ast model operand-ast)))
-       (grid-calc--each (lambda (operand _)
-                          (grid-calc-apply-unary-op op operand))
-                        operand-val nil)))
+(defun grid-calc-aref (array row col)
+  "Return the value at ROW and COL of ARRAY.
+An array of one row gives that row whatever ROW is, and one of one
+column that column, as when an array meets a larger one; outside it
+the value is #N/A."
+  (let ((rows (grid-calc-array-rows array))
+        (cols (grid-calc-array-cols array)))
+    (when (= rows 1) (setq row 0))
+    (when (= cols 1) (setq col 0))
+    (if (and (< row rows) (< col cols))
+        (aref (grid-calc-array-data array) (+ (* row cols) col))
+      (grid-calc-err "#N/A"))))
 
-    ;; Functions that give several values read a range of one row or column.
-    (`(FUNCTION-CALL ,(and name (or "UNIQUE" "SORT" "FILTER")) ,args-ast-list)
-     (grid-calc--check-one-line model (car args-ast-list))
-     (when (equal name "FILTER")
-       (grid-calc--check-one-line model (cadr args-ast-list)))
-     (grid-calc-call-function
-      model name (mapcar (lambda (arg-ast) (grid-calc-eval-ast model arg-ast))
-                         args-ast-list)))
-    
-    ;; Function call
-    (`(FUNCTION-CALL ,func-name ,args-ast-list)
-     (let ((arg-values (mapcar (lambda (arg-ast)
-                                (grid-calc-eval-ast model arg-ast))
-                             args-ast-list)))
-       (grid-calc-call-function model func-name arg-values)))
-    
-    ;; Unknown node type
-    (_ (error "Unknown AST node type: %s" ast))))
+(defun grid-calc-array-values (array)
+  "Return the values of ARRAY as a list, row after row."
+  (append (grid-calc-array-data array) nil))
 
-;;;----------------------------------------------------------------------
-;;; Operator Implementations
-;;;----------------------------------------------------------------------
+(defun grid-calc-array-rows-list (array)
+  "Return the rows of ARRAY, each a list of values."
+  (let ((cols (grid-calc-array-cols array)) rows)
+    (dotimes (row (grid-calc-array-rows array))
+      (push (append (cl-subseq (grid-calc-array-data array)
+                               (* row cols) (* (1+ row) cols))
+                    nil)
+            rows))
+    (nreverse rows)))
 
-(defun grid-calc-apply-binary-op (op left right)
-  "Applies a binary operator."
-  (pcase op
-    ;; Arithmetic operations
-    ('+ (grid-calc--tidy-number
-         (+ (grid-calc--operand left) (grid-calc--operand right))))
-    ('- (grid-calc--tidy-number
-         (- (grid-calc--operand left) (grid-calc--operand right))))
-    ('* (grid-calc--tidy-number
-         (* (grid-calc--operand left) (grid-calc--operand right))))
-    ('/ (let ((r (grid-calc--operand right)))
-          (if (= r 0)
-              (error "Division by zero")
-            (grid-calc--tidy-number (/ (float (grid-calc--operand left)) r)))))
-    ('^ (expt (grid-calc--operand left) (grid-calc--operand right)))
-    
-    ;; Comparison operations
-    ('= (grid-calc--equal left right))
-    ('<> (not (grid-calc--equal left right)))
-    ('< (< (grid-calc-to-number left) (grid-calc-to-number right)))
-    ('> (> (grid-calc-to-number left) (grid-calc-to-number right)))
-    ('<= (<= (grid-calc-to-number left) (grid-calc-to-number right)))
-    ('>= (>= (grid-calc-to-number left) (grid-calc-to-number right)))
-    
-    ;; Logical operations
-    ('AND (and left right))
-    ('OR (or left right))
-    
-    ;; String concatenation
-    ('& (concat (grid-calc-to-string left) (grid-calc-to-string right)))
-    
-    (_ (error "Unknown binary operator: %s" op))))
+(defun grid-calc-array-map (function array)
+  "Return the array of FUNCTION applied to each value of ARRAY."
+  (grid-calc-array--make (grid-calc-array-rows array)
+                         (grid-calc-array-cols array)
+                         (cl-map 'vector function
+                                 (grid-calc-array-data array))))
 
-(defun grid-calc-apply-unary-op (op operand)
-  "Applies a unary operator."
-  (pcase op
-    ('+ (grid-calc--operand operand))
-    ('- (- (grid-calc--operand operand)))
-    ('NOT (not operand))
-    ('% (grid-calc--tidy-number (/ (grid-calc--operand operand) 100.0)))
-    (_ (error "Unknown unary operator: %s" op))))
+(cl-defstruct (grid-calc-ref (:constructor grid-calc-ref--make
+                                            (model top left bottom right)))
+  "The cells from TOP and LEFT to BOTTOM and RIGHT of MODEL, inclusive.
+They may reach past the cells MODEL has; those are blank."
+  model top left bottom right)
+
+(defun grid-calc-ref-rows (ref)
+  "Return how many rows REF takes in."
+  (1+ (- (grid-calc-ref-bottom ref) (grid-calc-ref-top ref))))
+
+(defun grid-calc-ref-cols (ref)
+  "Return how many columns REF takes in."
+  (1+ (- (grid-calc-ref-right ref) (grid-calc-ref-left ref))))
+
+(defun grid-calc-ref-cell (ref row col)
+  "Return the value at ROW and COL of REF, counted from its corner."
+  (grid-calc--cell (grid-calc-ref-model ref)
+                   (+ (grid-calc-ref-top ref) row)
+                   (+ (grid-calc-ref-left ref) col)))
+
+(defun grid-calc-ref-to-array (ref)
+  "Return the values REF takes in, as an array.
+Rows and columns past the sheet's cells are not read; they are blank."
+  (let* ((model (grid-calc-ref-model ref))
+         (top (grid-calc-ref-top ref))
+         (left (grid-calc-ref-left ref))
+         (rows (grid-calc-ref-rows ref))
+         (cols (grid-calc-ref-cols ref))
+         (filled-rows (max 0 (min rows (- (grid-data-model-rows model) top))))
+         (filled-cols (max 0 (min cols (- (grid-data-model-cols model) left))))
+         (data (make-vector (* rows cols) :blank)))
+    (dotimes (row filled-rows)
+      (dotimes (col filled-cols)
+        (aset data (+ (* row cols) col)
+              (grid-calc--cell model (+ top row) (+ left col)))))
+    (grid-calc-array--make rows cols data)))
+
+(defun grid-calc-ref-filled-rows (ref)
+  "Return how many rows of REF are on its sheet, at most."
+  (max 0 (min (grid-calc-ref-rows ref)
+              (- (grid-data-model-rows (grid-calc-ref-model ref))
+                 (grid-calc-ref-top ref)))))
+
+(defun grid-calc-blank-p (value)
+  "Return non-nil when VALUE is an empty cell."
+  (eq value :blank))
+
+(defun grid-calc-bool (truth)
+  "Return TRUE or FALSE as TRUTH is non-nil or nil."
+  (if truth t :false))
+
+(defun grid-calc-boolean-p (value)
+  "Return non-nil when VALUE is TRUE or FALSE."
+  (memq value '(t :false)))
 
 ;;;----------------------------------------------------------------------
-;;; Type Conversion and Utility Functions
+;;; What a cell holds, as a formula reads it
 ;;;----------------------------------------------------------------------
+
+(defvar grid-calc-legacy-arrays nil
+  "Non-nil reads formulas as a workbook file holds them.
+A range where one value is wanted then gives the one in the formula's
+row or column (implicit intersection), and a formula that comes to
+several values shows the first.  That is what Excel makes of a formula
+that is not an array formula, and so of every formula grid-table writes
+to a workbook file.  With nil a range is its values wherever it stands,
+and a formula that comes to several values is #VALUE!.")
+
+(defvar grid-calc--here nil
+  "(MODEL ROW COL) of the formula being computed, or nil.
+ROW and COL are nil for a formula that belongs to no cell.")
+
+(defvar grid-calc--array-context nil
+  "Non-nil while computing where ranges are taken whole.
+That is an array formula, or an argument that takes several values,
+as SUMPRODUCT's do.  A range then never stands for one of its cells.")
+
+(defvar grid-calc--array-formula nil
+  "Non-nil while computing an array formula.")
+
+(defun grid-calc--formula-p (raw)
+  "Return non-nil when RAW, a cell's raw input, is a formula."
+  (and (stringp raw) (> (length raw) 1) (eq (aref raw 0) ?=)))
+
+(defun grid-calc--from-constant (raw)
+  "Return the value of a cell that holds RAW, which is no formula.
+Text after an apostrophe is text; otherwise a number, TRUE, FALSE or an
+error value reads as itself."
+  (cond
+   ((or (null raw) (string-empty-p raw)) :blank)
+   ((eq (aref raw 0) ?') (substring-no-properties raw 1))
+   ((grid-format-text-p raw) (substring-no-properties raw))
+   ((grid-format-number raw))
+   ((string-equal-ignore-case raw "TRUE") t)
+   ((string-equal-ignore-case raw "FALSE") :false)
+   ((and (eq (aref raw 0) ?#) (assoc raw grid-calc--errors))
+    (grid-calc-err raw))
+   (t raw)))
+
+(defun grid-calc--from-result (value)
+  "Return the value a formula's cell holds, from the stored VALUE.
+The stored form is the one `grid-calc--store' gives."
+  (cond
+   ((null value) :false)
+   ((eq value t) t)
+   ((numberp value) value)
+   ((stringp value)
+    (if (and (> (length value) 0) (eq (aref value 0) ?#)
+             (assoc value grid-calc--errors))
+        (grid-calc-err value)
+      value))
+   ;; A chart, or whatever an Elisp formula gave
+   (t value)))
+
+(defun grid-calc--cell (model row col)
+  "Return the value at ROW and COL of MODEL, as a formula reads it.
+During a recalculation a formula there is computed first, so it is
+never read stale.  A cell past the sheet's edge is blank."
+  (if (or (< row 0) (< col 0)
+          (>= row (grid-data-model-rows model))
+          (>= col (grid-data-model-cols model)))
+      :blank
+    (let ((index (+ (* row (grid-data-model-cols model)) col)))
+      (when grid-calc--pass
+        (grid-calc--compute-cell model index))
+      (let* ((cell (aref (grid-data-model-cells model) index))
+             (raw (grid-cell-raw-input cell)))
+        (if (grid-calc--formula-p raw)
+            (grid-calc--from-result (grid-cell-computed-value cell))
+          (grid-calc--from-constant raw))))))
+
+(defun grid-calc--store (value)
+  "Return VALUE, a formula's result, in the form its cell stores.
+That is a number, a string, t for TRUE, nil for FALSE or the text of an
+error value.  An empty cell is 0.  Several values are the first one in
+an array formula or under `grid-calc-legacy-arrays', else #VALUE!."
+  (cond
+   ((numberp value)
+    (if (or (and (floatp value) (or (isnan value) (= value 1.0e+INF)
+                                    (= value -1.0e+INF))))
+        "#NUM!"
+      (grid-calc--tidy-number value)))
+   ((stringp value) value)
+   ((eq value t) t)
+   ((eq value :false) nil)
+   ((eq value :blank) 0)
+   ((grid-calc-err-p value) (grid-calc-err-code value))
+   ((grid-calc-ref-p value)
+    (grid-calc--store (grid-calc--deref value)))
+   ((grid-calc-array-p value)
+    (if (or (and (= (grid-calc-array-rows value) 1)
+                 (= (grid-calc-array-cols value) 1))
+            grid-calc--array-formula grid-calc-legacy-arrays)
+        (grid-calc--store (grid-calc-aref value 0 0))
+      "#VALUE!"))
+   ((null value) 0)
+   ;; A chart
+   (t value)))
+
+;;;----------------------------------------------------------------------
+;;; From references to values
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--intersect (ref)
+  "Return the cell of REF in the formula's own row or column.
+#VALUE! when there is none."
+  (let ((row (nth 1 grid-calc--here))
+        (col (nth 2 grid-calc--here))
+        (top (grid-calc-ref-top ref)) (bottom (grid-calc-ref-bottom ref))
+        (left (grid-calc-ref-left ref)) (right (grid-calc-ref-right ref)))
+    (cond
+     ((and (= top bottom) (= left right)) (grid-calc-ref-cell ref 0 0))
+     ((and (= left right) row (<= top row bottom))
+      (grid-calc-ref-cell ref (- row top) 0))
+     ((and (= top bottom) col (<= left col right))
+      (grid-calc-ref-cell ref 0 (- col left)))
+     ((and row col (<= top row bottom) (<= left col right))
+      (grid-calc-ref-cell ref (- row top) (- col left)))
+     (t (grid-calc-err "#VALUE!")))))
+
+(defun grid-calc--deref (value)
+  "Return VALUE with a reference read: one cell is its value, more an array."
+  (if (grid-calc-ref-p value)
+      (if (and (= (grid-calc-ref-top value) (grid-calc-ref-bottom value))
+               (= (grid-calc-ref-left value) (grid-calc-ref-right value)))
+          (grid-calc-ref-cell value 0 0)
+        (grid-calc-ref-to-array value))
+    value))
+
+(defun grid-calc--scalar-or-array (value)
+  "Return VALUE read where one value is wanted.
+A range is the cell of it in the formula's row or column under
+`grid-calc-legacy-arrays' outside an array context, else its values."
+  (if (and (grid-calc-ref-p value)
+           grid-calc-legacy-arrays (not grid-calc--array-context))
+      (grid-calc--intersect value)
+    (grid-calc--deref value)))
+
+(defun grid-calc--first (value)
+  "Return the one value VALUE stands for: the first of several."
+  (let ((value (grid-calc--scalar-or-array value)))
+    (if (grid-calc-array-p value) (grid-calc-aref value 0 0) value)))
+
+;;;----------------------------------------------------------------------
+;;; Converting values
+;;;----------------------------------------------------------------------
+;;
+;; Each of these signals the error value VALUE is, or #VALUE! when VALUE
+;; cannot be what is wanted, for `grid-calc--call' to give.
 
 (defun grid-calc--tidy-number (number)
   "Return NUMBER as an integer when it has no fraction."
@@ -684,13 +904,304 @@ AST: The Abstract Syntax Tree to evaluate."
       (truncate number)
     number))
 
+;; Excel counts days from 1900-01-01 as 1, and counts a 29 February
+;; 1900 that never was, as Lotus 1-2-3 did: serial 60.  Days from
+;; 1 March 1900 on are one more than the calendar gives.
+
+(defun grid-calc--civil-days (year month day)
+  "Return the days from 1970-01-01 to YEAR, MONTH and DAY, a real date."
+  (let* ((y (if (<= month 2) (1- year) year))
+         (era (floor y 400))
+         (yoe (- y (* era 400)))
+         (doy (+ (/ (+ (* 153 (+ month (if (> month 2) -3 9))) 2) 5) (1- day)))
+         (doe (+ (* yoe 365) (/ yoe 4) (- (/ yoe 100)) doy)))
+    (+ (* era 146097) doe -719468)))
+
+(defun grid-calc--civil-date (days)
+  "Return (YEAR MONTH DAY) DAYS from 1970-01-01."
+  (let* ((z (+ days 719468))
+         (era (floor z 146097))
+         (doe (- z (* era 146097)))
+         (yoe (/ (- doe (/ doe 1460) (- (/ doe 36524)) (/ doe 146096)) 365))
+         (doy (- doe (- (+ (* 365 yoe) (/ yoe 4)) (/ yoe 100))))
+         (mp (/ (+ (* 5 doy) 2) 153))
+         (day (1+ (- doy (/ (+ (* 153 mp) 2) 5))))
+         (month (if (< mp 10) (+ mp 3) (- mp 9)))
+         (year (+ yoe (* era 400) (if (<= month 2) 1 0))))
+    (list year month day)))
+
+(defun grid-calc-date-serial (year month day)
+  "Return Excel's serial number of YEAR, MONTH and DAY.
+A month or day outside its range carries over, so month 13 is January
+of the next year and day 0 the last day of the month before."
+  (let* ((months (+ (* year 12) (1- month)))
+         (year (floor months 12))
+         (month (1+ (mod months 12)))
+         (first (grid-calc--civil-days year month 1))
+         (first (+ first (if (or (> year 1900) (and (= year 1900) (> month 2)))
+                             25569 25568))))
+    (+ first (1- day))))
+
+(defun grid-calc-serial-date (serial)
+  "Return (YEAR MONTH DAY) of the whole part of Excel's SERIAL.
+Serial 60 is the 29 February 1900 Excel counts, and 0 is 1900-01-00."
+  (let ((whole (floor serial)))
+    (cond ((= whole 60) (list 1900 2 29))
+          ((= whole 0) (list 1900 1 0))
+          ((< whole 60) (grid-calc--civil-date (- whole 25568)))
+          (t (grid-calc--civil-date (- whole 25569))))))
+
+(defconst grid-calc--month-names
+  '(("jan" . 1) ("feb" . 2) ("mar" . 3) ("apr" . 4) ("may" . 5) ("jun" . 6)
+    ("jul" . 7) ("aug" . 8) ("sep" . 9) ("oct" . 10) ("nov" . 11) ("dec" . 12))
+  "Months by the first three letters of their names.")
+
+(defun grid-calc--parse-time (text)
+  "Return the fraction of a day TEXT names as a time, or nil.
+As 13:30, 1:30 PM, 13:30:15.5 or 1 PM."
+  (let ((case-fold-search t))
+    (when (string-match
+           (concat "\\`\\([0-9]\\{1,2\\}\\)\\(?::\\([0-9]\\{1,2\\}\\)"
+                   "\\(?::\\([0-9]\\{1,2\\}\\(?:\\.[0-9]+\\)?\\)\\)?\\)?"
+                   "[ \t]*\\([ap]m?\\)?\\'")
+           text)
+      (let ((hour (string-to-number (match-string 1 text)))
+            (minute (if (match-beginning 2)
+                        (string-to-number (match-string 2 text)) 0))
+            (second (if (match-beginning 3)
+                        (string-to-number (match-string 3 text)) 0))
+            (half (and (match-beginning 4)
+                       (downcase (substring (match-string 4 text) 0 1)))))
+        (when (or (match-beginning 2) half)
+          (when half
+            (unless (<= 1 hour 12) (setq hour 99))
+            (setq hour (+ (% hour 12) (if (equal half "p") 12 0))))
+          (when (and (< hour 24) (< minute 60) (< second 60))
+            (/ (+ (* hour 3600) (* minute 60) second) 86400.0)))))))
+
+(defun grid-calc--year (text)
+  "Return the year written as TEXT, two digits being 1930 to 2029."
+  (let ((year (string-to-number text)))
+    (cond ((> (length text) 2) year)
+          ((< year 30) (+ 2000 year))
+          (t (+ 1900 year)))))
+
+(defun grid-calc--parse-day (text)
+  "Return the serial number of the date TEXT names, or nil.
+As 2024-03-15, 2024/3/15, 3/15/2024, 15-Mar-2024, Mar 15, 2024 or
+March 2024."
+  (let ((case-fold-search t)
+        (month-regexp "\\([a-z]\\{3\\}\\)[a-z]*\\.?"))
+    (cl-flet ((date (year month day)
+                (when (and (<= 1 month 12) (<= 1 day 31) (<= 1900 year 9999)
+                           (<= day (nth 2 (grid-calc-serial-date
+                                           (grid-calc-date-serial
+                                            year (1+ month) 0)))))
+                  (grid-calc-date-serial year month day)))
+              (month (name) (cdr (assoc (downcase name) grid-calc--month-names))))
+      (cond
+       ((string-match "\\`\\([0-9]\\{4\\}\\)[-/]\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{1,2\\}\\)\\'" text)
+        (date (string-to-number (match-string 1 text))
+              (string-to-number (match-string 2 text))
+              (string-to-number (match-string 3 text))))
+       ((string-match "\\`\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{2\\}\\|[0-9]\\{4\\}\\)\\'" text)
+        (date (grid-calc--year (match-string 3 text))
+              (string-to-number (match-string 1 text))
+              (string-to-number (match-string 2 text))))
+       ((string-match "\\`\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{1,2\\}\\)\\'" text)
+        (date (nth 5 (decode-time))
+              (string-to-number (match-string 1 text))
+              (string-to-number (match-string 2 text))))
+       ((string-match (concat "\\`\\([0-9]\\{1,2\\}\\)[- ]" month-regexp
+                              "\\(?:[- ,]+\\([0-9]\\{2\\}\\|[0-9]\\{4\\}\\)\\)?\\'")
+                      text)
+        (when-let* ((number (month (match-string 2 text))))
+          (date (if (match-beginning 3)
+                    (grid-calc--year (match-string 3 text))
+                  (nth 5 (decode-time)))
+                number (string-to-number (match-string 1 text)))))
+       ((string-match (concat "\\`" month-regexp
+                              "[- ]\\([0-9]\\{1,2\\}\\)\\(?:[ ,]+\\([0-9]\\{4\\}\\)\\)?\\'")
+                      text)
+        (when-let* ((number (month (match-string 1 text))))
+          (date (if (match-beginning 3)
+                    (string-to-number (match-string 3 text))
+                  (nth 5 (decode-time)))
+                number (string-to-number (match-string 2 text)))))
+       ((string-match (concat "\\`" month-regexp "[- ,]+\\([0-9]\\{4\\}\\)\\'")
+                      text)
+        (when-let* ((number (month (match-string 1 text))))
+          (date (string-to-number (match-string 2 text)) number 1)))))))
+
+(defun grid-calc--parse-date-time (text)
+  "Return the serial number of the date, time or both TEXT names, or nil."
+  (let ((text (string-trim text)))
+    (or (grid-calc--parse-day text)
+        (grid-calc--parse-time text)
+        (and (string-match "\\`\\(.*[0-9a-z]\\)[ T]+\\([0-9]\\{1,2\\}:.*\\)\\'"
+                           text)
+             (let ((day (grid-calc--parse-day (match-string 1 text)))
+                   (time (grid-calc--parse-time (match-string 2 text))))
+               (and day time (+ day time)))))))
+
+(defun grid-calc-text-number (text)
+  "Return the number TEXT reads as, the way Excel reads text, or nil.
+Spaces around it, thousands separators, a currency sign, a percent sign
+and parentheses for a negative are allowed; a date or a time is its
+serial number."
+  (let ((text (string-trim (substring-no-properties text))))
+    (unless (string-empty-p text)
+      (or (and (string-match-p "\\`[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
+                               text)
+               (string-to-number text))
+          (let ((case-fold-search nil) (sign 1) (scale 1) (body text))
+            (when (string-match "\\`(\\(.*\\))\\'" body)
+              (setq sign -1 body (string-trim (match-string 1 body))))
+            (when (string-match "\\`\\([-+]\\)[ ]*" body)
+              (when (equal (match-string 1 body) "-") (setq sign (- sign)))
+              (setq body (substring body (match-end 0))))
+            (when (string-match "\\`[$€£¥][ ]*" body)
+              (setq body (substring body (match-end 0))))
+            (when (string-match "[ ]*%\\'" body)
+              (setq scale 0.01 body (substring body 0 (match-beginning 0))))
+            (when (string-match-p
+                   "\\`\\(?:[0-9]\\{1,3\\}\\(?:,[0-9]\\{3\\}\\)+\\|[0-9]+\\)\\(?:\\.[0-9]*\\)?\\(?:[eE][-+]?[0-9]+\\)?\\'\\|\\`\\.[0-9]+\\'"
+                   body)
+              (let ((number (string-to-number (string-replace "," "" body))))
+                (if (= scale 1)
+                    (* sign number)
+                  (* sign number scale)))))
+          (grid-calc--parse-date-time text)))))
+
+(defun grid-calc-num (value)
+  "Return VALUE as a number, as arithmetic takes it.
+Blank is 0, TRUE 1 and FALSE 0; text is the number it reads as."
+  (cond
+   ((numberp value) value)
+   ((eq value :blank) 0)
+   ((eq value t) 1)
+   ((eq value :false) 0)
+   ((stringp value) (or (grid-calc-text-number value) (grid-calc-raise "#VALUE!")))
+   ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+   ((or (grid-calc-ref-p value) (grid-calc-array-p value))
+    (grid-calc-num (grid-calc--first value)))
+   (t (grid-calc-raise "#VALUE!"))))
+
+(defun grid-calc-int (value)
+  "Return VALUE as a number with its fraction cut off."
+  (let ((number (grid-calc-num value)))
+    (if (integerp number) number
+      (if (> (abs number) 1e18) (grid-calc-raise "#NUM!") (truncate number)))))
+
+(defun grid-calc-number-text (number)
+  "Return NUMBER written as Excel writes it into text: up to 15 digits."
+  (cond
+   ((integerp number) (number-to-string number))
+   ((or (isnan number) (> (abs number) 1e308)) "#NUM!")
+   ((and (= number (ftruncate number)) (< (abs number) 1e15))
+    (format "%d" (truncate number)))
+   ((zerop number) "0")
+   (t
+    ;; 15 significant digits, then the zeros left at the end gone
+    (let ((text (format "%.14e" number)))
+      (string-match "\\`\\(-?\\)\\([0-9]\\)\\.\\([0-9]*\\)e\\([-+][0-9]+\\)\\'" text)
+      (let* ((sign (match-string 1 text))
+             (digits (string-trim-right
+                      (concat (match-string 2 text) (match-string 3 text)) "0"))
+             (exponent (string-to-number (match-string 4 text))))
+        (if (or (>= exponent 15) (< exponent -9)
+                (and (< exponent 0) (> (- (length digits) exponent) 20)))
+            (format "%s%s%sE%s%02d" sign (substring digits 0 1)
+                    (if (> (length digits) 1)
+                        (concat "." (substring digits 1)) "")
+                    (if (< exponent 0) "-" "+") (abs exponent))
+          (let ((point (1+ exponent)))
+            (cond
+             ((<= point 0)
+              (concat sign "0." (make-string (- point) ?0) digits))
+             ((>= point (length digits))
+              (concat sign digits (make-string (- point (length digits)) ?0)))
+             (t (concat sign (substring digits 0 point) "."
+                        (substring digits point)))))))))))
+
+(defun grid-calc-text (value)
+  "Return VALUE as text, as & takes it.
+Blank is empty text and a number is written with up to 15 digits."
+  (cond
+   ((stringp value) value)
+   ((numberp value) (grid-calc-number-text value))
+   ((eq value :blank) "")
+   ((eq value t) "TRUE")
+   ((eq value :false) "FALSE")
+   ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+   ((or (grid-calc-ref-p value) (grid-calc-array-p value))
+    (grid-calc-text (grid-calc--first value)))
+   (t (grid-calc-raise "#VALUE!"))))
+
+(defun grid-calc-truth (value)
+  "Return non-nil when VALUE is true, as IF takes it.
+A number is true unless 0; text must be TRUE or FALSE."
+  (cond
+   ((eq value t) t)
+   ((memq value '(:false :blank)) nil)
+   ((numberp value) (/= value 0))
+   ((stringp value)
+    (cond ((string-equal-ignore-case value "TRUE") t)
+          ((string-equal-ignore-case value "FALSE") nil)
+          (t (grid-calc-raise "#VALUE!"))))
+   ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+   ((or (grid-calc-ref-p value) (grid-calc-array-p value))
+    (grid-calc-truth (grid-calc--first value)))
+   (t (grid-calc-raise "#VALUE!"))))
+
+(defun grid-calc--type-rank (value)
+  "Return where VALUE's kind sorts: numbers, then text, then truth values."
+  (cond ((numberp value) 0) ((stringp value) 1) (t 2)))
+
+(defun grid-calc--numbers-equal-p (left right)
+  "Return non-nil when LEFT and RIGHT are equal to 15 digits."
+  (or (= left right)
+      (<= (abs (- left right))
+          (* 1e-15 (max (abs left) (abs right))))))
+
+(defun grid-calc-compare (left right)
+  "Return -1, 0 or 1 as LEFT sorts before, with or after RIGHT.
+Numbers sort before text and text before FALSE and TRUE; text compares
+without regard to case.  Blank is 0, empty text or FALSE, as the other
+side is a number, text or a truth value."
+  (when (eq left :blank)
+    (setq left (cond ((stringp right) "") ((grid-calc-boolean-p right) :false)
+                     (t 0))))
+  (when (eq right :blank)
+    (setq right (cond ((stringp left) "") ((grid-calc-boolean-p left) :false)
+                      (t 0))))
+  (let ((left-rank (grid-calc--type-rank left))
+        (right-rank (grid-calc--type-rank right)))
+    (cond
+     ((/= left-rank right-rank) (if (< left-rank right-rank) -1 1))
+     ((numberp left)
+      (cond ((grid-calc--numbers-equal-p left right) 0)
+            ((< left right) -1)
+            (t 1)))
+     ((stringp left)
+      (let ((a (downcase left)) (b (downcase right)))
+        (cond ((string= a b) 0) ((string< a b) -1) (t 1))))
+     (t (cond ((eq left right) 0) ((eq left :false) -1) (t 1))))))
+
+(defun grid-calc-equal-p (left right)
+  "Return non-nil when LEFT and RIGHT are equal, as = takes them."
+  (= (grid-calc-compare left right) 0))
+
+;; Filters, sorting and charts read the values cells store, outside any
+;; formula; these take them as they are stored.
+
 (defun grid-calc--numeric (value)
-  "Return VALUE as a number when it is one or reads as one, else nil.
+  "Return the stored VALUE as a number when it is one or reads as one.
 Text marked as text is not a number, whatever it reads as."
   (grid-format-number value))
 
 (defun grid-calc--equal (left right)
-  "Return non-nil when LEFT and RIGHT are the same spreadsheet value.
+  "Return non-nil when the stored LEFT and RIGHT are the same value.
 Numbers compare by value whether typed or computed; text ignores case."
   (let ((left-number (grid-calc--numeric left))
         (right-number (grid-calc--numeric right)))
@@ -700,131 +1211,820 @@ Numbers compare by value whether typed or computed; text ignores case."
           (t (equal left right)))))
 
 (defun grid-calc-to-number (value)
-  "Converts a value to a number.
-Returns 0 for non-numeric values instead of throwing an error."
+  "Return the stored VALUE as a number, 0 when it is none."
   (cond
    ((numberp value) value)
    ((stringp value)
-    (cond ((string-empty-p value) 0)
-          ;; Arithmetic reads a number out of text; only aggregates skip it.
-          ((grid-format-text-p value)
-           (or (grid-format-number (substring-no-properties value)) 0))
-          (t (or (grid-format-number value) 0))))
-   ((null value) 0)
-   (t 0))) ; Return 0 for any other type instead of throwing error
-
-(defun grid-calc--operand (value)
-  "Return VALUE as the number that arithmetic works on.
-An empty cell counts as 0 and TRUE as 1.  Text that reads as a number,
-or as a date written year first, is that number.  Any other text is no
-number: the formula is #VALUE! rather than quietly taking it for 0."
-  (cond
-   ((numberp value) value)
-   ((null value) 0)
-   ((eq value t) 1)
-   ((stringp value)
-    (let ((text (substring-no-properties value)))
-      (cond ((string-empty-p text) 0)
-            ((grid-format-number text))
-            ((grid-format-parse-date text))
-            (t (signal 'grid-calc-error '("#VALUE!"))))))
-   (t (signal 'grid-calc-error '("#VALUE!")))))
-
-(defun grid-calc--to-serial (value)
-  "Return the date VALUE as a serial number.
-VALUE is a serial number, or a date written year first as old sheets
-hold them."
-  (cond
-   ((numberp value) value)
-   ((and (stringp value) (grid-calc--numeric value)))
-   ((and (stringp value) (grid-format-parse-date value)))
-   ((and (stringp value)
-         (let ((time (ignore-errors (parse-time-string value))))
-           (and (nth 5 time) (nth 4 time) (nth 3 time)
-                (grid-format-date-to-serial (nth 5 time) (nth 4 time)
-                                            (nth 3 time))))))
-   (t (error "Value cannot be read as a date: %s" value))))
-
-(defun grid-calc--wildcard-regexp (pattern)
-  "Return a regexp matching the whole of text that PATTERN matches.
-In PATTERN `*' is any run of characters, `?' any one character, and `~'
-makes the character after it literal, as in Excel criteria."
-  (let ((i 0) (len (length pattern)) parts)
-    (while (< i len)
-      (let ((char (aref pattern i)))
-        (cond ((and (eq char ?~) (< (1+ i) len))
-               (setq i (1+ i))
-               (push (regexp-quote (string (aref pattern i))) parts))
-              ((eq char ?*) (push "\\(?:.\\|\n\\)*" parts))
-              ((eq char ??) (push "\\(?:.\\|\n\\)" parts))
-              (t (push (regexp-quote (string char)) parts))))
-      (setq i (1+ i)))
-    (concat "\\`" (apply #'concat (nreverse parts)) "\\'")))
-
-(defun grid-calc--parse-criteria (criteria)
-  "Return a predicate on cell values for CRITERIA, as COUNTIF reads it.
-CRITERIA is a number, text to match, or text after a comparison
-operator (\">10\", \"<>0\", \"<>apple\").  Text matches ignore case and
-take the wildcards `*' and `?'; numbers compare only with numbers."
-  (let* ((text (if (numberp criteria)
-                   (grid-format-general criteria)
-                 (grid-calc-to-string criteria)))
-         (op (if (string-match "\\`\\(<=\\|>=\\|<>\\|[<>=]\\)" text)
-                 (match-string 1 text)
-               "="))
-         (operand (if (string-match "\\`\\(<=\\|>=\\|<>\\|[<>=]\\)" text)
-                      (substring text (match-end 0))
-                    text))
-         (number (if (numberp criteria) criteria (grid-calc--numeric operand)))
-         (compare (pcase op
-                    ("=" #'=) (">" #'>) ("<" #'<) (">=" #'>=) ("<=" #'<=)
-                    ("<>" (lambda (a b) (not (= a b)))))))
-    (cond
-     (number
-      (lambda (value)
-        (let ((cell (grid-calc--numeric value)))
-          (if cell
-              (funcall compare cell number)
-            (equal op "<>")))))
-     ((member op '("=" "<>"))
-      (let ((regexp (grid-calc--wildcard-regexp (downcase operand)))
-            (blank (string-empty-p operand)))
-        (lambda (value)
-          (let* ((cell (if (null value) "" (grid-calc-to-string value)))
-                 (match (if blank
-                            (string-empty-p cell)
-                          (and (stringp value)
-                               (not (grid-calc--numeric value))
-                               (string-match-p regexp (downcase cell))))))
-            (if (equal op "=") match (not match))))))
-     (t
-      (let ((target (downcase operand)))
-        (lambda (value)
-          (and (stringp value) (not (string-empty-p value))
-               (not (grid-calc--numeric value))
-               (let ((cell (downcase value)))
-                 (pcase op
-                   (">" (string< target cell))
-                   ("<" (string< cell target))
-                   (">=" (not (string< cell target)))
-                   ("<=" (not (string< target cell))))))))))))
-
-(defun grid-calc-to-string (value)
-  "Converts a value to a string, a number as the general format shows it."
-  (if (stringp value) value (grid-format-general value)))
-
-(defun grid-calc-to-boolean (value)
-  "Converts a value to a boolean."
-  (cond
-   ((null value) nil)
-   ((eq value t) t)
-   ((eq value nil) nil)
-   ((numberp value) (not (= value 0)))
-   ((stringp value) (not (string-empty-p value)))
-   (t t)))
+    (or (grid-format-number (substring-no-properties value)) 0))
+   (t 0)))
 
 ;;;----------------------------------------------------------------------
-;;; Cell and Range Value Retrieval
+;;; Applying a function to each of several values
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--broadcast (function values)
+  "Apply FUNCTION to VALUES, or to each set of their elements.
+When any of VALUES is an array the result is an array as large as the
+largest, each element FUNCTION of the elements at that place; an array
+of one row or column stands for each row or column."
+  (if (not (cl-some #'grid-calc-array-p values))
+      (apply function values)
+    (let ((rows 1) (cols 1))
+      (dolist (value values)
+        (when (grid-calc-array-p value)
+          (setq rows (max rows (grid-calc-array-rows value))
+                cols (max cols (grid-calc-array-cols value)))))
+      (grid-calc-array
+       rows cols
+       (lambda (row col)
+         (apply function
+                (mapcar (lambda (value)
+                          (if (grid-calc-array-p value)
+                              (grid-calc-aref value row col)
+                            value))
+                        values)))))))
+
+(defmacro grid-calc--catching (&rest body)
+  "Run BODY and return its value, or the error value it signaled."
+  (declare (indent 0))
+  `(condition-case err
+       (progn ,@body)
+     (grid-calc-cycle (signal (car err) (cdr err)))
+     (grid-calc-error (grid-calc-err (grid-calc--error-code err)))
+     (arith-error (grid-calc-err "#DIV/0!"))
+     (overflow-error (grid-calc-err "#NUM!"))
+     (range-error (grid-calc-err "#NUM!"))))
+
+(defun grid-calc--error-code (err)
+  "Return the error value text the formula error ERR stands for."
+  (let ((code (cadr err)))
+    (if (member code grid-calc-error-values) code "#VALUE!")))
+
+;;;----------------------------------------------------------------------
+;;; Operators
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--arithmetic (op left right)
+  "Return LEFT OP RIGHT for the arithmetic operator OP."
+  (let ((a (grid-calc-num left))
+        (b (grid-calc-num right)))
+    (pcase op
+      ('+ (grid-calc--sum-of a b))
+      ('- (grid-calc--sum-of a (- b)))
+      ('* (* a b))
+      ('/ (if (zerop b) (grid-calc-raise "#DIV/0!") (/ (float a) b)))
+      ('^ (grid-calc--power a b)))))
+
+(defun grid-calc--sum-of (a b)
+  "Return A plus B, 0 when they cancel out to within 15 digits."
+  (let ((sum (+ a b)))
+    (if (and (floatp sum) (/= sum 0)
+             (< (abs sum) (* 1e-15 (max (abs a) (abs b)))))
+        0
+      sum)))
+
+(defun grid-calc--power (base exponent)
+  "Return BASE raised to EXPONENT, as ^ and POWER do."
+  (cond
+   ((and (zerop base) (zerop exponent)) (grid-calc-raise "#NUM!"))
+   ((and (zerop base) (< exponent 0)) (grid-calc-raise "#DIV/0!"))
+   ((and (< base 0) (/= exponent (ftruncate exponent)))
+    ;; An odd root of a negative number is negative, as =-8^(1/3) is not
+    ;; in Excel either; it is #NUM!.
+    (grid-calc-raise "#NUM!"))
+   ((and (integerp base) (integerp exponent) (>= exponent 0)
+         (< (* exponent (log (max 2 (abs base)) 2)) 62))
+    (expt base exponent))
+   (t (let ((result (expt (float base) exponent)))
+        (if (or (isnan result) (> (abs result) 1.7976931348623157e308))
+            (grid-calc-raise "#NUM!")
+          result)))))
+
+(defun grid-calc-apply-binary-op (op left right)
+  "Return LEFT OP RIGHT, each a single value."
+  (grid-calc--catching
+    (cond
+     ((grid-calc-err-p left) left)
+     ((grid-calc-err-p right) right)
+     (t
+      (pcase op
+        ((or '+ '- '* '/ '^) (grid-calc--arithmetic op left right))
+        ('& (concat (grid-calc-text left) (grid-calc-text right)))
+        ('= (grid-calc-bool (= (grid-calc-compare left right) 0)))
+        ('<> (grid-calc-bool (/= (grid-calc-compare left right) 0)))
+        ('< (grid-calc-bool (< (grid-calc-compare left right) 0)))
+        ('> (grid-calc-bool (> (grid-calc-compare left right) 0)))
+        ('<= (grid-calc-bool (<= (grid-calc-compare left right) 0)))
+        ('>= (grid-calc-bool (>= (grid-calc-compare left right) 0)))
+        ;; grid-table's own: A1>0 AND B1>0
+        ('AND (grid-calc-bool (and (grid-calc-truth left)
+                                   (grid-calc-truth right))))
+        ('OR (grid-calc-bool (or (grid-calc-truth left)
+                                 (grid-calc-truth right))))
+        (_ (error "Unknown binary operator: %s" op)))))))
+
+(defun grid-calc-apply-unary-op (op operand)
+  "Return OP applied to OPERAND, a single value."
+  (grid-calc--catching
+    (if (grid-calc-err-p operand)
+        operand
+      (pcase op
+        ('+ (if (eq operand :blank) 0 operand))
+        ('- (- (grid-calc-num operand)))
+        ('% (/ (grid-calc-num operand) 100.0))
+        ('NOT (grid-calc-bool (not (grid-calc-truth operand))))
+        (_ (error "Unknown unary operator: %s" op))))))
+
+;;;----------------------------------------------------------------------
+;;; Evaluating a formula
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--reference (model ast)
+  "Return the reference the CELL-REF or RANGE AST names in MODEL."
+  (pcase ast
+    (`(CELL-REF ,text . ,sheet)
+     (let ((target (grid-calc--sheet-model model (car sheet)))
+           (at (grid-calc--reference-coords text)))
+       (unless (and at (car at) (cdr at))
+         ;; A whole row or column on its own, as 3:3 is
+         (setq at (grid-calc--reference-coords text)))
+       (pcase-let ((`(,top . ,left) at))
+         (if (and top left)
+             (grid-calc-ref--make target top left top left)
+           (grid-calc-err "#REF!")))))
+    (`(RANGE ,start ,end)
+     (pcase-let ((`(,target ,top ,bottom ,left ,right)
+                  (grid-calc--range-bounds model start end)))
+       (if (and (<= top bottom) (<= left right))
+           (grid-calc-ref--make target top left bottom right)
+         ;; A whole column of a sheet without rows
+         (grid-calc-ref--make target top left (max top bottom)
+                              (max left right)))))))
+
+;;; Structured references, as Table1[[#Headers],[Qty]:[Price]]
+
+(defun grid-calc--struct-unescape (text)
+  "Return the column name TEXT with its escapes taken out.
+A column name escapes [, ], # and ' with a ' before them."
+  (replace-regexp-in-string "'\\(.\\)" "\\1" text t))
+
+(defun grid-calc--struct-parts (text)
+  "Return the parts of the bracketed TEXT of a structured reference.
+A list of (ITEM . KEYWORD), for #All, #Data, #Headers, #Totals and #This
+Row, and of (COLUMN NAME) and (COLUMNS FIRST LAST)."
+  (let ((pos 1) (end (1- (length text))) parts)
+    (unless (and (> (length text) 1) (eq (aref text 0) ?\[)
+                 (eq (aref text end) ?\]))
+      (signal 'grid-calc-error '("#REF!")))
+    (cl-labels
+        ((bracket ()
+           ;; The text of one [...] at POS, escapes left in
+           (let ((start (1+ pos)) (at (1+ pos)))
+             (while (and (< at end) (not (eq (aref text at) ?\])))
+               (setq at (+ at (if (eq (aref text at) ?') 2 1))))
+             (prog1 (substring text start (min at end))
+               (setq pos (1+ at)))))
+         (skip ()
+           (while (and (< pos end) (memq (aref text pos) '(?\s ?,)))
+             (cl-incf pos)))
+         (item (word)
+           (pcase (downcase (string-trim word))
+             ("#all" '(ITEM . all)) ("#data" '(ITEM . data))
+             ("#headers" '(ITEM . headers)) ("#totals" '(ITEM . totals))
+             ("#this row" '(ITEM . this-row))
+             (_ (if (string-prefix-p "#" (string-trim word))
+                    (signal 'grid-calc-error '("#REF!"))
+                  (list 'COLUMN (grid-calc--struct-unescape word))))))
+         (column-or-span (first)
+           ;; FIRST, or FIRST:[LAST]
+           (if (and (< pos end) (eq (aref text pos) ?:))
+               (progn (cl-incf pos)
+                      (unless (eq (aref text pos) ?\[)
+                        (signal 'grid-calc-error '("#REF!")))
+                      (list 'COLUMNS (grid-calc--struct-unescape first)
+                            (grid-calc--struct-unescape (bracket))))
+             (item first))))
+      (cond
+       ((>= pos end))
+       ;; [@], [@Qty] and [@[Unit Price]]
+       ((eq (aref text pos) ?@)
+        (push '(ITEM . this-row) parts)
+        (cl-incf pos)
+        (cond ((>= pos end))
+              ((eq (aref text pos) ?\[)
+               (push (column-or-span (bracket)) parts))
+              (t (push (list 'COLUMN (grid-calc--struct-unescape
+                                      (substring text pos end)))
+                       parts))))
+       ;; [[#Headers],[Qty]:[Price]]
+       ((eq (aref text pos) ?\[)
+        (while (progn (skip) (< pos end))
+          (unless (eq (aref text pos) ?\[)
+            (signal 'grid-calc-error '("#REF!")))
+          (push (column-or-span (bracket)) parts)))
+       ;; [Qty] and [#Totals]
+       (t (push (item (substring text pos end)) parts))))
+    (nreverse parts)))
+
+(defun grid-calc--struct-area (table text row)
+  "Return (TOP LEFT BOTTOM RIGHT) of TABLE that the bracketed TEXT takes.
+TABLE is as `grid-calc-tables' returns it; ROW is the row of the formula,
+for #This Row."
+  (pcase-let* ((`(,_ ,top ,left ,bottom ,right ,headers ,totals ,columns) table)
+               (parts (grid-calc--struct-parts text))
+               (items (cl-loop for part in parts
+                               when (eq (car part) 'ITEM) collect (cdr part)))
+               (spans (cl-remove-if (lambda (part) (eq (car part) 'ITEM)) parts))
+               (data-top (+ top headers))
+               (data-bottom (- bottom totals)))
+    (cl-flet ((column (name)
+                (or (cl-position name columns :test #'string-equal-ignore-case)
+                    (signal 'grid-calc-error '("#REF!")))))
+      (pcase-let
+          ((`(,first-row . ,last-row)
+            (pcase (sort (copy-sequence items) #'string<)
+              ('() (cons data-top data-bottom))
+              ((pred (memq 'all)) (cons top bottom))
+              ('(this-row)
+               (if (and row (<= data-top row data-bottom))
+                   (cons row row)
+                 (signal 'grid-calc-error '("#VALUE!"))))
+              ('(data) (cons data-top data-bottom))
+              ('(headers)
+               (if (> headers 0) (cons top (1- data-top))
+                 (signal 'grid-calc-error '("#REF!"))))
+              ('(totals)
+               (if (> totals 0) (cons (1+ data-bottom) bottom)
+                 (signal 'grid-calc-error '("#REF!"))))
+              ('(data headers) (cons top data-bottom))
+              ('(data totals) (cons data-top bottom))
+              (_ (signal 'grid-calc-error '("#REF!")))))
+           (`(,first-col . ,last-col)
+            (pcase spans
+              ('() (cons left right))
+              (`((COLUMN ,name)) (let ((at (+ left (column name)))) (cons at at)))
+              (`((COLUMNS ,from ,to))
+               (let ((a (+ left (column from))) (b (+ left (column to))))
+                 (cons (min a b) (max a b))))
+              (_ (signal 'grid-calc-error '("#REF!"))))))
+        (when (> first-row last-row)
+          ;; A table without data rows
+          (signal 'grid-calc-error '("#REF!")))
+        (list first-row first-col last-row last-col)))))
+
+(defun grid-calc--struct-table (model name)
+  "Return the table NAME, or the one the formula computed is in, or nil."
+  (and grid-calc-tables
+       (if name
+           (funcall grid-calc-tables name)
+         (funcall grid-calc-tables nil (or (car grid-calc--here) model)
+                  (nth 1 grid-calc--here) (nth 2 grid-calc--here)))))
+
+(defun grid-calc--struct-reference (model name text)
+  "Return the reference the structured reference NAME[TEXT] makes on MODEL."
+  (let ((table (grid-calc--struct-table model name)))
+    (unless table (signal 'grid-calc-error '("#REF!")))
+    (pcase-let ((`(,top ,left ,bottom ,right)
+                 (grid-calc--struct-area table text (nth 1 grid-calc--here))))
+      (grid-calc-ref--make (car table) top left bottom right))))
+
+(defun grid-calc--span (left right)
+  "Return the reference from the corner of LEFT to that of RIGHT.
+Both are references into the same sheet; the result takes in both."
+  (if (not (and (grid-calc-ref-p left) (grid-calc-ref-p right)
+                (eq (grid-calc-ref-model left) (grid-calc-ref-model right))))
+      (grid-calc-err "#VALUE!")
+    (grid-calc-ref--make (grid-calc-ref-model left)
+                         (min (grid-calc-ref-top left) (grid-calc-ref-top right))
+                         (min (grid-calc-ref-left left) (grid-calc-ref-left right))
+                         (max (grid-calc-ref-bottom left)
+                              (grid-calc-ref-bottom right))
+                         (max (grid-calc-ref-right left)
+                              (grid-calc-ref-right right)))))
+
+(defun grid-calc--intersection (left right)
+  "Return the cells LEFT and RIGHT, two references, have in common.
+#NULL! when they have none."
+  (if (not (and (grid-calc-ref-p left) (grid-calc-ref-p right)
+                (eq (grid-calc-ref-model left) (grid-calc-ref-model right))))
+      (grid-calc-err "#VALUE!")
+    (let ((top (max (grid-calc-ref-top left) (grid-calc-ref-top right)))
+          (left-edge (max (grid-calc-ref-left left) (grid-calc-ref-left right)))
+          (bottom (min (grid-calc-ref-bottom left) (grid-calc-ref-bottom right)))
+          (right-edge (min (grid-calc-ref-right left) (grid-calc-ref-right right))))
+      (if (and (<= top bottom) (<= left-edge right-edge))
+          (grid-calc-ref--make (grid-calc-ref-model left)
+                               top left-edge bottom right-edge)
+        (grid-calc-err "#NULL!")))))
+
+(defun grid-calc--eval (model ast)
+  "Return the value of AST, a parsed formula, computed on MODEL's sheet.
+A reference stays a `grid-calc-ref'; see `grid-calc--scalar-or-array'."
+  (pcase ast
+    (`(NUMBER ,value) value)
+    (`(STRING ,value) value)
+    (`(LITERAL ,value) (grid-calc-bool value))
+    (`(ERROR ,code) (grid-calc-err code))
+    ('(MISSING) :blank)
+    ;; A value computed already, as `grid-calc-call-function' passes one.
+    (`(QUOTED ,value) value)
+    ((or `(CELL-REF . ,_) `(RANGE . ,_))
+     (condition-case err
+         (grid-calc--reference model ast)
+       (grid-calc-error (grid-calc-err (grid-calc--error-code err)))))
+    (`(STRUCT-REF ,name ,text)
+     (condition-case err
+         (grid-calc--struct-reference model name text)
+       (grid-calc-error (grid-calc-err (grid-calc--error-code err)))))
+    (`(ARRAY ,rows)
+     (grid-calc-array-from-rows
+      (mapcar (lambda (row) (mapcar (lambda (item) (grid-calc--eval model item))
+                                    row))
+              rows)))
+    (`(NAME ,name . ,qualifier)
+     (if-let* ((local (assoc (upcase name) grid-calc--locals)))
+         (cdr local)
+       (let ((definition (grid-calc--name-ast name (car qualifier))))
+         (if (or (null definition)
+                 ;; A name defined by way of itself
+                 (member (upcase name) grid-calc--names-open))
+             (grid-calc-err "#NAME?")
+           (let ((grid-calc--names-open (cons (upcase name) grid-calc--names-open))
+                 (row (nth 1 grid-calc--here))
+                 (col (nth 2 grid-calc--here)))
+             (grid-calc--eval model (if (and row col)
+                                        (grid-calc--relative-to definition row col)
+                                      definition)))))))
+    (`(RANGE-OP ,left ,right)
+     (let ((a (grid-calc--eval model left))
+           (b (grid-calc--eval model right)))
+       (cond ((grid-calc-err-p a) a)
+             ((grid-calc-err-p b) b)
+             (t (grid-calc--span a b)))))
+    (`(INTERSECT ,left ,right)
+     (let ((a (grid-calc--eval model left))
+           (b (grid-calc--eval model right)))
+       (cond ((grid-calc-err-p a) a)
+             ((grid-calc-err-p b) b)
+             (t (grid-calc--intersection a b)))))
+    (`(UNION . ,parts)
+     ;; Several areas: only functions that take references read them
+     ;; whole, and they are read as the first area.
+     (let ((areas (mapcar (lambda (part) (grid-calc--eval model part)) parts)))
+       (or (cl-find-if #'grid-calc-err-p areas)
+           (cons 'union areas))))
+    (`(BINARY-OP ,op ,left ,right)
+     (let ((a (grid-calc--scalar-or-array (grid-calc--eval model left)))
+           (b (grid-calc--scalar-or-array (grid-calc--eval model right))))
+       (grid-calc--broadcast (lambda (x y) (grid-calc-apply-binary-op op x y))
+                             (list a b))))
+    (`(UNARY-OP @ ,operand)
+     (let ((value (grid-calc--eval model operand)))
+       (if (grid-calc-ref-p value)
+           (let ((grid-calc-legacy-arrays t) (grid-calc--array-context nil))
+             (grid-calc--intersect value))
+         (if (grid-calc-array-p value) (grid-calc-aref value 0 0) value))))
+    (`(UNARY-OP ,op ,operand)
+     (let ((value (grid-calc--scalar-or-array (grid-calc--eval model operand))))
+       (grid-calc--broadcast (lambda (x) (grid-calc-apply-unary-op op x))
+                             (list value))))
+    (`(FUNCTION-CALL ,name ,arguments)
+     (grid-calc--call model name arguments))
+    (`(ELISP-CODE ,code)
+     (if grid-table-allow-elisp
+         (let ((cell (lambda (ref) (grid-calc-get-cell-value model ref))))
+           (ignore cell)
+           (condition-case err
+               (eval (read code))
+             (error (format "Elisp Error: %s" (error-message-string err)))))
+       (error "Elisp disabled: see `grid-table-allow-elisp'")))
+    (_ (error "Unknown AST node type: %s" ast))))
+
+(defun grid-calc--eval-formula (model ast &optional row col)
+  "Return what the formula AST at ROW and COL of MODEL comes to.
+The value is in the form a cell stores; see `grid-calc--store'."
+  (let* ((grid-calc--here (list model row col))
+         (grid-calc--array-context grid-calc--array-formula)
+         (value (grid-calc--eval model ast)))
+    (if (eq (car-safe ast) 'ELISP-CODE)
+        value
+      (grid-calc--store
+       (if (grid-calc-ref-p value)
+           (grid-calc--scalar-or-array value)
+         value)))))
+
+(defun grid-calc-eval-ast (model ast)
+  "Return the value of the parsed formula AST on MODEL's sheet.
+A single value is in the form a cell stores; several values are a list
+of them, row after row."
+  (let* ((grid-calc--here (list model nil nil))
+         (value (grid-calc--deref (grid-calc--eval model ast))))
+    (if (grid-calc-array-p value)
+        (mapcar #'grid-calc--store (grid-calc-array-values value))
+      (grid-calc--store value))))
+
+(defun grid-calc-get-cell-value (model ref-str)
+  "Return the value of the cell REF-STR names in MODEL, as a cell stores it."
+  (let ((ref (grid-calc-parse-cell-ref ref-str)))
+    (when ref
+      (let ((value (grid-calc--cell model (plist-get ref :row)
+                                    (plist-get ref :col))))
+        (unless (eq value :blank)
+          (grid-calc--store value))))))
+
+;;;----------------------------------------------------------------------
+;;; Functions
+;;;----------------------------------------------------------------------
+;;
+;; A function says what each of its arguments is to be, and
+;; `grid-calc--call' makes it so before running the function's body:
+;;
+;;   number   a number, as arithmetic reads one (text that reads as a
+;;            number, TRUE as 1, blank as 0);
+;;   integer  a number with its fraction cut off;
+;;   text     text, as & writes values;
+;;   bool     TRUE or FALSE, as IF reads a condition: t or nil;
+;;   any      one value of any kind, a range being the cell of it in the
+;;            formula's row or column;
+;;   values   the argument as written: a `grid-calc-ref', an array or a
+;;            single value, for functions that take several values, as
+;;            SUM does;
+;;   array    an array, whatever was written: a range is its values and
+;;            one value an array of one;
+;;   ref      a reference, `grid-calc-ref', or #VALUE!;
+;;   lazy     the argument unevaluated, for `grid-calc-arg' to compute
+;;            when the function wants it, as IF's branches are.
+;;
+;; An argument of the first five kinds that is an error value makes the
+;; function give that error, unless the function says :errors.  One that
+;; is several values makes the function give several values, computed for
+;; each of them.
+
+(cl-defstruct (grid-calc-function (:constructor grid-calc-function--make))
+  "A function formulas can call.
+KINDS lists the kind of each argument and REST the kind of those past
+them, or nil; MIN is how many must be given.  ERRORS non-nil takes error
+values in as arguments.  BODY is the Lisp function.  LEGACY marks one
+defined with `grid-calc-defun'."
+  name kinds rest min errors body legacy)
+
+(defvar grid-calc-functions (make-hash-table :test 'equal)
+  "The functions formulas can call, by their names in capitals.")
+
+(defvar grid-calc--model nil
+  "The model of the sheet whose formula calls the function being run.")
+
+(defconst grid-calc--kinds
+  '(number integer text bool any values array ref lazy)
+  "The kinds an argument may be; see the commentary above.")
+
+(defun grid-calc--parse-arglist (arglist)
+  "Return (NAMES KINDS REST-KIND MIN DEFAULTS) for a function's ARGLIST.
+Each element is NAME, of kind any, or (NAME KIND [DEFAULT]), with
+&optional and &rest as in Lisp."
+  (let (names kinds defaults rest optional (min 0) state)
+    (dolist (item arglist)
+      (cond
+       ((eq item '&optional) (setq state 'optional))
+       ((eq item '&rest) (setq state 'rest))
+       (t
+        (let ((name (if (consp item) (car item) item))
+              (kind (if (consp item) (nth 1 item) 'any))
+              (default (and (consp item) (nth 2 item))))
+          (unless (memq kind grid-calc--kinds)
+            (error "Unknown argument kind %s" kind))
+          (if (eq state 'rest)
+              (setq rest (cons name kind))
+            (push name names)
+            (push kind kinds)
+            (push default defaults)
+            (if (eq state 'optional) (setq optional t)
+              (unless optional (cl-incf min))))))))
+    (list (nreverse names) (nreverse kinds) rest min (nreverse defaults))))
+
+(defmacro grid-calc-define (name arglist &rest body)
+  "Define NAME as a function formulas can call, taking ARGLIST.
+See the commentary above for ARGLIST's kinds.  BODY may start with a
+docstring and with :errors t, to take error values as arguments.  It
+returns a value as a formula has it, or signals one with
+`grid-calc-raise'; for TRUE and FALSE see `grid-calc-bool'."
+  (declare (indent 2) (doc-string 3))
+  (pcase-let ((`(,names ,kinds ,rest ,min ,defaults)
+               (grid-calc--parse-arglist arglist))
+              (errors nil))
+    (when (stringp (car body)) (pop body))
+    (while (and (keywordp (car body)) (cdr body))
+      (pcase (pop body)
+        (:errors (setq errors (pop body)))
+        (key (error "Unknown keyword %s" key))))
+    `(puthash ,(upcase (symbol-name name))
+              (grid-calc-function--make
+               :name ,(upcase (symbol-name name))
+               :kinds ',kinds :rest ',(cdr rest) :min ,min :errors ,errors
+               ;; A default stands in only for an argument left out, not
+               ;; for one that came to nil, as FALSE does for bool.
+               :body (cl-function
+                      (lambda (,@(cl-subseq names 0 min)
+                               ,@(and (< min (length names)) '(&optional))
+                               ,@(cl-loop for arg in (nthcdr min names)
+                                          for default in (nthcdr min defaults)
+                                          collect (if default (list arg default) arg))
+                               ,@(and rest (list '&rest (car rest))))
+                        ,@body)))
+              grid-calc-functions)))
+
+(defmacro grid-calc-alias (name original)
+  "Make NAME call the same function as ORIGINAL."
+  `(puthash ,(upcase (symbol-name name))
+            (gethash ,(upcase (symbol-name original)) grid-calc-functions)
+            grid-calc-functions))
+
+(defvar grid-calc--lazy-model nil
+  "The model a lazy argument is computed on.")
+
+(defun grid-calc-arg (ast &optional kind)
+  "Compute the lazy argument AST, as an argument of KIND.
+KIND is any by default.  An error value signals, unless KIND is values."
+  (when ast
+    (let ((value (grid-calc--eval grid-calc--lazy-model ast)))
+      (pcase (or kind 'any)
+        ('values value)
+        (_ (grid-calc--coerce (grid-calc--scalar-or-array value) kind))))))
+
+(defun grid-calc--coerce (value kind)
+  "Return VALUE, one value, as an argument of KIND is given it.
+An error value signals."
+  (if (grid-calc-err-p value)
+      (grid-calc-raise (grid-calc-err-code value))
+    (pcase kind
+      ('number (grid-calc-num value))
+      ('integer (grid-calc-int value))
+      ('text (grid-calc-text value))
+      ('bool (grid-calc-truth value))
+      (_ value))))
+
+(defun grid-calc--scalar-kind-p (kind)
+  "Return non-nil when an argument of KIND is one value."
+  (memq kind '(number integer text bool any)))
+
+(defun grid-calc--argument (model ast kind)
+  "Return the argument AST computed on MODEL as one of KIND wants it.
+A value for a scalar KIND may still be an array, or an error value."
+  (pcase kind
+    ('lazy ast)
+    ('ref
+     (let ((value (grid-calc--eval model ast)))
+       (if (or (grid-calc-ref-p value) (grid-calc-err-p value)
+               (eq (car-safe value) 'union))
+           value
+         (grid-calc-err "#VALUE!"))))
+    ((or 'values 'array)
+     (let* ((grid-calc--array-context t)
+            (value (grid-calc--eval model ast)))
+       (when (eq (car-safe value) 'union)
+         (setq value (cadr value)))
+       (if (eq kind 'array)
+           (let ((value (grid-calc--deref value)))
+             (if (grid-calc-array-p value) value
+               (grid-calc-array--make 1 1 (vector value))))
+         value)))
+    (_
+     (let ((value (grid-calc--eval model ast)))
+       (when (eq (car-safe value) 'union)
+         (setq value (grid-calc-err "#VALUE!")))
+       (grid-calc--scalar-or-array value)))))
+
+(defun grid-calc--call (model name arguments)
+  "Return what the function NAME gives for the ARGUMENTS ASTs on MODEL."
+  (let ((function (gethash (upcase name) grid-calc-functions)))
+    ;; A plain Lisp function in the table is called as the old engine
+    ;; called every function: with the model and the values.
+    (when (functionp function)
+      (setq function (grid-calc-function--make :name name :body function
+                                               :legacy t)))
+    (cond
+     ((null function) (grid-calc-err "#NAME?"))
+     ((grid-calc-function-legacy function)
+      (grid-calc--call-legacy model function arguments))
+     (t
+      (let* ((kinds (grid-calc-function-kinds function))
+             (rest (grid-calc-function-rest function))
+             (count (length arguments)))
+        (if (or (< count (grid-calc-function-min function))
+                (and (null rest) (> count (length kinds))))
+            (grid-calc-err "#VALUE!")
+          (let* ((all-kinds (cl-loop for i below count
+                                     collect (if (< i (length kinds))
+                                                 (nth i kinds)
+                                               rest)))
+                 (values (cl-mapcar (lambda (ast kind)
+                                      (grid-calc--argument model ast kind))
+                                    arguments all-kinds)))
+            (grid-calc--apply function model all-kinds values))))))))
+
+(defun grid-calc--apply (function model kinds values)
+  "Run FUNCTION on VALUES, its arguments as KINDS take them, on MODEL.
+Several values for one value make the result several values too."
+  (let ((errors (grid-calc-function-errors function))
+        (scalar (mapcar #'grid-calc--scalar-kind-p kinds)))
+    (cl-flet ((run (values)
+                (or (and (not errors)
+                         (cl-loop for value in values
+                                  for one in scalar
+                                  thereis (and one (grid-calc-err-p value)
+                                               value)))
+                    (grid-calc--catching
+                      (let ((grid-calc--model model)
+                            (grid-calc--lazy-model model))
+                        (apply (grid-calc-function-body function)
+                               (cl-mapcar
+                                (lambda (value kind one)
+                                  (if (and one (not (grid-calc-err-p value)))
+                                      (grid-calc--coerce value kind)
+                                    (if (and (eq kind 'ref) (grid-calc-err-p value)
+                                             (not errors))
+                                        (grid-calc-raise
+                                         (grid-calc-err-code value))
+                                      value)))
+                                values kinds scalar)))))))
+      (if (cl-loop for value in values
+                   for one in scalar
+                   thereis (and one (grid-calc-array-p value)))
+          ;; Several values where the function takes one
+          (let ((positions (cl-loop for value in values
+                                    for one in scalar
+                                    collect (and one (grid-calc-array-p value)))))
+            (grid-calc--broadcast
+             (lambda (&rest elements)
+               (run (cl-loop for value in values
+                             for lifted in positions
+                             collect (if lifted (pop elements) value))))
+             (cl-loop for value in values
+                      for lifted in positions
+                      when lifted collect value)))
+        (run values)))))
+
+;;;----------------------------------------------------------------------
+;;; Functions defined the earlier way
+;;;----------------------------------------------------------------------
+
+(defmacro grid-calc-defun (name args &rest body)
+  "Define NAME as a function formulas can call, the earlier way.
+It is called with the model, then each argument: a value as a cell
+stores it, or a list of such values for a range.  An error value among
+them makes the function give that error."
+  `(puthash ,(symbol-name name)
+            (grid-calc-function--make
+             :name ,(symbol-name name) :legacy t
+             :body (lambda (model . ,args) ; All functions receive model as first arg
+                     ,@body))
+            grid-calc-functions))
+
+(defun grid-calc--legacy-value (value)
+  "Return VALUE as functions defined with `grid-calc-defun' take it."
+  (cond ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+        ((eq value :blank) "")
+        ((grid-calc-array-p value)
+         (mapcar #'grid-calc--legacy-value (grid-calc-array-values value)))
+        (t (grid-calc--store value))))
+
+(defun grid-calc--legacy-cells (ref)
+  "Return the cells of REF as functions defined with `grid-calc-defun'
+take them: each as its cell stores it, text as typed for a constant and
+\"\" for an empty cell, row after row."
+  (let* ((model (grid-calc-ref-model ref))
+         (cols (grid-data-model-cols model))
+         (bottom (min (grid-calc-ref-bottom ref) (1- (grid-data-model-rows model))))
+         (right (min (grid-calc-ref-right ref) (1- cols)))
+         values)
+    (cl-loop for row from (grid-calc-ref-top ref) to bottom do
+             (cl-loop for col from (grid-calc-ref-left ref) to right do
+                      (let ((index (+ (* row cols) col)))
+                        (when grid-calc--pass
+                          (grid-calc--compute-cell model index))
+                        (let ((stored (grid-cell-computed-value
+                                       (aref (grid-data-model-cells model) index))))
+                          (when (and (stringp stored)
+                                     (member stored grid-calc-error-values))
+                            (grid-calc-raise stored))
+                          (push (or stored "") values)))))
+    (nreverse values)))
+
+(defun grid-calc--call-legacy (model function arguments)
+  "Return what FUNCTION, defined with `grid-calc-defun', gives."
+  (grid-calc--catching
+    (let* ((values (mapcar (lambda (ast)
+                             (let ((value (grid-calc--argument model ast 'values)))
+                               (if (grid-calc-ref-p value)
+                                   ;; A range is its cells as they are
+                                   ;; stored, as these functions always
+                                   ;; had it; one cell written alone is
+                                   ;; one value.
+                                   (let ((cells (grid-calc--legacy-cells value)))
+                                     (if (eq (car-safe ast) 'CELL-REF)
+                                         (car cells)
+                                       cells))
+                                 (grid-calc--legacy-value
+                                  (grid-calc--deref value)))))
+                           arguments))
+           (result (apply (grid-calc-function-body function) model values)))
+      (cond ((null result) :false)
+            ((and (consp result) (not (keywordp (car result))))
+             (grid-calc-array-from-list
+              (mapcar #'grid-calc--from-result result)))
+            ((consp result) result)
+            ((stringp result) (grid-calc--from-result result))
+            (t result)))))
+
+(defun grid-table-calc-set-cell-formula (model cell-coords formula)
+  "Set the cell at CELL-COORDS, (ROW . COL), of MODEL to FORMULA.
+Then compute what that changes."
+  (let* ((row (car cell-coords))
+         (col (cdr cell-coords))
+         (cell (grid-model-get-cell model row col)))
+    (when cell
+      (set-grid-cell-raw-input cell formula)
+      (grid-calc-touch model row col)
+      (grid-table-calc-evaluate model))))
+
+(defun grid-calc-call-function (model func-name args)
+  "Return what the function FUNC-NAME gives for ARGS on MODEL.
+ARGS are values as cells store them, a list standing for a range's
+values; the result is in the same form."
+  (let ((asts (mapcar (lambda (value)
+                        (list 'QUOTED
+                              (if (and (consp value) (not (keywordp (car value))))
+                                  (grid-calc-array-from-list
+                                   (mapcar #'grid-calc--from-result value))
+                                (grid-calc--from-result value))))
+                      args)))
+    (let ((value (grid-calc--deref (grid-calc--call model func-name asts))))
+      (if (grid-calc-array-p value)
+          (mapcar #'grid-calc--store (grid-calc-array-values value))
+        (grid-calc--store value)))))
+
+;;;----------------------------------------------------------------------
+;;; Going through the values of arguments
+;;;----------------------------------------------------------------------
+
+(defun grid-calc-each-value (argument function)
+  "Call FUNCTION on each value of ARGUMENT, as a `values' argument has it.
+FUNCTION gets the value and whether it was written directly as an
+argument, rather than being one of a range's or an array's values.
+Cells past the sheet's filled cells are not visited."
+  (cond
+   ((grid-calc-ref-p argument)
+    (let* ((model (grid-calc-ref-model argument))
+           (top (grid-calc-ref-top argument))
+           (left (grid-calc-ref-left argument))
+           (rows (grid-calc-ref-filled-rows argument))
+           (cols (max 0 (min (grid-calc-ref-cols argument)
+                             (- (grid-data-model-cols model) left)))))
+      (dotimes (row rows)
+        (dotimes (col cols)
+          (funcall function (grid-calc--cell model (+ top row) (+ left col))
+                   nil)))))
+   ((grid-calc-array-p argument)
+    (mapc (lambda (value) (funcall function value nil))
+          (grid-calc-array-data argument)))
+   ((null argument))
+   (t (funcall function argument t))))
+
+(defun grid-calc-numbers (arguments &optional how)
+  "Return the numbers of ARGUMENTS, `values' arguments, in order.
+In a range or array only numbers count, unless HOW is `a', which counts
+text as 0 and TRUE as 1 there too, as AVERAGEA does.  A number written
+as an argument counts, as does TRUE (1), FALSE (0) and text that reads
+as a number; other text is #VALUE!.  An error value signals."
+  (let (numbers)
+    (dolist (argument arguments)
+      (grid-calc-each-value
+       argument
+       (lambda (value direct)
+         (cond
+          ((numberp value) (push value numbers))
+          ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+          (direct (push (grid-calc-num value) numbers))
+          ((eq how 'a)
+           (cond ((eq value t) (push 1 numbers))
+                 ((memq value '(:false)) (push 0 numbers))
+                 ((stringp value) (push 0 numbers))))))))
+    (nreverse numbers)))
+
+(defun grid-calc-flat-values (argument)
+  "Return the values of ARGUMENT, a `values' argument, as a list."
+  (let (values)
+    (grid-calc-each-value argument (lambda (value _) (push value values)))
+    (nreverse values)))
+
+(defun grid-calc-arg-array (argument)
+  "Return ARGUMENT, a `values' argument, as an array."
+  (let ((value (grid-calc--deref argument)))
+    (if (grid-calc-array-p value) value
+      (grid-calc-array--make 1 1 (vector value)))))
+
+;;;----------------------------------------------------------------------
+;;; Reference text
 ;;;----------------------------------------------------------------------
 
 (defun grid-calc-parse-cell-ref (ref-str)
@@ -979,6 +2179,20 @@ anything that is not a formula are returned unchanged."
             (let ((end (or (string-search "\"" formula (1+ pos)) (1- len))))
               (push (substring formula pos (1+ end)) parts)
               (setq pos (1+ end))))
+           ;; The brackets of a table reference, Table1[[#This Row],[Q1]]:
+           ;; what is inside names columns, not cells
+           ((and (eq (aref formula pos) ?\[) (not prefix))
+            (let ((end pos) (depth 0))
+              (while (progn
+                       (pcase (aref formula end)
+                         (?\[ (cl-incf depth))
+                         (?\] (cl-decf depth))
+                         (?' (cl-incf end)))
+                       (cl-incf end)
+                       (and (> depth 0) (< end len))))
+              (setq end (min end len))
+              (push (substring formula pos end) parts)
+              (setq pos end)))
            ((or whole reference)
             (let* ((end (car (or whole reference)))
                    (other (and reference (< end len) (eq (aref formula end) ?:)
@@ -1121,16 +2335,6 @@ and those that name it."
                        ":"
                        (funcall moved end (if (<= from to) new-high new-low))))))))))))
 
-(defun grid-calc-get-cell-value (model ref-str)
-  "Retrieves the computed value of a cell from the model."
-  (let* ((ref (grid-calc-parse-cell-ref ref-str))
-         (row (plist-get ref :row))
-         (col (plist-get ref :col)))
-    (when (and ref (>= row 0) (>= col 0))
-      (when (and (< row (grid-data-model-rows model))
-                 (< col (grid-data-model-cols model)))
-        (grid-calc--value model row col)))))
-
 (defun grid-calc--reference-coords (ref-str)
   "Return (ROW . COL) for REF-STR, zero-based.
 ROW is nil for a whole column such as A, COL is nil for a whole row such
@@ -1160,796 +2364,18 @@ its start means nothing of the range is on the sheet."
             (max 0 (min row-a row-b)) (min last-row (max row-a row-b))
             (max 0 (min col-a col-b)) (min last-col (max col-a col-b))))))
 
-(defun grid-calc-get-range-values (model start-cell-ref-ast end-cell-ref-ast)
-  "Retrieves a flat list of computed values from a range."
-  (pcase-let ((`(,model ,row-start ,row-end ,col-start ,col-end)
-               (grid-calc--range-bounds model start-cell-ref-ast
-                                        end-cell-ref-ast))
-              (values '()))
-    (cl-loop for r from row-start to row-end do
-             (cl-loop for c from col-start to col-end do
-                      (push (grid-calc--value model r c) values)))
-    (nreverse values)))
-
-(defun grid-calc-eval-index-function (model args-ast-list)
-  "Special evaluator for the INDEX function.
-MODEL: The grid data model.
-ARGS-AST-LIST: List of arguments in AST form.
-
-Returns the value at the specified row and column in the range."
-  (when (< (length args-ast-list) 2)
-    (error "INDEX requires at least 2 arguments"))
-  (let* ((range-ast (grid-calc--deref (car args-ast-list)))
-         (row-num-ast (cadr args-ast-list))
-         (col-num-ast (caddr args-ast-list)))
-    (unless (eq (car range-ast) 'RANGE)
-      (error "First argument to INDEX must be a range"))
-    (let* ((bounds (grid-calc--range-bounds model (cadr range-ast)
-                                            (caddr range-ast)))
-           (start-row (nth 1 bounds))
-           (start-col (nth 3 bounds))
-           (height (1+ (- (nth 2 bounds) start-row)))
-           (width (1+ (- (nth 4 bounds) start-col)))
-           (first (grid-calc-to-number
-                   (grid-calc-eval-ast model row-num-ast)))
-           ;; One number alone counts along a range that is a single row.
-           (along-row (and (null col-num-ast) (= height 1) (> width 1)))
-           (row-num (if along-row 1 first))
-           (col-num (cond (along-row first)
-                          (col-num-ast
-                           (grid-calc-to-number
-                            (grid-calc-eval-ast model col-num-ast)))
-                          (t 1))))
-      ;; A position outside the range is no cell of it.
-      (unless (and (integerp row-num) (integerp col-num)
-                   (<= 1 row-num height) (<= 1 col-num width))
-        (signal 'grid-calc-error '("#REF!")))
-      (grid-calc--value (car bounds)
-                        (+ start-row row-num -1) (+ start-col col-num -1)))))
-
-(defun grid-calc-eval-iferror-function (model args-ast-list)
-  "Special evaluator for the IFERROR function.
-
-MODEL: The grid data model.
-ARGS-AST-LIST: List of arguments in AST form.
-
-Tries to evaluate the first argument. If it succeeds, returns its value.
-If an error occurs during evaluation, evaluates and returns the second argument."
-  (when (/= (length args-ast-list) 2)
-    (error "IFERROR requires exactly 2 arguments"))
-  (let ((value-ast (car args-ast-list))
-        (value-if-error-ast (cadr args-ast-list)))
-    (condition-case err
-        ;; Try to evaluate the first argument
-        (grid-calc-eval-ast model value-ast)
-      (error
-       ;; If an error occurs, evaluate and return the second argument
-       (grid-calc-eval-ast model value-if-error-ast)))))
-
-(defun grid-calc-eval-ifs-function (model args-ast-list)
-  "Special evaluator for the IFS function.
-
-MODEL: The grid data model.
-ARGS-AST-LIST: List of arguments in AST form (pairs of condition and value).
-
-Evaluates each condition in turn. Returns the value corresponding to the first
-condition that evaluates to true. If no conditions are met, raises an error."
-  (when (oddp (length args-ast-list))
-    (error "IFS requires an even number of arguments"))
-  (cl-block grid-calc-eval-ifs-function
-   (let ((remaining-args args-ast-list))
-    (while remaining-args
-      (let* ((test-ast (car remaining-args))
-             (value-ast (cadr remaining-args))
-             (test-result (grid-calc-eval-ast model test-ast)))
-        (if (grid-calc-to-boolean test-result)
-            (cl-return-from grid-calc-eval-ifs-function
-              (grid-calc-eval-ast model value-ast)))
-        (setq remaining-args (cddr remaining-args)))))
-   (error "No condition in IFS was met"))) ; Return #N/A error
-
-(defun grid-calc-eval-vlookup-function (model args-ast-list)
-  "Special evaluator for the VLOOKUP function."
-  (when (< (length args-ast-list) 3)
-    (error "VLOOKUP requires at least 3 arguments"))
-  (cl-block grid-calc-eval-vlookup-function
-   (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
-         (table-array-ast (grid-calc--deref (nth 1 args-ast-list)))
-         (col-index-num (grid-calc-eval-ast model (nth 2 args-ast-list)))
-         ;; Without a fourth argument, or with TRUE, the first column is
-         ;; taken as sorted and the last row not above the value is found.
-         (approximate (or (null (nth 3 args-ast-list))
-                          (grid-calc-to-boolean
-                           (grid-calc-eval-ast model (nth 3 args-ast-list))))))
-    (unless (eq (car table-array-ast) 'RANGE)
-      (error "Second argument to VLOOKUP must be a range"))
-
-    (let* ((bounds (grid-calc--range-bounds model (cadr table-array-ast)
-                                            (caddr table-array-ast)))
-           (start-row (nth 1 bounds))
-           (end-row (nth 2 bounds))
-           (start-col (nth 3 bounds))
-           (target-col (+ start-col col-index-num -1))
-           (model (car bounds)))
-
-      (unless (and (integerp col-index-num)
-                   (<= start-col target-col (nth 4 bounds)))
-        (signal 'grid-calc-error '("#REF!")))
-      (if approximate
-          (let ((wanted (grid-calc--numeric lookup-value))
-                found)
-            (cl-loop
-             for r from start-row to end-row
-             do (let* ((cell-val (grid-calc--value model r start-col))
-                       (number (grid-calc--numeric cell-val)))
-                  (cond
-                   ;; Numbers are looked up among numbers, text among text.
-                   ((and wanted number)
-                    (if (<= number wanted) (setq found r) (cl-return)))
-                   ((and (not wanted) (not number)
-                         (stringp lookup-value) (stringp cell-val)
-                         (not (string-empty-p cell-val)))
-                    (if (string-greaterp (downcase cell-val)
-                                         (downcase lookup-value))
-                        (cl-return)
-                      (setq found r))))))
-            (when found
-              (cl-return-from grid-calc-eval-vlookup-function
-                (grid-calc--value model found target-col))))
-        (cl-loop for r from start-row to end-row
-                 do (let ((cell-val (grid-calc--value model r start-col)))
-                      (when (grid-calc--equal cell-val lookup-value)
-                        (cl-return-from grid-calc-eval-vlookup-function
-                          (grid-calc--value model r target-col))))))
-
-      ;; If loop finishes, no match was found
-      (error "No match found in VLOOKUP")))))
-
-(defun grid-calc-eval-if-function (model args-ast-list)
-  "Special evaluator for the IF function.
-Only the branch the condition picks is evaluated, so an error in the
-other one does not matter.  Without a third argument a false condition
-gives FALSE."
-  (unless (memq (length args-ast-list) '(2 3))
-    (error "IF requires 2 or 3 arguments"))
-  (if (grid-calc-to-boolean (grid-calc-eval-ast model (nth 0 args-ast-list)))
-      (grid-calc-eval-ast model (nth 1 args-ast-list))
-    (and (nth 2 args-ast-list)
-         (grid-calc-eval-ast model (nth 2 args-ast-list)))))
-
-(defun grid-calc-eval-xlookup-function (model args-ast-list)
-  "Special evaluator for the XLOOKUP function.
-The arguments are the value to look up, the range to look in, the range
-to return from and, optionally, what to give when nothing matches, which
-is only evaluated then.  Only exact matches are found."
-  (unless (<= 3 (length args-ast-list) 6)
-    (error "XLOOKUP requires 3 to 6 arguments"))
-  (let* ((lookup-value (grid-calc-eval-ast model (nth 0 args-ast-list)))
-         (lookup-array (grid-calc-eval-ast model (nth 1 args-ast-list)))
-         (return-array (grid-calc-eval-ast model (nth 2 args-ast-list)))
-         (match-mode (and (nth 4 args-ast-list)
-                          (grid-calc-eval-ast model (nth 4 args-ast-list))))
-         (search-mode (and (nth 5 args-ast-list)
-                           (grid-calc-eval-ast model (nth 5 args-ast-list)))))
-    (unless (listp lookup-array) (setq lookup-array (list lookup-array)))
-    (unless (listp return-array) (setq return-array (list return-array)))
-    (unless (member match-mode '(nil 0))
-      (error "XLOOKUP only supports exact match (match mode 0) at this time"))
-    (unless (member search-mode '(nil 1 -1))
-      (error "XLOOKUP only searches from the first or the last item"))
-    (unless (= (length lookup-array) (length return-array))
-      (error "XLOOKUP ranges must have the same size"))
-    (let ((pos (cl-position lookup-value lookup-array
-                            :test #'grid-calc--equal
-                            :from-end (eql search-mode -1))))
-      (cond (pos (nth pos return-array))
-            ((nth 3 args-ast-list)
-             (grid-calc-eval-ast model (nth 3 args-ast-list)))
-            (t (error "No match found in XLOOKUP"))))))
-
-;;;----------------------------------------------------------------------
-;;; Built-in Function Library
-;;;----------------------------------------------------------------------
-
-;;; Logical functions
-(defun grid-calc--flatten (arguments)
-  "Return the values of ARGUMENTS as one list.
-Each argument is a value or the list of values of a range."
-  (cl-loop for argument in arguments
-           if (listp argument) append argument
-           else collect argument))
-
-(grid-calc-defun COUNTA (&rest arguments)
-  "Counts the values that are not empty among numbers and ranges."
-  (cl-count-if (lambda (v) (not (or (null v) (equal v ""))))
-               (grid-calc--flatten arguments)))
-
-(grid-calc-defun ISBLANK (value)
-  "Returns TRUE if the value is blank."
-  (or (null value) (equal value "")))
-
-(grid-calc-defun ISNUMBER (value)
-  "Returns TRUE if the value is a number."
-  (numberp value))
-
-(grid-calc-defun ISTEXT (value)
-  "Returns TRUE if the value is text."
-  (stringp value))
-
-;;; Math functions
-(defun grid-calc--round-by (round-fn number num_digits)
-  "Helper for rounding functions."
-  (let* ((num (grid-calc--operand number))
-         (digits (grid-calc--operand num_digits))
-         (p (expt 10.0 digits)))
-    (grid-calc--tidy-number (/ (funcall round-fn (* num p)) p))))
-
-(grid-calc-defun ROUND (number num_digits)
-  "Rounds a number to a specified number of digits."
-  (grid-calc--round-by #'grid-format-round number num_digits))
-
-(grid-calc-defun ROUNDUP (number num_digits)
-  "Rounds a number up, away from zero."
-  (let ((num (grid-calc--operand number)))
-    (if (>= num 0)
-        (grid-calc--round-by #'ceiling number num_digits)
-      (grid-calc--round-by #'floor number num_digits))))
-
-(grid-calc-defun ROUNDDOWN (number num_digits)
-  "Rounds a number down, toward zero."
-  (let ((num (grid-calc--operand number)))
-    (if (>= num 0)
-        (grid-calc--round-by #'floor number num_digits)
-      (grid-calc--round-by #'ceiling number num_digits))))
-
-(grid-calc-defun INT (number)
-  "Rounds a number down to the nearest integer."
-  (floor (grid-calc--operand number)))
-
-(grid-calc-defun MOD (number divisor)
-  "Returns the remainder after a number is divided by a divisor."
-  (mod (grid-calc--operand number) (grid-calc--operand divisor)))
-
-(grid-calc-defun ABS (number)
-  "Returns the absolute value of a number."
-  (abs (grid-calc--operand number)))
-
-(grid-calc-defun SQRT (number)
-  "Returns a positive square root."
-  (let ((num (grid-calc--operand number)))
-    (if (< num 0)
-        (signal 'grid-calc-error '("#NUM!"))
-      (grid-calc--tidy-number (sqrt num)))))
-
-(grid-calc-defun POWER (number power)
-  "Returns the result of a number raised to a power."
-  (expt (grid-calc--operand number) (grid-calc--operand power)))
-
-(defun grid-calc--get-numeric-values (values)
-  "From a list of VALUES, return a new list containing only numbers.
-Strings are converted to numbers if possible. Non-numeric values are ignored.
-Uses grid-calc-to-number for consistent conversion."
-  (let ((numbers '()))
-    (dolist (v values)
-      (let ((num (grid-calc-to-number v)))
-        (when (and num (or (numberp v) (grid-calc--numeric v)))
-          (push num numbers))))
-    (nreverse numbers)))
-
-
-
-(defun grid-calc-call-function (model func-name args)
-  "Calls a built-in function."
-  (let ((func (gethash (upcase func-name) grid-calc-functions)))
-    (if func
-        (apply func model args) ; Pass model as first arg
-      (error "Unknown function: %s" func-name))))
-
-;; Math functions
-(defun grid-calc--numbers-among (arguments)
-  "Return the numbers among ARGUMENTS, each a value or a range's values."
-  (grid-calc--get-numeric-values (grid-calc--flatten arguments)))
-
-(grid-calc-defun SUM (&rest arguments)
-  "Sums numbers and ranges. Ignores non-numeric values."
-  (apply #'+ (grid-calc--numbers-among arguments)))
-
-(grid-calc-defun AVERAGE (&rest arguments)
-  "Averages numbers and ranges. Ignores non-numeric values."
-  (let ((numbers (grid-calc--numbers-among arguments)))
-    (if (null numbers) 0
-      (grid-calc--tidy-number
-       (/ (apply #'+ numbers) (float (length numbers)))))))
-
-(grid-calc-defun COUNT (&rest arguments)
-  "Counts the numbers among values and ranges."
-  (length (grid-calc--numbers-among arguments)))
-
-(grid-calc-defun MAX (&rest arguments)
-  "Returns the largest of numbers and ranges. Ignores non-numeric values."
-  (let ((numbers (grid-calc--numbers-among arguments)))
-    (if (null numbers) 0
-      (apply #'max numbers))))
-
-(grid-calc-defun MIN (&rest arguments)
-  "Returns the smallest of numbers and ranges. Ignores non-numeric values."
-  (let ((numbers (grid-calc--numbers-among arguments)))
-    (if (null numbers) 0
-      (apply #'min numbers))))
-
-(grid-calc-defun MEDIAN (&rest arguments)
-  "Returns the middle of numbers and ranges. Ignores non-numeric values."
-  (let* ((numbers (sort (grid-calc--numbers-among arguments) #'<))
-         (count (length numbers)))
-    (cond ((zerop count) (signal 'grid-calc-error '("#NUM!")))
-          ((cl-oddp count) (nth (/ count 2) numbers))
-          (t (grid-calc--tidy-number
-              (/ (+ (nth (1- (/ count 2)) numbers) (nth (/ count 2) numbers))
-                 2.0))))))
-
-(defun grid-calc--nth-of (array k descending)
-  "Return the K-th number of ARRAY, counting from the largest if DESCENDING."
-  (let ((numbers (sort (grid-calc--numbers-among (list array))
-                       (if descending #'> #'<)))
-        (k (grid-calc--operand k)))
-    (unless (and (integerp k) (<= 1 k (length numbers)))
-      (signal 'grid-calc-error '("#NUM!")))
-    (nth (1- k) numbers)))
-
-(grid-calc-defun LARGE (array k)
-  "Returns the K-th largest number of a range."
-  (grid-calc--nth-of array k t))
-
-(grid-calc-defun SMALL (array k)
-  "Returns the K-th smallest number of a range."
-  (grid-calc--nth-of array k nil))
-
-(grid-calc-defun RANK (number ref &optional order)
-  "Returns the rank of a number among the numbers of a range.
-The largest is first, or the smallest when ORDER is not 0."
-  (let ((number (grid-calc--operand number))
-        (numbers (grid-calc--numbers-among (list ref)))
-        (ascending (and order (/= (grid-calc--operand order) 0))))
-    (unless (cl-member number numbers :test #'=)
-      (error "Value not available in RANK"))
-    (1+ (cl-count-if (lambda (other)
-                       (if ascending (< other number) (> other number)))
-                     numbers))))
-
-(grid-calc-defun SUMPRODUCT (&rest arrays)
-  "Multiplies ranges of the same size cell by cell and sums the products.
-Cells that hold no number count as 0."
-  (let* ((lists (mapcar (lambda (array) (if (listp array) array (list array)))
-                        arrays))
-         (count (length (car lists))))
-    (unless (and lists (cl-every (lambda (list) (= (length list) count)) lists))
-      (signal 'grid-calc-error '("#VALUE!")))
-    (grid-calc--tidy-number
-     (cl-loop for index below count
-              sum (cl-loop with product = 1
-                           for list in lists
-                           do (setq product
-                                    (* product
-                                       (or (grid-calc--numeric (nth index list))
-                                           (and (numberp (nth index list))
-                                                (nth index list))
-                                           0)))
-                           finally return product)))))
-
-(grid-calc-defun TRUNC (number &optional num_digits)
-  "Cuts a number off at a number of digits, toward zero."
-  (grid-calc--round-by #'truncate number num_digits))
-
-(defun grid-calc--to-multiple (round-fn number significance)
-  "Round NUMBER to a multiple of SIGNIFICANCE with ROUND-FN."
-  (let ((number (grid-calc--operand number))
-        (significance (if significance (grid-calc--operand significance) 1)))
-    (cond ((zerop number) 0)
-          ((zerop significance) (error "Division by zero"))
-          (t (grid-calc--tidy-number
-              (/ (grid-format-round
-                  (* (funcall round-fn (/ (float number) significance))
-                     significance 1e10))
-                 1e10))))))
-
-(grid-calc-defun FLOOR (number &optional significance)
-  "Rounds a number down to a multiple of SIGNIFICANCE."
-  (grid-calc--to-multiple #'floor number significance))
-
-(grid-calc-defun CEILING (number &optional significance)
-  "Rounds a number up to a multiple of SIGNIFICANCE."
-  (grid-calc--to-multiple #'ceiling number significance))
-
-(grid-calc-defun MROUND (number multiple)
-  "Rounds a number to the nearest multiple of MULTIPLE."
-  (grid-calc--to-multiple #'grid-format-round number multiple))
-
-(grid-calc-defun COUNTIF (range criteria)
-  "Counts the number of cells within a range that meet the given criteria.
-
-CRITERIA can be a number, a string, or a string with a comparison operator
-like \">10\" or \"<>0\"."
-  (let ((predicate (grid-calc--parse-criteria criteria)))
-    (cl-count-if predicate range)))
-
-(grid-calc-defun SUMIF (criteria-range criteria &optional sum-range)
-  "Adds the cells specified by a given criteria.
-
-CRITERIA-RANGE is the range of cells to evaluate against the CRITERIA.
-SUM-RANGE (optional) is the range of cells to sum. If omitted, CRITERIA-RANGE is used.
-
-CRITERIA can be a number, a string, or a string with a comparison operator
-like \">10\" or \"<>0\"."
-  (let* ((predicate (grid-calc--parse-criteria criteria))
-         (range-to-sum (or sum-range criteria-range))
-         (total 0))
-    (when (/= (length criteria-range) (length range-to-sum))
-      (error "SUMIF ranges must have the same size"))
-    (dotimes (i (length criteria-range))
-      (when (funcall predicate (nth i criteria-range))
-        (setq total (+ total (grid-calc-to-number (nth i range-to-sum))))))
-    total))
-
-(defun grid-calc--process-ifs-args (args)
-  "Helper to parse arguments for SUMIFS and COUNTIFS.
-Returns a list of (list-of-values . predicate-lambda)."
-  (let ((processed-args '())
-        (remaining-args args))
-    (while remaining-args
-      (let* ((range (car remaining-args))
-             (criteria (cadr remaining-args))
-             (predicate (grid-calc--parse-criteria criteria)))
-        (unless (listp range) (error "Criteria range must be a valid range"))
-        (push (cons range predicate) processed-args)
-        (setq remaining-args (cddr remaining-args))))
-    (nreverse processed-args)))
-
-(grid-calc-defun COUNTIFS (&rest args)
-  "Counts the number of cells specified by a given set of conditions or criteria."
-  (when (oddp (length args))
-    (error "COUNTIFS requires an even number of arguments."))
-  (let* ((parsed-pairs (grid-calc--process-ifs-args args))
-         (num-rows (length (car (car parsed-pairs)))) ; Length of the first range
-         (count 0))
-    (dotimes (i num-rows)
-      (let ((all-match t))
-        (cl-dolist (pair parsed-pairs)
-          (let* ((range (car pair))
-                 (predicate (cdr pair)))
-            (unless (funcall predicate (nth i range))
-              (setq all-match nil)
-              (cl-return)))) ; Break inner loop
-        (when all-match
-          (setq count (1+ count)))))
-    count))
-
-(grid-calc-defun SUMIFS (sum_range &rest args)
-  "Adds the cells in a range that meet multiple criteria."
-  (when (oddp (length args))
-    (error "SUMIFS requires an odd number of arguments after sum_range."))
-  (let* ((parsed-pairs (grid-calc--process-ifs-args args))
-         (num-rows (length sum_range))
-         (total 0))
-    ;; Check that all ranges have the same length
-    (dolist (pair parsed-pairs)
-      (when (/= (length (car pair)) num-rows)
-        (error "All ranges in SUMIFS must have the same size.")))
-    
-    (dotimes (i num-rows)
-      (let ((all-match t))
-        (cl-dolist (pair parsed-pairs)
-          (let* ((range (car pair))
-                 (predicate (cdr pair)))
-            (unless (funcall predicate (nth i range))
-              (setq all-match nil)
-              (cl-return)))) ; Break inner loop
-        (when all-match
-          (setq total (+ total (grid-calc-to-number (nth i sum_range)))))))
-    total))
-
-(grid-calc-defun MATCH (lookup-value lookup-array &optional match-type)
-  "Finds the position of a value in a single-row or single-column range.
-NOTE: Only exact match (match-type = 0) is currently implemented."
-  (setq match-type (or match-type 0))
-  (when (/= match-type 0)
-    (error "MATCH only supports exact match (match-type 0) at this time"))
-  (let ((pos (cl-position lookup-value lookup-array
-                          :test #'grid-calc--equal)))
-    (if pos
-        (1+ pos) ; Return 1-based index
-      (error "Value not available in MATCH"))))
-
-;; Logical functions
-
-(defun grid-calc--every (pred list)
-  "Returns non-nil if PRED is true for all elements in LIST."
-  (let ((result t))
-    (catch 'found-false
-      (dolist (item list)
-        (unless (funcall pred item)
-          (setq result nil)
-          (throw 'found-false nil)))
-      result)))
-
-(defun grid-calc--some (pred list)
-  "Returns non-nil if PRED is true for any element in LIST."
-  (let ((result nil))
-    (catch 'found-true
-      (dolist (item list)
-        (when (funcall pred item)
-          (setq result t)
-          (throw 'found-true t)))
-      result)))
-
-(grid-calc-defun AND (&rest conditions) "Logical AND." (grid-calc--every #'grid-calc-to-boolean conditions))
-(grid-calc-defun OR (&rest conditions) "Logical OR." (grid-calc--some #'grid-calc-to-boolean conditions))
-
-;; Text functions
-;; Text functions
-(grid-calc-defun CONCATENATE (&rest strings)
-  "Concatenates strings."
-  (mapconcat #'grid-calc-to-string strings ""))
-
-(grid-calc-defun LEN (string)
-  "Returns the length of a string."
-  (length (grid-calc-to-string string)))
-
-(grid-calc-defun TRIM (text)
-  "Removes leading and trailing whitespace from a text string."
-  (string-trim (grid-calc-to-string text)))
-
-(grid-calc-defun LEFT (text &optional num_chars)
-  "Returns a specified number of characters from the start of a text string."
-  (let* ((str (grid-calc-to-string text))
-         (len (length str))
-         (num (if num_chars (grid-calc-to-number num_chars) 1)))
-    (when (> num len) (setq num len))
-    (substring str 0 num)))
-
-(grid-calc-defun RIGHT (text &optional num_chars)
-  "Returns a specified number of characters from the end of a text string."
-  (let* ((str (grid-calc-to-string text))
-         (len (length str))
-         (num (if num_chars (grid-calc-to-number num_chars) 1)))
-    (when (> num len) (setq num len))
-    (substring str (- len num))))
-
-(grid-calc-defun MID (text start_num num_chars)
-  "Returns a specific number of characters from a text string,
-starting at the position you specify."
-  (let* ((str (grid-calc-to-string text))
-         (start (1- (grid-calc-to-number start_num))) ; 1-based to 0-based
-         (num (grid-calc-to-number num_chars)))
-    (substring str start (+ start num))))
-
-(grid-calc-defun FIND (find_text within_text &optional start_num)
-  "Finds one text string within a second text string, and returns the
-number of the starting position of the first text string. Case-sensitive."
-  (let* ((find-str (grid-calc-to-string find_text))
-         (within-str (grid-calc-to-string within_text))
-         (start (if start_num (1- (grid-calc-to-number start_num)) 0)))
-    (let ((pos (string-match (regexp-quote find-str) within-str start)))
-      (if pos
-          (1+ pos) ; Return 1-based position
-        (error "Substring not found in FIND")))))
-
-(grid-calc-defun SEARCH (find_text within_text &optional start_num)
-  "Finds one text string within a second text string, and returns the
-number of the starting position of the first text string. Not case-sensitive."
-  (let* ((find-str (grid-calc-to-string find_text))
-         (within-str (grid-calc-to-string within_text))
-         (start (if start_num (1- (grid-calc-to-number start_num)) 0)))
-    (let ((case-fold-search t) ; The only difference from FIND
-          (pos (string-match (regexp-quote find-str) within-str start)))
-      (if pos
-          (1+ pos) ; Return 1-based position
-        (error "Substring not found in SEARCH")))))
-
-(grid-calc-defun SUBSTITUTE (text old_text new_text &optional instance_num)
-  "Substitutes new_text for old_text in a text string.
-NOTE: instance_num is not yet supported; all instances are replaced."
-  (when instance_num
-    (message "SUBSTITUTE's instance_num argument is not yet supported."))
-  (let ((str (grid-calc-to-string text))
-        (old (grid-calc-to-string old_text))
-        (new (grid-calc-to-string new_text)))
-    (replace-regexp-in-string (regexp-quote old) new str t t)))
-
-(grid-calc-defun LEN (string)
-  "Returns the length of a string."
-  (length (grid-calc-to-string string)))
-
-;; Date/Time functions.  A date is a serial number: days since 1899-12-30,
-;; the time of day as its fraction.  Give the cell a date format to read it.
-(grid-calc-defun NOW ()
-  "Returns this moment as a serial number."
-  (grid-format-now))
-
-(grid-calc-defun TODAY ()
-  "Returns today's date as a serial number."
-  (grid-format-today))
-
-(grid-calc-defun DATE (year month day)
-  "Returns the serial number of a date; months and days carry over."
-  (grid-format-date-to-serial (truncate (grid-calc-to-number year))
-                              (truncate (grid-calc-to-number month))
-                              (truncate (grid-calc-to-number day))))
-
-(grid-calc-defun DATEVALUE (text)
-  "Returns the serial number of a date written as text, year first."
-  (or (grid-format-parse-date (grid-calc-to-string text))
-      (error "Value cannot be read as a date: %s" text)))
-
-(grid-calc-defun YEAR (date)
-  "Returns the year of a date."
-  (nth 0 (grid-format-serial-to-date (grid-calc--to-serial date))))
-
-(grid-calc-defun MONTH (date)
-  "Returns the month of a date."
-  (nth 1 (grid-format-serial-to-date (grid-calc--to-serial date))))
-
-(grid-calc-defun DAY (date)
-  "Returns the day of the month of a date."
-  (nth 2 (grid-format-serial-to-date (grid-calc--to-serial date))))
-
-(grid-calc-defun HOUR (date)
-  "Returns the hour of a time."
-  (nth 3 (grid-format-serial-to-date (grid-calc--to-serial date))))
-
-(grid-calc-defun MINUTE (date)
-  "Returns the minute of a time."
-  (nth 4 (grid-format-serial-to-date (grid-calc--to-serial date))))
-
-(grid-calc-defun WEEKDAY (date &optional return_type)
-  "Returns the day of the week corresponding to a date.
-return_type 1 (default): Sunday=1 through Saturday=7.
-return_type 2: Monday=1 through Sunday=7."
-  (let ((dow (nth 6 (grid-format-serial-to-date (grid-calc--to-serial date))))
-        (type (if return_type (grid-calc-to-number return_type) 1)))
-    (pcase type
-      (1 (1+ dow))
-      (2 (if (= dow 0) 7 dow))
-      (_ (error "Unsupported WEEKDAY return_type: %s" type)))))
-
-(defun grid-calc--add-months (date months)
-  "Return (YEAR MONTH DAY) of DATE with MONTHS added to its month."
-  (pcase-let ((`(,year ,month ,day)
-               (grid-format-serial-to-date (grid-calc--to-serial date))))
-    (list year (+ month (truncate (grid-calc-to-number months))) day)))
-
-(grid-calc-defun EOMONTH (start_date months)
-  "Returns the last day of the month MONTHS months from a date."
-  (pcase-let ((`(,year ,month ,_) (grid-calc--add-months start_date months)))
-    (grid-format-date-to-serial year (1+ month) 0)))
-
-(grid-calc-defun EDATE (start_date months)
-  "Returns the same day of the month MONTHS months from a date.
-A day the target month does not have becomes its last day."
-  (pcase-let ((`(,year ,month ,day) (grid-calc--add-months start_date months)))
-    (min (grid-format-date-to-serial year month day)
-         (grid-format-date-to-serial year (1+ month) 0))))
-
-(grid-calc-defun DAYS (end_date start_date)
-  "Returns the number of days from START_DATE to END_DATE."
-  (- (floor (grid-calc--to-serial end_date))
-     (floor (grid-calc--to-serial start_date))))
-
-(grid-calc-defun VALUE (text)
-  "Returns the number that text reads as; a date gives its serial number."
-  (let ((text (substring-no-properties (grid-calc-to-string text))))
-    (or (grid-calc--numeric text)
-        (let ((typed (grid-format-parse-entry text)))
-          (and typed (string-to-number (car typed))))
-        (error "Value cannot be read as a number: %s" text))))
-
-(grid-calc-defun TEXT (value format_text)
-  "Returns a number written after a format code such as 0.00 or yyyy-mm-dd."
-  (let ((format (grid-format-from-code (grid-calc-to-string format_text))))
-    (when (eq (car-safe format) 'code)
-      (error "Unsupported format in TEXT: %s" format_text))
-    (grid-format-display (if (eq (car-safe format) 'date)
-                             (grid-calc--to-serial value)
-                           value)
-                         format)))
-
-;; Lookup functions (Placeholder)
-(grid-calc-defun VLOOKUP (lookup-value table-range col-index exact-match)
-  "Vertical lookup function (Placeholder)."
-  (error "VLOOKUP not yet implemented."))
-
-;;; Functions giving several values
-;;
-;; A range is the list of its values, and so is what these functions
-;; give.  They work along one row or one column, and what they give is
-;; for another function to take in, as =SUM(UNIQUE(A2:A9)): a cell shows
-;; one value, so a formula that ends with several is #VALUE!.
-
-(defun grid-calc--each (function left right)
-  "Apply FUNCTION to LEFT and RIGHT, or to each pair when they are lists.
-A list against a single value pairs every element with that value; two
-lists pair element by element and must be as long as each other."
-  (cond
-   ((and (consp left) (consp right))
-    (unless (= (length left) (length right))
-      (signal 'grid-calc-error '("#VALUE!")))
-    (cl-mapcar function left right))
-   ((consp left) (mapcar (lambda (l) (funcall function l right)) left))
-   ((consp right) (mapcar (lambda (r) (funcall function left r)) right))
-   (t (funcall function left right))))
-
-(defun grid-calc--check-one-line (model ast)
-  "Signal #VALUE! when AST is a range more than one row high and wide."
-  (let ((ast (grid-calc--deref ast)))
-    (when (eq (car-safe ast) 'RANGE)
-      (pcase-let ((`(,_ ,top ,bottom ,left ,right)
-                   (grid-calc--range-bounds model (cadr ast) (caddr ast))))
-        (when (and (< top bottom) (< left right))
-          (signal 'grid-calc-error '("#VALUE!")))))))
-
-(defun grid-calc--as-list (value)
-  "Return VALUE as a list of values."
-  (if (consp value) value (list value)))
-
-(defun grid-calc--sort-before-p (a b)
-  "Return non-nil when A sorts before B.
-Numbers come first, then text without regard to case, then blanks."
-  (let ((a-blank (or (null a) (equal a "")))
-        (b-blank (or (null b) (equal b "")))
-        (a-number (grid-calc--numeric a))
-        (b-number (grid-calc--numeric b)))
-    (cond (a-blank nil)
-          (b-blank t)
-          ((and a-number b-number) (< a-number b-number))
-          (a-number t)
-          (b-number nil)
-          (t (string< (downcase (grid-calc-to-string a))
-                      (downcase (grid-calc-to-string b)))))))
-
-(grid-calc-defun UNIQUE (values)
-  "Returns the values of a row or column once each, in order of appearance.
-Text compares without regard to case."
-  (let (seen)
-    (dolist (value (grid-calc--as-list values))
-      (unless (cl-member value seen :test #'grid-calc--equal)
-        (push value seen)))
-    (nreverse seen)))
-
-(grid-calc-defun SORT (values &optional sort_index sort_order)
-  "Returns the values of a row or column sorted.
-SORT_INDEX can only be 1, the one line there is.  SORT_ORDER is 1 for
-ascending, the default, or -1 for descending; blanks stay last."
-  (unless (memq (and sort_index (grid-calc--operand sort_index)) '(nil 1))
-    (signal 'grid-calc-error '("#VALUE!")))
-  (let* ((order (if sort_order (grid-calc--operand sort_order) 1))
-         (blank (lambda (v) (or (null v) (equal v ""))))
-         (values (grid-calc--as-list values))
-         (filled (cl-remove-if blank values))
-         (blanks (cl-remove-if-not blank values)))
-    (unless (memq order '(1 -1))
-      (signal 'grid-calc-error '("#VALUE!")))
-    (append (if (= order 1)
-                (cl-stable-sort (copy-sequence filled) #'grid-calc--sort-before-p)
-              (cl-stable-sort (copy-sequence filled)
-                              (lambda (a b) (grid-calc--sort-before-p b a))))
-            blanks)))
-
-(grid-calc-defun FILTER (values include &optional if_empty)
-  "Returns the values whose matching element of INCLUDE is true.
-INCLUDE is as long as VALUES, as A2:A9=\"x\" is for B2:B9.  When nothing
-is kept the result is IF_EMPTY, or #CALC! without it."
-  (let ((values (grid-calc--as-list values))
-        (include (grid-calc--as-list include)))
-    (unless (= (length values) (length include))
-      (signal 'grid-calc-error '("#VALUE!")))
-    (or (cl-loop for value in values
-                 for keep in include
-                 when (and keep (not (equal keep ""))
-                           (not (eql (grid-calc--numeric keep) 0)))
-                 collect value)
-        (if if_empty
-            (grid-calc--as-list if_empty)
-          (signal 'grid-calc-error '("#CALC!"))))))
+(provide 'grid-table-calc)
+
+(require 'grid-table-calc-logic)
+(require 'grid-table-calc-lookup)
+(require 'grid-table-calc-math)
+(require 'grid-table-calc-stats)
+(require 'grid-table-calc-dist)
+(require 'grid-table-calc-text)
+(require 'grid-table-calc-date)
+(require 'grid-table-calc-finance)
+(require 'grid-table-calc-engineering)
 
 (grid-calc-declare-known-functions)
 
-(provide 'grid-table-calc)
+;;; grid-table-calc.el ends here
