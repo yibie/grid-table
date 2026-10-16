@@ -628,6 +628,12 @@ the header row."
     (dolist (merge merges)
       (setq rows (max rows (1+ (nth 2 merge)))
             cols (max cols (1+ (nth 3 merge)))))
+    ;; An array formula fills its range, written cells or not.
+    (dolist (cell cells)
+      (when-let* ((range (plist-get (nthcdr 3 cell) :array))
+                  (box (grid-chart-svg-parse-range range)))
+        (setq rows (max rows (1+ (nth 2 box)))
+              cols (max cols (1+ (nth 3 box))))))
     ;; A note may sit on an empty cell, and a chart over empty ones
     ;; beside the data; the grid keeps them, so the chart stays put.
     (dolist (note (plist-get data :notes))
@@ -653,6 +659,15 @@ the header row."
       (dolist (cell cells)
         (aset (aref table (nth 0 cell)) (nth 1 cell)
               (grid-table-xlsx--raw cell)))
+      ;; The other cells of an array formula's range hold the values it
+      ;; last gave; the formula fills them again.
+      (dolist (cell cells)
+        (when-let* ((range (plist-get (nthcdr 3 cell) :array))
+                    (box (grid-chart-svg-parse-range range)))
+          (cl-loop for row from (nth 0 box) to (min (nth 2 box) (1- rows)) do
+                   (cl-loop for col from (nth 1 box) to (min (nth 3 box) (1- cols))
+                            unless (and (= row (nth 0 cell)) (= col (nth 1 cell)))
+                            do (aset (aref table row) col "")))))
       (let* ((values (mapcar (lambda (row) (append row nil)) table))
              ;; Formulas read as Excel reads a file's.
              (source (let ((grid-calc-legacy-arrays t))
@@ -714,7 +729,16 @@ the header row."
          source (delq nil (mapcar (lambda (entry)
                                     (grid-table-xlsx--chart source entry))
                                   (plist-get data :charts))))
-        (grid-model-set-legacy model t)
+        ;; The formulas the file holds read as Excel reads them; one
+        ;; typed in afterwards is a formula of today, and may spill.
+        (grid-model-set-legacy
+         model
+         (let ((cols (grid-data-model-cols model))
+               (cells (grid-data-model-cells model))
+               found)
+           (dotimes (index (length cells) found)
+             (when (grid-calc--formula-p (grid-cell-raw-input (aref cells index)))
+               (push (cons (/ index cols) (% index cols)) found)))))
         (when arrays
           (grid-model-set-arrays model arrays)
           (grid-model-recalculate-all model))
@@ -922,7 +946,11 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
                         (if (and format (not (plist-get style :format)))
                             (plist-put (copy-sequence style) :format format)
                           style))
-                      (grid-model-array-at (gethash :model source) row col))))
+                      ;; A formula that spills is saved as an array
+                      ;; formula over the cells it fills.
+                      (let ((model (gethash :model source)))
+                        (or (grid-model-array-at model row col)
+                            (grid-calc-spill-range model row col))))))
           (push record records))
         (let ((style (grid-get-style-at source row col)))
           (dolist (entry '((:note . "N") (:link . "L")))

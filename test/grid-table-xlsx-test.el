@@ -228,6 +228,31 @@
                        '(text)))
         (should (equal (grid-get-computed-value-at back 6 1) 3))))))
 
+(ert-deftest grid-table-xlsx-test-spills-and-array-formulas ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let ((source (make-default-data-source
+                   '("" "" "")
+                   '(("=SEQUENCE(3,2)" "" "") ("" "" "") ("" "" "")
+                     ("=SUM(A1:B3)" "" "")))))
+      (cl-flet ((shown (source)
+                  (cl-loop for row below 4 collect
+                           (cl-loop for col below 2 collect
+                                    (grid-get-display-value-at source row col)))))
+        (should (equal (shown source)
+                       '(("1" "2") ("3" "4") ("5" "6") ("21" ""))))
+        ;; A formula that spills is saved as an array formula over the
+        ;; cells it fills, which reads back filling them the same.
+        (grid-table-xlsx-write-data-source source file "Spill")
+        (let ((back (grid-table-xlsx-create-data-source file "Spill")))
+          (should (equal (shown back) (shown source)))
+          (should (equal (grid-model-array-at (gethash :model back) 0 0) "A1:B3"))
+          (should (equal (grid-get-raw-value-at back 1 0) ""))
+          ;; Saved again, it stays so.
+          (grid-table-xlsx-write-data-source back file "Spill")
+          (should (equal (shown (grid-table-xlsx-create-data-source file "Spill"))
+                         (shown source))))))))
+
 (ert-deftest grid-table-xlsx-test-round-trip ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

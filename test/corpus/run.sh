@@ -36,18 +36,19 @@ if [ "${1:-}" = --one ]; then
     stage=crash
     [ "$code" = 124 ] && stage=timeout
     tail -c 400 "$results/$id.log" >"$results/$id.tail"
+    CORPUS_FILE=$file CORPUS_STAGE=$stage CORPUS_EXIT=$code \
+    CORPUS_SECONDS=$(( $(date +%s) - start )) CORPUS_TAIL=$results/$id.tail \
     "$EMACS" -Q --batch --eval '
-(require (quote json))
-(let ((args command-line-args-left))
-  (setq command-line-args-left nil)
+(progn
+  (require (quote json))
   (princ (json-encode
-          (list :file (nth 0 args) :failed-stage (nth 1 args)
-                :exit (string-to-number (nth 2 args))
-                :seconds (string-to-number (nth 3 args))
+          (list :file (getenv "CORPUS_FILE")
+                :failed-stage (getenv "CORPUS_STAGE")
+                :exit (string-to-number (getenv "CORPUS_EXIT"))
+                :seconds (string-to-number (getenv "CORPUS_SECONDS"))
                 :error (with-temp-buffer
-                         (insert-file-contents (nth 4 args))
-                         (buffer-string))))))' \
-      "$file" "$stage" "$code" $(( $(date +%s) - start )) "$results/$id.tail" >"$record"
+                         (insert-file-contents (getenv "CORPUS_TAIL"))
+                         (buffer-string))))))' >"$record"
     rm -f "$results/$id.tail"
   fi
   rm -f "$results/$id.log"
