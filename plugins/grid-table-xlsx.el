@@ -149,8 +149,37 @@ meant it to be used."
         (grid-table-xlsx-module-sheets (expand-file-name file)))))
 
 (defconst grid-table-xlsx--future-functions
-  '(("XLOOKUP" . "_xlfn.") ("IFS" . "_xlfn.") ("UNIQUE" . "_xlfn.")
-    ("DAYS" . "_xlfn.") ("FILTER" . "_xlfn._xlws.") ("SORT" . "_xlfn._xlws."))
+  (append
+   '(("FILTER" . "_xlfn._xlws.") ("SORT" . "_xlfn._xlws."))
+   (mapcar
+    (lambda (name) (cons name "_xlfn."))
+    '("ACOT" "ACOTH" "AGGREGATE" "ANCHORARRAY" "ARABIC" "ARRAYTOTEXT" "BASE"
+      "BETA.DIST" "BETA.INV" "BINOM.DIST" "BINOM.DIST.RANGE" "BINOM.INV"
+      "BITAND" "BITLSHIFT" "BITOR" "BITRSHIFT" "BITXOR" "BYCOL" "BYROW"
+      "CEILING.MATH" "CEILING.PRECISE" "CHISQ.DIST" "CHISQ.DIST.RT"
+      "CHISQ.INV" "CHISQ.INV.RT" "CHISQ.TEST" "CHOOSECOLS" "CHOOSEROWS"
+      "COMBINA" "CONCAT" "CONFIDENCE.NORM" "CONFIDENCE.T" "COT" "COTH"
+      "COVARIANCE.P" "COVARIANCE.S" "CSC" "CSCH" "DAYS" "DECIMAL" "DROP"
+      "ERF.PRECISE" "ERFC.PRECISE" "EXPAND" "EXPON.DIST" "F.DIST" "F.DIST.RT"
+      "F.INV" "F.INV.RT" "F.TEST" "FILTERXML" "FLOOR.MATH" "FLOOR.PRECISE"
+      "FORECAST.ETS" "FORECAST.ETS.CONFINT" "FORECAST.ETS.SEASONALITY"
+      "FORECAST.ETS.STAT" "FORECAST.LINEAR" "FORMULATEXT" "GAMMA" "GAMMA.DIST"
+      "GAMMA.INV" "GAMMALN.PRECISE" "GAUSS" "GROUPBY" "HSTACK" "HYPGEOM.DIST"
+      "IFNA" "IFS" "IMCOSH" "IMCOT" "IMCSC" "IMCSCH" "IMSEC" "IMSECH" "IMSINH"
+      "IMTAN" "ISFORMULA" "ISOMITTED" "ISOWEEKNUM" "LAMBDA" "LET"
+      "LOGNORM.DIST" "LOGNORM.INV" "MAKEARRAY" "MAP" "MAXIFS" "MINIFS"
+      "MODE.MULT" "MODE.SNGL" "MUNIT" "NEGBINOM.DIST" "NETWORKDAYS.INTL"
+      "NORM.DIST" "NORM.INV" "NORM.S.DIST" "NORM.S.INV" "NUMBERVALUE"
+      "PDURATION" "PERCENTILE.EXC" "PERCENTILE.INC" "PERCENTOF"
+      "PERCENTRANK.EXC" "PERCENTRANK.INC" "PERMUTATIONA" "PHI" "PIVOTBY"
+      "POISSON.DIST" "QUARTILE.EXC" "QUARTILE.INC" "RANDARRAY" "RANK.AVG"
+      "RANK.EQ" "REDUCE" "REGEXEXTRACT" "REGEXREPLACE" "REGEXTEST" "RRI"
+      "SCAN" "SEC" "SECH" "SEQUENCE" "SHEET" "SHEETS" "SINGLE" "SKEW.P"
+      "SORTBY" "STDEV.P" "STDEV.S" "SWITCH" "T.DIST" "T.DIST.2T" "T.DIST.RT"
+      "T.INV" "T.INV.2T" "T.TEST" "TAKE" "TEXTAFTER" "TEXTBEFORE" "TEXTJOIN"
+      "TEXTSPLIT" "TOCOL" "TOROW" "TRIMRANGE" "UNICHAR" "UNICODE" "UNIQUE"
+      "VALUETOTEXT" "VAR.P" "VAR.S" "VSTACK" "WEIBULL.DIST" "WORKDAY.INTL"
+      "WRAPCOLS" "WRAPROWS" "XLOOKUP" "XMATCH" "XOR" "Z.TEST")))
   "Functions a workbook names with a prefix, as Excel 2007 did not know them.
 Excel and LibreOffice read the bare name as an unknown function.")
 
@@ -167,40 +196,178 @@ A string is in double quotes, with a doubled quote inside it."
     (push (funcall function (substring formula start)) parts)
     (apply #'concat (nreverse parts))))
 
+(defun grid-table-xlsx--operand-end (formula start)
+  "Return where the operand at START in FORMULA ends.
+It is a reference, a name, a function call or a group in parentheses."
+  (let ((pos start) (end (length formula)) (done nil))
+    (while (and (not done) (< pos end))
+      (let ((char (aref formula pos)))
+        (cond ((eq char ?\()
+               (setq pos (1+ (or (grid-calc-closing-paren formula pos) (1- end)))))
+              ((eq char ?\[)
+               (let ((depth 0))
+                 (while (and (< pos end)
+                             (progn (pcase (aref formula pos)
+                                      (?\[ (setq depth (1+ depth)))
+                                      (?\] (setq depth (1- depth))))
+                                    (> depth 0)))
+                   (setq pos (1+ pos)))
+                 (setq pos (1+ pos))))
+              ((eq char ?')
+               (setq pos (1+ pos))
+               (while (and (< pos end)
+                           (or (/= (aref formula pos) ?')
+                               (and (< (1+ pos) end) (= (aref formula (1+ pos)) ?')
+                                    (setq pos (1+ pos)))))
+                 (setq pos (1+ pos)))
+               (setq pos (1+ pos)))
+              ((string-match-p "[[:alnum:]_.$!:\\]" (string char))
+               (setq pos (1+ pos)))
+              (t (setq done t)))))
+    pos))
+
+(defun grid-table-xlsx--outside-brackets (text function)
+  "Return TEXT with FUNCTION applied to each part outside square brackets.
+What is in brackets names a table's columns."
+  (let ((parts nil) (start 0) (pos 0) (depth 0))
+    (while (< pos (length text))
+      (pcase (aref text pos)
+        (?\[ (when (= depth 0)
+               (push (funcall function (substring text start pos)) parts)
+               (setq start pos))
+             (setq depth (1+ depth)))
+        (?\] (when (> depth 0)
+               (setq depth (1- depth))
+               (when (= depth 0)
+                 (push (substring text start (1+ pos)) parts)
+                 (setq start (1+ pos))))))
+      (setq pos (1+ pos)))
+    (push (if (> depth 0) (substring text start)
+            (funcall function (substring text start)))
+          parts)
+    (apply #'concat (nreverse parts))))
+
+(defun grid-table-xlsx--at-as-single (formula)
+  "Return FORMULA with each @X written SINGLE(X), as a workbook keeps it.
+An @ inside a table's brackets, as in T[@Qty], names the row instead."
+  (let ((pos 0) (quote nil) (depth 0))
+    (while (< pos (length formula))
+      (let ((char (aref formula pos)))
+        (cond (quote (when (eq char quote) (setq quote nil)))
+              ((memq char '(?\" ?')) (setq quote char))
+              ((eq char ?\[) (setq depth (1+ depth)))
+              ((eq char ?\]) (setq depth (max 0 (1- depth))))
+              ((and (eq char ?@) (= depth 0))
+               (let ((end (grid-table-xlsx--operand-end formula (1+ pos))))
+                 (setq formula (concat (substring formula 0 pos)
+                                       "SINGLE(" (substring formula (1+ pos) end) ")"
+                                       (substring formula end))))))
+        (setq pos (1+ pos))))
+    formula))
+
+(defun grid-table-xlsx--spill-as-anchor (formula)
+  "Return FORMULA with each A1# written ANCHORARRAY(A1), as a workbook
+keeps it.  A # in a string or a table's brackets stays as it is."
+  (let ((pos 0) (quote nil) (depth 0)
+        (reference "\\(?:\\(?:'\\(?:[^']\\|''\\)+'\\|[A-Za-z0-9_.]+\\)!\\)?\\$?[A-Za-z]\\{1,3\\}\\$?[0-9]+\\'"))
+    (while (< pos (length formula))
+      (let ((char (aref formula pos)))
+        (cond (quote (when (eq char quote) (setq quote nil)))
+              ((eq char ?\") (setq quote char))
+              ((eq char ?\[) (setq depth (1+ depth)))
+              ((eq char ?\]) (setq depth (max 0 (1- depth))))
+              ((and (eq char ?#) (= depth 0)
+                    (string-match reference (substring formula 0 pos)))
+               (let ((start (match-beginning 0)))
+                 (setq formula (concat (substring formula 0 start)
+                                       "ANCHORARRAY(" (substring formula start pos) ")"
+                                       (substring formula (1+ pos)))
+                       pos (+ pos (length "ANCHORARRAY()") -1)))))
+        (setq pos (1+ pos))))
+    formula))
+
+(defun grid-table-xlsx--call-arguments (formula open)
+  "Return the arguments of the call whose parenthesis is at OPEN in FORMULA.
+Each is the text between its commas, as is."
+  (let ((close (or (grid-calc-closing-paren formula open) (length formula)))
+        (pos (1+ open)) (start (1+ open)) (depth 0) (quote nil) (arguments nil))
+    (while (< pos close)
+      (let ((char (aref formula pos)))
+        (cond (quote (when (eq char quote) (setq quote nil)))
+              ((memq char '(?\" ?')) (setq quote char))
+              ((memq char '(?\( ?\{ ?\[)) (setq depth (1+ depth)))
+              ((memq char '(?\) ?\} ?\])) (setq depth (1- depth)))
+              ((and (eq char ?,) (= depth 0))
+               (push (substring formula start pos) arguments)
+               (setq start (1+ pos)))))
+      (setq pos (1+ pos)))
+    (nreverse (cons (substring formula start close) arguments))))
+
+(defun grid-table-xlsx--parameter-names (formula)
+  "Return the names the LET and LAMBDA calls of FORMULA declare."
+  (let ((case-fold-search t) (start 0) (names nil))
+    (while (string-match "\\(?:\\`\\|[^[:alnum:]_.]\\)\\(LET\\|LAMBDA\\)(" formula start)
+      (let* ((let-p (string-equal (upcase (match-string 1 formula)) "LET"))
+             (arguments (butlast (grid-table-xlsx--call-arguments
+                                  formula (1- (match-end 0))))))
+        (cl-loop for argument in arguments
+                 for index from 0
+                 for name = (string-trim argument)
+                 when (and (or (not let-p) (cl-evenp index))
+                           (string-match-p "\\`[[:alpha:]_][[:alnum:]_.]*\\'" name))
+                 do (cl-pushnew (downcase name) names :test #'equal))
+        (setq start (match-end 0))))
+    names))
+
 (defun grid-table-xlsx--prefix-functions (formula)
-  "Return FORMULA, without its =, naming newer functions as a workbook does."
-  (let ((case-fold-search t))
+  "Return FORMULA, without its =, naming newer functions as a workbook does.
+@ becomes SINGLE, A1# ANCHORARRAY(A1), and the names LET and LAMBDA
+declare take _xlpm."
+  (let* ((case-fold-search t)
+         (formula (grid-table-xlsx--at-as-single
+                   (grid-table-xlsx--spill-as-anchor formula)))
+         (parameters (grid-table-xlsx--parameter-names formula)))
     (grid-table-xlsx--outside-strings
      formula
      (lambda (text)
-       (let ((pattern (concat "\\("
-                              (regexp-opt (mapcar #'car grid-table-xlsx--future-functions))
-                              "\\)("))
-             (parts nil) (start 0))
-         (while (string-match pattern text start)
-           (let* ((at (match-beginning 1))
-                  (name (match-string 1 text))
-                  ;; A name only stands alone, not inside a longer one
-                  ;; or after a prefix it already has.
-                  (alone (or (= at 0)
-                             (not (string-match-p "[A-Za-z0-9_.]"
-                                                  (substring text (1- at) at))))))
-             (push (substring text start at) parts)
-             (when alone
-               (push (cdr (assoc (upcase name) grid-table-xlsx--future-functions))
-                     parts))
-             (push name parts)
-             (setq start (match-end 1))))
-         (push (substring text start) parts)
-         (apply #'concat (nreverse parts)))))))
+       (grid-table-xlsx--outside-brackets
+        text
+        (lambda (text)
+          (let ((pattern "[[:alpha:]_][[:alnum:]_.]*")
+                (parts nil) (start 0))
+            (while (string-match pattern text start)
+              (let* ((at (match-beginning 0))
+                     (name (match-string 0 text))
+                     (call (and (< (match-end 0) (length text))
+                                (eq (aref text (match-end 0)) ?\()))
+                     ;; A name only stands alone, not inside a longer one,
+                     ;; after a prefix it already has, or naming a sheet.
+                     (alone (and (or (= at 0)
+                                     (not (memq (aref text (1- at)) '(?$ ?! ?'))))
+                                 (not (and (< (match-end 0) (length text))
+                                           (eq (aref text (match-end 0)) ?!)))))
+                     (prefix (and alone
+                                  (if call
+                                      (cdr (assoc (upcase name)
+                                                  grid-table-xlsx--future-functions))
+                                    (and (member (downcase name) parameters)
+                                         "_xlpm.")))))
+                (push (substring text start at) parts)
+                (when prefix (push prefix parts))
+                (push name parts)
+                (setq start (match-end 0))))
+            (push (substring text start) parts)
+            (apply #'concat (nreverse parts)))))))))
 
 (defun grid-table-xlsx--unprefix-functions (formula)
-  "Return FORMULA with a workbook's function prefixes taken off."
+  "Return FORMULA with a workbook's function and parameter prefixes off.
+SINGLE(X) and ANCHORARRAY(A1) read as @X and A1#, as Excel shows them."
   (let ((case-fold-search t))
-    (grid-table-xlsx--outside-strings
-     formula
-     (lambda (text)
-       (replace-regexp-in-string "_xlfn\\.\\(?:_xlws\\.\\)?" "" text t t)))))
+    (grid-calc-excel-formula-text
+     (grid-table-xlsx--outside-strings
+      formula
+      (lambda (text)
+        (replace-regexp-in-string "_xlfn\\.\\(?:_xlws\\.\\)?\\|_xlpm\\." "" text t t))))))
 
 (defconst grid-table-xlsx--own-formula-regexp
   (concat "\\`=[ \t]*"

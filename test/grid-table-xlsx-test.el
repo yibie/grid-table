@@ -284,6 +284,21 @@ grid reads them back without it."
                   "COUNTA(UNIQUE(SORT(A1:A3)))+LEN(\"FILTER(\")")
                  "COUNTA(_xlfn.UNIQUE(_xlfn._xlws.SORT(A1:A3)))+LEN(\"FILTER(\")"))
   (should (equal (grid-table-xlsx--prefix-functions "MYXLOOKUP(1)") "MYXLOOKUP(1)"))
+  ;; @ is stored as SINGLE, and the names LET declares carry _xlpm.
+  (should (equal (grid-table-xlsx--prefix-functions "@A1:A3*2")
+                 "_xlfn.SINGLE(A1:A3)*2"))
+  (should (equal (grid-table-xlsx--prefix-functions "LET(rate,0.1,A1*rate)+LEN(\"rate\")")
+                 "_xlfn.LET(_xlpm.rate,0.1,A1*_xlpm.rate)+LEN(\"rate\")"))
+  (should (equal (grid-table-xlsx--unprefix-functions "=_xlfn.LET(_xlpm.x,A1,_xlpm.x*2)")
+                 "=LET(x,A1,x*2)"))
+  ;; A1# is stored as ANCHORARRAY, and reads back as Excel shows it.
+  (should (equal (grid-table-xlsx--prefix-functions "SUM(C1#)+@'My Sheet'!A1#")
+                 "SUM(_xlfn.ANCHORARRAY(C1))+_xlfn.SINGLE(_xlfn.ANCHORARRAY('My Sheet'!A1))"))
+  (should (equal (grid-table-xlsx--prefix-functions "\"A1#\"&IFERROR(A1,#N/A)")
+                 "\"A1#\"&IFERROR(A1,#N/A)"))
+  (should (equal (grid-table-xlsx--unprefix-functions
+                  "=SUM(_xlfn.ANCHORARRAY(C1))+_xlfn.SINGLE(A1:A3)")
+                 "=SUM(C1#)+@A1:A3"))
   (should (equal (grid-table-xlsx--unprefix-functions
                   "=_xlfn.XLOOKUP(1,A:A,B:B)+SUM(_xlfn._xlws.FILTER(B:B,A:A=1))")
                  "=XLOOKUP(1,A:A,B:B)+SUM(FILTER(B:B,A:A=1))"))
