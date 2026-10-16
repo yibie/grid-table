@@ -194,38 +194,167 @@ NAMES-BEFORE and NAMES-AFTER are the defined names of the two workbooks."
 ;;; Formulas
 ;;;----------------------------------------------------------------------
 
-(defun grid-table-corpus--formulas (sheets)
-  "Count the formulas of SHEETS and the errors they evaluate to.
-For #NAME? the functions the formula calls are counted too."
-  (let ((formulas 0)
-        (errors (make-hash-table :test 'equal))
-        (functions (make-hash-table :test 'equal)))
-    (pcase-dolist (`(,_ . ,source) sheets)
-      (dotimes (row (grid-get-row-count source))
-        (dotimes (col (grid-get-column-count source))
-          (let ((raw (grid-get-raw-value-at source row col)))
-            (when (and (stringp raw) (string-prefix-p "=" raw))
-              (cl-incf formulas)
-              (let ((value (ignore-errors
-                             (grid-get-computed-value-at source row col))))
-                (when (and (stringp value)
-                           (string-match "\\`#[A-Z/0!?]+" value))
-                  (cl-incf (gethash (match-string 0 value) errors 0))
-                  (when (string-prefix-p "#NAME" value)
-                    (let ((start 0))
-                      (while (string-match "\\([A-Z][A-Z0-9.]*\\)(" raw start)
-                        (cl-incf (gethash (match-string 1 raw) functions 0))
-                        (setq start (match-end 0))))))))))))
+;;;----------------------------------------------------------------------
+;;; Formulas against what the workbook's writer computed
+;;;----------------------------------------------------------------------
+
+(defconst grid-table-corpus--unstable-regexp
+  ;; Not \\_<: the standard syntax table counts = as part of a symbol.
+  (concat "\\(?:\\`\\|[^A-Za-z0-9_.]\\)"
+          (regexp-opt '("NOW" "TODAY" "RAND" "RANDBETWEEN" "RANDARRAY"
+                        "INFO" "CELL"))
+          "("
+          ;; A link to another workbook: [1]Sheet1!A1
+          "\\|\\[[0-9]+\\]")
+  "Matches a formula whose value need not be what it was when written.")
+
+(defun grid-table-corpus--functions (formula)
+  "Return the names of the functions FORMULA calls, once each, in order.
+A formula that calls none gives (\"(operators)\")."
+  (let ((text (replace-regexp-in-string "\"[^\"]*\"" "\"\"" formula))
+        (start 0)
+        names)
+    (while (string-match "\\([A-Za-z_][A-Za-z0-9_.]*\\)(" text start)
+      (cl-pushnew (upcase (match-string 1 text)) names :test #'equal)
+      (setq start (match-end 0)))
+    (or (nreverse names) (list "(operators)"))))
+
+(defun grid-table-corpus--as-cached (value)
+  "Return the computed VALUE in the form the module gives a cached one."
+  (cond ((eq value t) :true)
+        ((null value) :false)
+        ((and (stringp value) (member value grid-calc-error-values))
+         (list :error value))
+        ((stringp value) (substring-no-properties value))
+        (t value)))
+
+(defun grid-table-corpus--agree-p (computed cached)
+  "Return non-nil when the COMPUTED value is the CACHED one.
+Numbers agree to about the fifteen digits a workbook keeps."
+  (let ((computed (grid-table-corpus--as-cached computed)))
+    (if (and (numberp computed) (numberp cached))
+        (<= (abs (- computed cached))
+            (* 1e-9 (max 1.0 (abs computed) (abs cached))))
+      (equal computed cached))))
+
+;; The module is loaded by grid-table-xlsx when a workbook is first read.
+(declare-function grid-table-xlsx-module-read "grid-table-xlsx-module")
+
+(defun grid-table-corpus--cached (file sheet)
+  "Return a table from (ROW . COL) to the cached value of SHEET's formulas.
+The values are the ones FILE holds, last computed by whoever wrote it.
+Some writers put 0 or \"\" in for every formula, to be computed when the
+workbook is opened: a sheet whose formulas, three or more, all hold the
+same one of those has no values to go by, and the table is empty."
+  (let ((table (make-hash-table :test 'equal)))
+    (dolist (cell (plist-get (car (read-from-string
+                                   (grid-table-xlsx-module-read file sheet)))
+                             :cells))
+      (let ((properties (nthcdr 3 cell)))
+        (when (plist-member properties :cached)
+          (puthash (cons (nth 0 cell) (nth 1 cell))
+                   (plist-get properties :cached) table))))
+    (let (values)
+      (maphash (lambda (_ value) (cl-pushnew value values :test #'equal)) table)
+      (when (and (>= (hash-table-count table) 3)
+                 (= (length values) 1)
+                 (member (car values) '(0.0 "")))
+        (clrhash table)))
+    table))
+
+(defun grid-table-corpus--known-p (function)
+  "Return non-nil when grid-table computes FUNCTION, a name in capitals."
+  (or (equal function "(operators)")
+      (gethash function grid-calc-functions)
+      (gethash function grid-calc--known-functions)))
+
+(defun grid-table-corpus--formulas (file sheets)
+  "Check the formulas of SHEETS, read from FILE, against their cached values.
+A formula agrees, disagrees, disagrees only because a cell it reads does
+\(inherits), or calls a function grid-table does not have (unknown).
+Its outcome counts for every function it calls; an unknown one only for
+the functions missing.  A formula with no cached value is counted apart,
+and so is one whose value may change by itself, which the formulas that
+read it inherit."
+  (let ((formulas 0) (uncached 0) (unstable 0)
+        (wrong (make-hash-table :test 'equal))
+        checked)
+    ;; First every formula, and which ones disagree.
+    (pcase-dolist (`(,name . ,source) sheets)
+      (let ((cached (grid-table-corpus--cached file name)))
+        (dotimes (row (grid-get-row-count source))
+          (dotimes (col (grid-get-column-count source))
+            (let ((raw (grid-get-raw-value-at source row col)))
+              (when (and (stringp raw) (string-prefix-p "=" raw))
+                (cl-incf formulas)
+                (let ((expected (gethash (cons row col) cached 'none)))
+                  (cond
+                   ((eq expected 'none) (cl-incf uncached))
+                   ((string-match-p grid-table-corpus--unstable-regexp raw)
+                    (cl-incf unstable)
+                    (puthash (list name row col) t wrong))
+                   (t
+                    (let* ((computed (grid-get-computed-value-at source row col))
+                           (agree (grid-table-corpus--agree-p computed expected)))
+                      (unless agree
+                        (puthash (list name row col) t wrong))
+                      (push (list name source row col raw agree
+                                  expected computed)
+                            checked)))))))))))
     (grid-table-corpus--note :formulas formulas)
-    (cl-flet ((alist (table)
-                (let (items)
-                  (maphash (lambda (key count) (push (cons key count) items))
-                           table)
-                  items)))
-      (when (> (hash-table-count errors) 0)
-        (grid-table-corpus--note :formula-errors (alist errors)))
-      (when (> (hash-table-count functions) 0)
-        (grid-table-corpus--note :name-error-functions (alist functions))))))
+    (grid-table-corpus--note :formulas-uncached uncached)
+    (grid-table-corpus--note :formulas-unstable unstable)
+    ;; Then why each one that disagrees does.
+    (let ((tally (make-hash-table :test 'equal))
+          (wrong-by-sheet (make-hash-table :test 'equal))
+          (names (mapcar #'car sheets))
+          samples)
+      (maphash (lambda (key _) (push (cdr key) (gethash (car key) wrong-by-sheet)))
+               wrong)
+      (pcase-dolist (`(,name ,source ,row ,col ,raw ,agree ,expected ,computed)
+                     checked)
+        (let* ((functions (grid-table-corpus--functions raw))
+               (unknown (cl-remove-if #'grid-table-corpus--known-p functions))
+               (outcome
+                (cond
+                 (agree 0)
+                 (unknown 3)
+                 ((cl-some
+                   (lambda (reference)
+                     (let ((sheet (if (car reference)
+                                      (cl-find (car reference) names
+                                               :test #'grid-calc--same-sheet-p)
+                                    name)))
+                       (cl-some (lambda (cell)
+                                  (and (not (and (equal sheet name)
+                                                 (equal cell (list row col))))
+                                       (grid-calc-reference-covers-p
+                                        reference (car cell) (cadr cell))))
+                                (gethash sheet wrong-by-sheet))))
+                   (ignore-errors
+                     (grid-calc-precedents (gethash :model source) row col)))
+                  2)
+                 (t 1))))
+          (dolist (function (if (= outcome 3) unknown functions))
+            (let ((counts (or (gethash function tally)
+                              (puthash function (vector 0 0 0 0) tally))))
+              (cl-incf (aref counts outcome))))
+          (when (and (= outcome 1) (< (length samples) 40))
+            (push (vector (format "%s!%s%d" name
+                                  (grid-calc-col-number-to-letter col) (1+ row))
+                          (truncate-string-to-width raw 200)
+                          (prin1-to-string expected)
+                          (prin1-to-string
+                           (grid-table-corpus--as-cached computed)))
+                  samples))))
+      (let (counts)
+        (maphash (lambda (function count)
+                   (push (vconcat (list function) count) counts))
+                 tally)
+        (when counts
+          (grid-table-corpus--note :formula-check (vconcat counts))))
+      (when samples
+        (grid-table-corpus--note :formula-samples (vconcat (nreverse samples)))))))
 
 ;;;----------------------------------------------------------------------
 ;;; One workbook
@@ -266,11 +395,10 @@ RECORD is a JSON file of what was found."
                                        sheets)))
             (when-let* ((workbook (grid-table-corpus--stage "recalc"
                                     (let ((workbook (grid-workbook-create sheets t)))
-                                      (when-let* ((defined (grid-table-xlsx--names file)))
-                                        (grid-workbook-set-names workbook defined))
+                                      (grid-table-xlsx-give-names workbook file)
                                       workbook))))
               (grid-table-corpus--stage "formulas"
-                (grid-table-corpus--formulas sheets))
+                (grid-table-corpus--formulas file sheets))
               (when (grid-table-corpus--stage "write"
                       (grid-table-xlsx-write-workbook workbook copy)
                       t)
@@ -341,6 +469,60 @@ RECORD is a JSON file of what was found."
     (maphash (lambda (key count) (push (cons key count) items)) table)
     (sort items (lambda (a b) (> (cdr a) (cdr b))))))
 
+(defun grid-table-corpus--formula-report (records corpus)
+  "Return the part of the report on how the formulas of RECORDS came out.
+CORPUS is the directory the workbooks are in."
+  (let ((functions (make-hash-table :test 'equal))
+        (files (make-hash-table :test 'equal))
+        (samples (make-hash-table :test 'equal))
+        (totals (vector 0 0 0 0)))
+    (dolist (record records)
+      (let ((file (file-relative-name (alist-get 'file record) corpus)))
+        (cl-incf (aref totals 0) (or (alist-get 'formulas record) 0))
+        (cl-incf (aref totals 1) (or (alist-get 'formulas-uncached record) 0))
+        (cl-incf (aref totals 2) (or (alist-get 'formulas-unstable record) 0))
+        (pcase-dolist (`(,function . ,outcomes) (alist-get 'formula-check record))
+          (let ((counts (or (gethash function functions)
+                            (puthash function (vector 0 0 0 0) functions)))
+                (wrong (or (nth 1 outcomes) 0)))
+            (cl-loop for count in outcomes for i from 0
+                     do (cl-incf (aref counts i) count))
+            (when (> wrong 0) (grid-table-corpus--tally files function))))
+        (dolist (sample (alist-get 'formula-samples record))
+          (dolist (function (grid-table-corpus--functions (nth 1 sample)))
+            (when (< (length (gethash function samples)) 3)
+              (push (cons file sample) (gethash function samples)))))))
+    (let ((rows nil) (agree 0) (checked 0))
+      (maphash (lambda (function counts)
+                 (push (cons function counts) rows))
+               functions)
+      ;; A formula counts once for every function it calls, so these are
+      ;; calls rather than formulas.
+      ;; What grid-table gets wrong first, then what it does not have.
+      (setq rows (sort rows (lambda (a b)
+                              (> (+ (* 1000 (aref (cdr a) 1)) (aref (cdr a) 3))
+                                 (+ (* 1000 (aref (cdr b) 1)) (aref (cdr b) 3))))))
+      (pcase-dolist (`(,_ . ,counts) rows)
+        (cl-incf agree (aref counts 0))
+        (cl-incf checked (cl-reduce #'+ counts)))
+      (with-temp-buffer
+        (insert (format "\n== Formulas against the values their workbooks hold ==\n%d formulas: %d without a value, %d that change by themselves\n"
+                        (aref totals 0) (aref totals 1) (aref totals 2)))
+        (insert (format "calls checked %d, agreeing %d (%.1f%%)\n"
+                        checked agree (if (> checked 0) (/ (* 100.0 agree) checked) 0)))
+        (insert (format "%-22s %8s %8s %9s %8s %6s\n"
+                        "function" "agree" "wrong" "inherit" "unknown" "files"))
+        (pcase-dolist (`(,function . ,counts) rows)
+          (insert (format "%-22s %8d %8d %9d %8d %6d\n" function
+                          (aref counts 0) (aref counts 1) (aref counts 2)
+                          (aref counts 3) (gethash function files 0)))
+          (dolist (sample (reverse (gethash function samples)))
+            (insert (format "    %s %s  %s  want %s  got %s\n"
+                            (car sample) (nth 1 sample)
+                            (truncate-string-to-width (nth 2 sample) 90)
+                            (nth 3 sample) (nth 4 sample)))))
+        (buffer-string)))))
+
 (defun grid-table-corpus-report (corpus results)
   "Return the report on the records in RESULTS of the workbooks in CORPUS."
   (let* ((corpus (file-name-as-directory (expand-file-name corpus)))
@@ -410,6 +592,7 @@ RECORD is a JSON file of what was found."
                           (truncate-string-to-width
                            (mapconcat (lambda (x) (format "%S" x)) (cdr sample) " ")
                            200)))))
+      (insert (grid-table-corpus--formula-report records corpus))
       (insert "\n== Slowest ==\n")
       (dolist (entry (last (sort (delq nil
                                        (mapcar
