@@ -19,6 +19,8 @@ spreadsheet projects (`make test-corpus`).
 | `helper/address.rs` | A quoted sheet name has its doubled apostrophes undone; a name that reads as a cell or an R1C1 reference is quoted | xlsxwriter `quote_name01.xlsx`, `quote_name03.xlsx` |
 | `structs/address.rs` | An address quotes its sheet name whenever a formula needs it, not only for a space | as above |
 | `structs/drawing/charts/formula.rs` | A chart's `c:f` is escaped, so `Sheet&8` stays well-formed XML | as above |
+| `structs/cell.rs`, `structs/row.rs` | A cell whose `r` leaves out its row, or is missing, takes the place its row and order give it, as POI reads it | POI `invalid_cell_reference.xlsx` |
+| `structs/table.rs`, `reader/xlsx/table.rs`, `writer/xlsx/table.rs` | A table keeps `headerRowCount`, so one without a header row stays without | xlsxwriter `table07.xlsx`, POI `SingleCellTable.xlsx` |
 | `helper/formula.rs`, `structs/workbook.rs` | Follow `split_address` returning the name it unquoted | |
 
 To move to a newer umya-spreadsheet, check whether each of these is

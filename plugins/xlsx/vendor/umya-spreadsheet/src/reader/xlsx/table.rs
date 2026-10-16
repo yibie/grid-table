@@ -140,6 +140,10 @@ pub(crate) fn read(worksheet: &mut Worksheet, table_file: &RawFile) -> Result<()
                             b"totalsRowCount" => {
                                 table.set_totals_row_count_str(&attr_val);
                             }
+                            // grid-table: keep a table without a header row
+                            b"headerRowCount" => {
+                                table.set_header_row_count_str(&attr_val);
+                            }
                             _ => {}
                         }
                     }

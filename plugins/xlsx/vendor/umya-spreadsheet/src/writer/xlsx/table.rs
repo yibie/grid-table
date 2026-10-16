@@ -58,6 +58,10 @@ pub(crate) fn write<W: io::Seek + io::Write>(
             ("ref", &area).into(),
         ];
 
+        // grid-table: keep a table without a header row
+        if table.has_header_row_count() {
+            attributes.push(("headerRowCount", table.header_row_count_str()).into());
+        }
         if table.has_totals_row_shown() {
             attributes.push(("totalsRowShown", table.totals_row_shown_str()).into());
         }

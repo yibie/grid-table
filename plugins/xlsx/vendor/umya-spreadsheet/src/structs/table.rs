@@ -19,6 +19,8 @@ pub struct Table {
     style_info:       Option<Box<TableStyleInfo>>,
     totals_row_shown: BooleanValue,
     totals_row_count: UInt32Value,
+    // grid-table: a table may have no header row (headerRowCount="0").
+    header_row_count: UInt32Value,
     auto_filter:      AutoFilter,
 }
 impl Table {
@@ -40,6 +42,7 @@ impl Table {
             style_info:       None,
             totals_row_shown: BooleanValue::default(),
             totals_row_count: UInt32Value::default(),
+            header_row_count: UInt32Value::default(),
             auto_filter,
         }
     }
@@ -242,6 +245,37 @@ impl Table {
     #[inline]
     pub(crate) fn set_totals_row_count_str(&mut self, value: &str) {
         self.totals_row_count.set_value_string(value);
+    }
+
+    // grid-table: the number of header rows, 1 unless the file says.
+    #[inline]
+    #[must_use]
+    pub fn header_row_count(&self) -> u32 {
+        if self.header_row_count.has_value() {
+            self.header_row_count.value()
+        } else {
+            1
+        }
+    }
+
+    #[inline]
+    pub fn set_header_row_count(&mut self, value: u32) {
+        self.header_row_count.set_value(value);
+    }
+
+    #[inline]
+    pub(crate) fn has_header_row_count(&self) -> bool {
+        self.header_row_count.has_value()
+    }
+
+    #[inline]
+    pub(crate) fn header_row_count_str(&self) -> String {
+        self.header_row_count.value_string()
+    }
+
+    #[inline]
+    pub(crate) fn set_header_row_count_str(&mut self, value: &str) {
+        self.header_row_count.set_value_string(value);
     }
 
     #[inline]
