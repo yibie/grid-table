@@ -1761,6 +1761,7 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
        ;; What labels the new cells is read from them again.
        (cl-remf chart :labels)
        (cl-remf chart :names)
+       (cl-remf chart :series-names)
        (plist-put chart :range (apply #'grid-chart-svg-range-text range))))))
 
 (defun grid-table-etaf-chart-move-here ()

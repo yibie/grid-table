@@ -266,22 +266,49 @@ Return nil when SOURCE keeps no charts."
 (defun grid-table-chart-data (source chart)
   "Return the data floating CHART reads from SOURCE.
 It is what `grid-chart-svg-data' returns, for the part of the chart's
-range inside the sheet."
+range inside the sheet.  A chart's :series-names, one for each series,
+name its series instead: nil numbers one, (text TEXT) is its name, and
+a range names it with its cells' text, joined by spaces."
   (let* ((range (grid-chart-svg-parse-range (plist-get chart :range)))
          (rows (grid-get-row-count source))
-         (cols (grid-get-column-count source)))
+         (cols (grid-get-column-count source))
+         (label (lambda (row col)
+                  (let ((value (and (< row rows) (< col cols)
+                                    (grid-get-display-value-at source row col))))
+                    (if (stringp value) (substring-no-properties value)
+                      (format "%s" (or value "")))))))
     (if (or (null range) (>= (nth 0 range) rows) (>= (nth 1 range) cols))
         (list :categories nil :series nil)
-      (grid-chart-svg-data
-       (list (nth 0 range) (nth 1 range)
-             (min (nth 2 range) (1- rows)) (min (nth 3 range) (1- cols)))
-       (lambda (row col) (grid-get-computed-value-at source row col))
-       (lambda (row col)
-         (let ((value (grid-get-display-value-at source row col)))
-           (if (stringp value) (substring-no-properties value)
-             (format "%s" (or value "")))))
-       (plist-get chart :by) (plist-get chart :type)
-       (plist-get chart :labels) (plist-get chart :names)))))
+      (let ((data (grid-chart-svg-data
+                   (list (nth 0 range) (nth 1 range)
+                         (min (nth 2 range) (1- rows)) (min (nth 3 range) (1- cols)))
+                   (lambda (row col) (grid-get-computed-value-at source row col))
+                   label
+                   (plist-get chart :by) (plist-get chart :type)
+                   (plist-get chart :labels) (plist-get chart :names)))
+            (names (plist-get chart :series-names)))
+        (when (and names (= (length names) (length (plist-get data :series))))
+          (setq data (plist-put
+                      data :series
+                      (cl-loop
+                       for (name . values) in (plist-get data :series)
+                       for given in names
+                       collect
+                       (cons (pcase given
+                               (`(text ,text) text)
+                               ((pred stringp)
+                                (pcase (grid-chart-svg-parse-range given)
+                                  (`(,top ,left ,bottom ,right)
+                                   (mapconcat
+                                    #'identity
+                                    (cl-loop for row from top to bottom
+                                             append (cl-loop for col from left to right
+                                                             collect (funcall label row col)))
+                                    " "))
+                                  (_ name)))
+                               (_ name))
+                             values)))))
+        data))))
 
 (defun grid-table-validations (source)
   "Return SOURCE's validation rules, (TOP LEFT BOTTOM RIGHT KIND SPEC) each."
