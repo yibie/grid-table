@@ -12,8 +12,10 @@ use umya_spreadsheet::{
     ConditionalFormattingOperatorValues, ConditionalFormattingRule, DataValidation,
     Comment, DataValidationValues, DataValidations, DefinedName, Formula, Hyperlink,
     HorizontalAlignmentValues, Pane,
-    PaneStateValues, PaneValues, PatternValues, Selection, SheetView, Style, Workbook, Worksheet,
+    PaneStateValues, PaneValues, PatternValues, Selection, SheetView, ShowColumn, ShowStripes,
+    Style, Table, TableColumn, TableStyleInfo, Workbook, Worksheet,
 };
+use umya_spreadsheet::helper::coordinate::string_from_column_index;
 use umya_spreadsheet::structs::drawing::Theme;
 use umya_spreadsheet::structs::drawing::charts::{
     AreaChartSeries, BarDirectionValues, CategoryAxisData, ChartText, GroupingValues,
@@ -531,6 +533,70 @@ fn clear(sheet: &mut Worksheet) {
     }
 }
 
+/// Give SHEET the tables PAYLOAD lists, when it lists them: after a U
+/// record, T NAME TOP LEFT BOTTOM RIGHT HEADER-ROWS TOTALS-ROWS COLUMN...
+/// for each, zero-based and inclusive.  A table the sheet has keeps what
+/// grid-table does not know of it, such as its style and its columns'
+/// totals; one not listed goes, and one the sheet lacks is added.
+fn tables(sheet: &mut Worksheet, payload: &str) {
+    let records: Vec<Vec<&str>> = payload
+        .split(RECORD)
+        .map(|record| record.split(FIELD).collect::<Vec<&str>>())
+        .collect();
+    if !records.iter().any(|fields| fields[0] == "U") {
+        return;
+    }
+    let mut kept = Vec::new();
+    let mut old = std::mem::take(sheet.tables_mut());
+    for fields in records.iter().filter(|fields| fields[0] == "T" && fields.len() >= 9) {
+        let number = |index: usize| fields[index].parse::<u32>().unwrap_or(0);
+        let (top, left, bottom, right) = (number(2), number(3), number(4), number(5));
+        let (headers, totals) = (number(6), number(7));
+        let area = ((left + 1, top + 1), (right + 1, bottom + 1));
+        let mut table = match old.iter().position(|table| table.display_name().eq_ignore_ascii_case(fields[1])) {
+            Some(index) => old.remove(index),
+            None => {
+                let mut table = Table::new(fields[1], area);
+                table.set_style_info(Some(TableStyleInfo::new(
+                    "TableStyleMedium2",
+                    ShowColumn::Hide,
+                    ShowColumn::Hide,
+                    ShowStripes::Show,
+                    ShowStripes::Hide,
+                )));
+                table
+            }
+        };
+        let had_filter = !table.auto_filter().range().range().is_empty();
+        table.set_area(area);
+        table.set_header_row_count(headers);
+        table.set_totals_row_count(totals);
+        table.set_totals_row_shown(totals > 0);
+        let mut columns: Vec<TableColumn> = table.take_columns();
+        let named: Vec<TableColumn> = fields[8..]
+            .iter()
+            .map(|name| match columns.iter().position(|column| column.name() == *name) {
+                Some(index) => columns.remove(index),
+                None => TableColumn::new(name),
+            })
+            .collect();
+        table.set_columns(named);
+        // The filter covers the table but its totals row.
+        if had_filter && headers > 0 {
+            let last = bottom + 1 - totals;
+            table.auto_filter_mut().set_range(format!(
+                "{}{}:{}{}",
+                string_from_column_index(left + 1),
+                top + 1,
+                string_from_column_index(right + 1),
+                last
+            ));
+        }
+        kept.push(table);
+    }
+    *sheet.tables_mut() = kept;
+}
+
 fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     let mut conditionals = Vec::new();
     let mut validations = DataValidations::default();
@@ -603,6 +669,8 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
             "F" if fields.len() >= 4 => conditionals.push(&record[2..]),
             // The workbook's date system, which `write' has taken.
             "Y" => {}
+            // U and T, the sheet's tables, which `tables' has taken.
+            "U" | "T" => {}
             // G type from to title names categories ref...: a chart
             "G" if fields.len() >= 8 => {
                 sheet.add_chart(chart(&fields)?);
@@ -1056,6 +1124,7 @@ fn write(path: String, base: Option<String>, sheet: String, payload: String) -> 
     let target = book.sheet_by_name_mut(&sheet).map_err(fail)?;
     clear(target);
     fill(target, &payload)?;
+    tables(target, &payload);
     writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
     Ok(())
 }

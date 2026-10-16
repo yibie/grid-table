@@ -966,6 +966,61 @@ and rows it covers."
         refs)
        grid-table-xlsx--field))))
 
+(defun grid-table-xlsx--column-text (name)
+  "Return the column NAME of a table as its header cell shows it.
+A file may keep a line break as _x000a_ and a character as an XML
+entity, even one escaped again."
+  (let ((text name) last)
+    (while (not (equal text last))
+      (setq last text
+            text (replace-regexp-in-string
+                  "_x\\([[:xdigit:]]\\{4\\}\\)_\\|&#x\\([[:xdigit:]]+\\);\\|&#\\([0-9]+\\);\\|&\\(amp\\|lt\\|gt\\|quot\\|apos\\);"
+                  (lambda (match)
+                    (save-match-data
+                      (string-match "\\`\\(?:_x\\(.*\\)_\\|&#x\\(.*\\);\\|&#\\(.*\\);\\|&\\(.*\\);\\)\\'" match)
+                      (let ((hex (or (match-string 1 match) (match-string 2 match)))
+                            (decimal (match-string 3 match))
+                            (entity (match-string 4 match)))
+                        (cond (hex (string (string-to-number hex 16)))
+                              (decimal (string (string-to-number decimal)))
+                              (t (cdr (assoc entity '(("amp" . "&") ("lt" . "<")
+                                                      ("gt" . ">") ("quot" . "\"")
+                                                      ("apos" . "'")))))))))
+                  text t t)))
+    text))
+
+(defun grid-table-xlsx--table-record (source table)
+  "Return the T record of TABLE, on the sheet SOURCE.
+TABLE is (NAME SHEET TOP LEFT BOTTOM RIGHT HEADERS TOTALS COLUMNS).  A
+file must name a column as its header cell shows it: a header edited
+names its column after it, unless it holds a formula or nothing.  A
+name the header agrees with is kept as the file wrote it."
+  (pcase-let ((`(,name ,_ ,top ,left ,bottom ,right ,headers ,totals ,columns)
+               table))
+    (mapconcat
+     #'identity
+     (append
+      (list "T" name)
+      (mapcar #'number-to-string (list top left bottom right headers totals))
+      (cl-loop for column in columns
+               for col from left
+               for raw = (and (> headers 0) (grid-get-raw-value-at source top col))
+               ;; A number kept as text is written with a quote first.
+               for header = (if (and (stringp raw) (string-prefix-p "'" raw))
+                                (substring raw 1)
+                              raw)
+               collect (grid-table-xlsx--clean
+                        (if (and (stringp header) (not (string-empty-p header))
+                                 (not (string-prefix-p "=" header))
+                                 ;; A line break may be kept as CR LF in the cell.
+                                 (not (equal (string-replace "\r" "" header)
+                                             (string-replace
+                                              "\r" "" (grid-table-xlsx--column-text
+                                                       column)))))
+                            header
+                          column))))
+     grid-table-xlsx--field)))
+
 (defun grid-table-xlsx--payload (source &optional sheet)
   "Return the records that describe the data source SOURCE.
 SHEET is the name SOURCE is written as, which its charts' ranges name."
@@ -1007,6 +1062,14 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
                                      (grid-table-xlsx--clean text))
                                grid-table-xlsx--field)
                     records))))))
+    ;; The sheet's tables, all of them: U says the T records that follow
+    ;; are every table the sheet has.
+    (when workbook
+      (push "U" records)
+      (dolist (table (grid-workbook-tables workbook))
+        (when (grid-calc--same-sheet-p (nth 1 table)
+                                       (grid-workbook-sheet-name source))
+          (push (grid-table-xlsx--table-record source table) records))))
     (dolist (merge (grid-get-merges source))
       (push (concat "M" grid-table-xlsx--field
                     (apply #'grid-table-xlsx--range-name merge))

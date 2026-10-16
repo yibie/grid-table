@@ -454,6 +454,65 @@ grid reads them back without it."
        file)
       (should (= (grid-table-xlsx-date-system file) 1900)))))
 
+(ert-deftest grid-table-xlsx-test-tables-move-with-their-cells ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "" "")
+                  '(("Item" "Qty" "") ("a" "2" "") ("b" "3" "")
+                    ("" "" "=SUM(Table1[Qty])"))))
+           (workbook (grid-workbook-create (list (cons "Data" data)))))
+      (setf (grid-workbook-tables workbook)
+            (list (list "Table1" "Data" 0 0 2 1 1 0 '("Item" "Qty"))))
+      ;; A table grid-table holds is written, also to a new file.
+      (grid-table-xlsx-write-workbook workbook file)
+      (let* ((back (grid-table-xlsx-create-workbook file))
+             (data (grid-workbook-sheet back "Data")))
+        (should (equal (grid-workbook-tables back)
+                       '(("Table1" "Data" 0 0 2 1 1 0 ("Item" "Qty")))))
+        (funcall (gethash :add-row data) data -1)
+        (funcall (gethash :add-column data) data 1)
+        ;; A header edited names its column.
+        (grid-set-raw-value-at data 1 0 "Name")
+        (grid-table-xlsx-write-workbook back file)
+        (let* ((again (grid-table-xlsx-create-workbook file)))
+          (should (equal (grid-workbook-tables again)
+                         '(("Table1" "Data" 1 0 3 2 1 0
+                            ("Name" "Column1" "Qty")))))
+          (should (equal (grid-get-computed-value-at
+                          (grid-workbook-sheet again "Data") 4 3)
+                         5))
+          ;; A name kept escaped, as a header shows it, stays as written.
+          (let ((sheet (make-default-data-source
+                        '("" "") '(("A\r\nB" "'12") ("1" "2")))))
+            (should (equal (split-string
+                            (grid-table-xlsx--table-record
+                             sheet '("T1" "S" 0 0 1 1 1 0 ("A_x000a_B" "12")))
+                            grid-table-xlsx--field)
+                           '("T" "T1" "0" "0" "1" "1" "1" "0" "A_x000a_B" "12"))))
+          ;; A table that went is gone from the file too.
+          (setf (grid-workbook-tables again) nil)
+          (grid-table-xlsx-write-workbook again file)
+          (should-not (grid-workbook-tables
+                       (grid-table-xlsx-create-workbook file))))))))
+
+(ert-deftest grid-table-xlsx-test-table-names-keep-their-text ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "") '(("A & B" "One\nTwo") ("1" "2"))))
+           (workbook (grid-workbook-create (list (cons "Data" data))))
+           (table '("Table1" "Data" 0 0 1 1 1 0 ("A & B" "One\nTwo"))))
+      (setf (grid-workbook-tables workbook) (list table))
+      (grid-table-xlsx-write-workbook workbook file)
+      ;; Saved again from what was read, the names are not escaped twice
+      ;; and the line break does not become a space.
+      (grid-table-xlsx-write-workbook (grid-table-xlsx-create-workbook file)
+                                      file)
+      (should (equal (grid-workbook-tables
+                      (grid-table-xlsx-create-workbook file))
+                     (list table))))))
+
 (ert-deftest grid-table-xlsx-test-notes-and-links ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file
