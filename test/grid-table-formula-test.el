@@ -2813,6 +2813,29 @@ The cases come from the formulas package's and pycel's workbooks."
                   (and (numberp value) (< (abs (- value (cadr case))) 1e-12))
                 (equal (list (car case) value) case))))))
 
+(ert-deftest grid-table-formula-regression-as-excel-fits-it ()
+  "LINEST, LOGEST, TREND and GROWTH fit and spill as Excel does.
+A variable that adds nothing gets the slope 0, and an error among the
+values is #VALUE!.  The cases come from pycel's and the formulas
+package's workbooks."
+  (dolist (case '(("=INDEX(LINEST({1;2;3},{2;3;4},FALSE,FALSE),1)" 0.6896551724137931)
+                  ("=INDEX(LINEST({1;2;3},{2;3;4},TRUE,TRUE),3,1)" 1.0)
+                  ("=INDEX(LINEST({1;2;3},{2;3;4},TRUE,TRUE),5,1)" 2.0)
+                  ("=INDEX(LINEST({1;2;3},{2;3;4},TRUE,TRUE),3,2)" 0.0)
+                  ("=INDEX(LINEST({1;2;3},{2,1;3,5;4,2},TRUE,TRUE),4,3)" "#N/A")
+                  ("=INDEX(LINEST({1,2,4},{3,3,3}),1)" 0.0)
+                  ("=INDEX(LINEST({1,2,4},{3,3,3}),2)" 2.3333333333333335)
+                  ("=LINEST({1,2,4},{3,4})" "#REF!")
+                  ("=LINEST({1,2,4},{3,4,#N/A})" "#VALUE!")
+                  ("=LOGEST({1,2,-4})" "#NUM!")
+                  ("=INDEX(TREND({1,2,4},{1,2,3},{4,5}),2)" 6.833333333333334)
+                  ("=INDEX(GROWTH({1,2,4},{1,2,3},{4}),1)" 8.0)))
+    (let* ((model (grid-model-create 1 3 (list (list (car case) "" ""))))
+           (value (grid-model-get-computed-value model 0 0)))
+      (should (if (numberp (cadr case))
+                  (and (numberp value) (< (abs (- value (cadr case))) 1e-9))
+                (equal (list (car case) value) case))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

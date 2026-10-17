@@ -365,6 +365,216 @@ comes with the chance beside it in CHANCES."
                 when (<= low x high) sum chance)))))
 
 ;;;----------------------------------------------------------------------
+;;; Regression: LINEST, LOGEST, TREND and GROWTH
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--regression-data (known-y known-x)
+  "Return the data of a regression of KNOWN-Y on KNOWN-X.
+It is a list of the Ys, a vector; the variables, a list of vectors as
+long; and how they lie in KNOWN-X: `one' for a single variable,
+`columns' when each is a column, `rows' when each is a row.  Without
+KNOWN-X the variable is 1, 2, 3 and on.  Sizes that do not fit are
+#REF!; a value that is not a number #VALUE!."
+  (let* ((rows (grid-calc-array-rows known-y)) (cols (grid-calc-array-cols known-y))
+         (n (* rows cols))
+         (x-rows (and known-x (grid-calc-array-rows known-x)))
+         (x-cols (and known-x (grid-calc-array-cols known-x)))
+         (lie (cond ((or (null known-x) (= (* x-rows x-cols) n)) 'one)
+                    ((and (= cols 1) (= x-rows n)) 'columns)
+                    ((and (= rows 1) (= x-cols n)) 'rows)
+                    (t (grid-calc-raise "#REF!"))))
+         (ys (apply #'vconcat (append (grid-calc--regression-matrix known-y) nil))))
+    (list ys
+          (pcase lie
+            ('one (list (if known-x
+                            (apply #'vconcat (append (grid-calc--regression-matrix known-x) nil))
+                          (vconcat (number-sequence 1.0 n)))))
+            ('columns (let ((m (grid-calc--regression-matrix known-x)))
+                        (cl-loop for j below x-cols
+                                 collect (cl-map 'vector (lambda (row) (aref row j)) m))))
+            ('rows (append (grid-calc--regression-matrix known-x) nil)))
+          lie)))
+
+(defun grid-calc--regression-matrix (array)
+  "Return ARRAY as a matrix for a regression: as `grid-calc--matrix'
+does, but an error in it is #VALUE!, as Excel has it."
+  (when (cl-some #'grid-calc-err-p (grid-calc-array-values array))
+    (grid-calc-raise "#VALUE!"))
+  (grid-calc--matrix array))
+
+(defun grid-calc--dot (a b)
+  "Return the dot product of vectors A and B."
+  (cl-loop for x across a for y across b sum (* x y)))
+
+(defun grid-calc--fit (ys vars const)
+  "Fit YS by least squares to the vectors VARS, through 0 unless CONST.
+A variable that is the same as a sum of those before it, or with CONST
+a constant, gets the coefficient 0, as in Excel.  Return a plist of
+:slopes, :intercept, :errors (the standard errors of the slopes),
+:intercept-error, :r2, :sey, :f, :df, :ssreg and :ssresid; a statistic
+Excel cannot give is an error value."
+  (let* ((n (length ys))
+         (mean (lambda (v) (if const (/ (cl-reduce #'+ v) n) 0.0)))
+         (y-mean (funcall mean ys))
+         (x-means (mapcar mean vars))
+         (centered (cl-mapcar (lambda (v m) (cl-map 'vector (lambda (x) (- x m)) v))
+                              vars x-means))
+         (basis '()) (kept '()))
+    ;; Gram-Schmidt: keep a variable only when it adds a direction
+    (cl-loop for v in centered for j from 0
+             for size = (grid-calc--dot v v)
+             for rest = (copy-sequence v)
+             do (dolist (q basis)
+                  (let ((c (/ (grid-calc--dot rest q) (grid-calc--dot q q))))
+                    (dotimes (i n) (aset rest i (- (aref rest i) (* c (aref q i)))))))
+             when (> (grid-calc--dot rest rest) (* 1e-13 size))
+             do (push rest basis) (push j kept))
+    (setq kept (nreverse kept))
+    (let* ((m (length kept))
+           (xs (mapcar (lambda (j) (nth j centered)) kept))
+           (yc (cl-map 'vector (lambda (y) (- y y-mean)) ys))
+           (inverse (and (> m 0)
+                         (grid-calc--eliminate
+                          (apply #'vector
+                                 (mapcar (lambda (a)
+                                           (apply #'vector
+                                                  (mapcar (lambda (b) (grid-calc--dot a b)) xs)))
+                                         xs))
+                          t)))
+           (products (mapcar (lambda (x) (grid-calc--dot x yc)) xs))
+           (coefs (cl-loop for i below m
+                           collect (cl-loop for p in products for j from 0
+                                            sum (* (aref (aref inverse i) j) p))))
+           (slopes (cl-loop for j below (length vars)
+                            collect (let ((at (cl-position j kept)))
+                                      (if at (nth at coefs) 0.0))))
+           (intercept (if const
+                          (- y-mean (cl-loop for b in slopes for xm in x-means
+                                             sum (* b xm)))
+                        0.0))
+           (fitted (cl-loop for i below n
+                            collect (+ intercept
+                                       (cl-loop for b in slopes for v in vars
+                                                sum (* b (aref v i))))))
+           (ssresid (cl-loop for y across ys for f in fitted sum (expt (- y f) 2)))
+           (ssreg (cl-loop for f in fitted sum (expt (- f y-mean) 2)))
+           (df (- n m (if const 1 0)))
+           (sey (if (> df 0) (sqrt (/ ssresid df)) (grid-calc-err "#NUM!")))
+           (error-of (lambda (variance)
+                       (if (numberp sey) (* sey (sqrt variance)) sey))))
+      (list :slopes slopes :intercept intercept
+            :errors (cl-loop for j below (length vars)
+                             collect (let ((at (cl-position j kept)))
+                                       (if at (funcall error-of (aref (aref inverse at) at))
+                                         0.0)))
+            :intercept-error
+            (if (not const) (grid-calc-err "#N/A")
+              (funcall error-of
+                       (+ (/ 1.0 n)
+                          (cl-loop for a in kept for i from 0
+                                   sum (cl-loop for b in kept for j from 0
+                                                sum (* (nth a x-means) (nth b x-means)
+                                                       (aref (aref inverse i) j)))))))
+            :r2 (if (zerop (+ ssreg ssresid)) (grid-calc-err "#NUM!")
+                  (/ ssreg (+ ssreg ssresid)))
+            :sey sey
+            :f (if (or (= m 0) (<= df 0) (zerop ssresid)) (grid-calc-err "#NUM!")
+                 (/ (/ ssreg m) (/ ssresid df)))
+            :df (if (< df 0) (grid-calc-err "#NUM!") df)
+            :ssreg ssreg :ssresid ssresid))))
+
+(defun grid-calc--flag (value default)
+  "Return VALUE as true or false, DEFAULT when it is left out."
+  (cond ((or (null value) (eq value :blank)) default)
+        ((grid-calc-err-p value) (grid-calc-raise "#VALUE!"))
+        (t (grid-calc-truth value))))
+
+(defun grid-calc--estimate (known-y known-x const stats logs)
+  "Return what LINEST gives for KNOWN-Y, KNOWN-X, CONST and STATS, or,
+with LOGS, what LOGEST gives."
+  (pcase-let* ((`(,ys ,vars ,_) (grid-calc--regression-data known-y known-x))
+               (ys (if logs (grid-calc--logs ys) ys))
+               (fit (grid-calc--fit ys vars (grid-calc--flag const t)))
+               (shown (lambda (x) (if (and logs (numberp x)) (exp x) x)))
+               (first (mapcar shown (append (reverse (plist-get fit :slopes))
+                                            (list (plist-get fit :intercept)))))
+               (width (length first))
+               (pad (lambda (&rest values)
+                      (append values (make-list (- width (length values))
+                                                (grid-calc-err "#N/A"))))))
+    (grid-calc-array-from-rows
+     (if (not (grid-calc--flag stats nil)) (list first)
+       (list first
+             (append (reverse (plist-get fit :errors))
+                     (list (plist-get fit :intercept-error)))
+             (funcall pad (plist-get fit :r2) (plist-get fit :sey))
+             (funcall pad (plist-get fit :f) (plist-get fit :df))
+             (funcall pad (plist-get fit :ssreg) (plist-get fit :ssresid)))))))
+
+(defun grid-calc--logs (ys)
+  "Return the logs of YS; #NUM! when one is not above 0."
+  (cl-map 'vector (lambda (y) (if (> y 0) (log y) (grid-calc-raise "#NUM!"))) ys))
+
+(grid-calc-define linest ((known-y array) &optional (known-x array) (const any) (stats any))
+  "The least-squares line of KNOWN-Y on KNOWN-X: its slopes, last
+variable first, then its intercept.  Through 0 when CONST is false;
+with STATS, four more rows of statistics."
+  :errors t
+  (grid-calc--estimate known-y known-x const stats nil))
+
+(grid-calc-define logest ((known-y array) &optional (known-x array) (const any) (stats any))
+  "The exponential curve fit to KNOWN-Y on KNOWN-X: its bases, last
+variable first, then its constant.  CONST and STATS are as for LINEST."
+  :errors t
+  (grid-calc--estimate known-y known-x const stats t))
+
+(defun grid-calc--predict (known-y known-x new-x const logs)
+  "Return the Y at each NEW-X of the fit of KNOWN-Y on KNOWN-X, as TREND
+gives, or as GROWTH does with LOGS."
+  (pcase-let* ((`(,ys ,vars ,lie) (grid-calc--regression-data known-y known-x))
+               (ys (if logs (grid-calc--logs ys) ys))
+               (fit (grid-calc--fit ys vars (grid-calc--flag const t)))
+               (slopes (plist-get fit :slopes))
+               (intercept (plist-get fit :intercept))
+               (new-x (or new-x known-x
+                          (grid-calc-array (grid-calc-array-rows known-y)
+                                           (grid-calc-array-cols known-y)
+                                           (let ((cols (grid-calc-array-cols known-y)))
+                                             (lambda (row col) (+ 1 col (* row cols)))))))
+               (matrix (grid-calc--regression-matrix new-x))
+               (k (length vars))
+               (at (lambda (xs)
+                     (let ((y (+ intercept (cl-loop for b in slopes for x in xs
+                                                    sum (* b x)))))
+                       (grid-calc--tidy-number (if logs (exp y) y))))))
+    (pcase lie
+      ('one (grid-calc-array (grid-calc-array-rows new-x) (grid-calc-array-cols new-x)
+                             (lambda (row col)
+                               (funcall at (list (aref (aref matrix row) col))))))
+      ('columns
+       (unless (= (grid-calc-array-cols new-x) k) (grid-calc-raise "#REF!"))
+       (grid-calc-array (length matrix) 1
+                        (lambda (row _) (funcall at (append (aref matrix row) nil)))))
+      ('rows
+       (unless (= (grid-calc-array-rows new-x) k) (grid-calc-raise "#REF!"))
+       (grid-calc-array 1 (grid-calc-array-cols new-x)
+                        (lambda (_ col)
+                          (funcall at (cl-map 'list (lambda (row) (aref row col))
+                                              matrix))))))))
+
+(grid-calc-define trend ((known-y array) &optional (known-x array) (new-x array) (const any))
+  "The Y at each NEW-X of the least-squares line of KNOWN-Y on KNOWN-X,
+through 0 when CONST is false."
+  :errors t
+  (grid-calc--predict known-y known-x new-x const nil))
+
+(grid-calc-define growth ((known-y array) &optional (known-x array) (new-x array) (const any))
+  "The Y at each NEW-X of the exponential curve fit to KNOWN-Y on KNOWN-X,
+through 1 when CONST is false."
+  :errors t
+  (grid-calc--predict known-y known-x new-x const t))
+
+;;;----------------------------------------------------------------------
 ;;; Largest, smallest and in between
 ;;;----------------------------------------------------------------------
 
