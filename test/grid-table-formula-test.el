@@ -1148,6 +1148,41 @@
     (should (equal (grid-model-get-computed-value model 0 0) 20))
     (should (equal (grid-model-get-computed-value model 1 0) 3))))
 
+(ert-deftest grid-table-formula-file-formula-takes-one-value-where-excel-does ()
+  ;; A workbook file's formula takes one value of a range wherever
+  ;; Excel's classes for its functions say so, inside arguments too.
+  ;; Each answer is Excel's for a formula in E2 that is no array formula.
+  (cl-flet ((value (formula &optional (row 1) (col 4))
+              (let ((model (grid-model-create
+                            6 5 '(("1" "-7" ">0" "" "") ("-2" "" "<0" "" "")
+                                  ("3" "" ">5" "" "") ("" "" "" "" "")
+                                  ("" "" "" "" "") ("" "" "" "" "")))))
+                (grid-model-set-raw-value model row col formula)
+                (grid-model-set-legacy model (list (cons row col)))
+                (grid-calc-forget model)
+                (grid-model-recalculate-all model)
+                (grid-model-get-computed-value model row col))))
+    (pcase-dolist (`(,formula ,expected)
+                   '(("=SUM(A1:A3*2)" -4) ("=SUMPRODUCT(A1:A3*2)" 4)
+                     ("=SUM(LEN(A1:A3))" 2) ("=SUMPRODUCT(--ISNUMBER(A1:A3))" 3)
+                     ("=SUM(IF(A1:A3>0,1,0))" 0) ("=SUMPRODUCT(IF(A1:A3>0,1,0))" 0)
+                     ("=MAX(INDEX(A1:A3,0))" 3) ("=SUM(INDEX(A1:A3*2,0))" 4)
+                     ("=SUMIF(A1:A3,C1:C3)" -2) ("=SUMPRODUCT(SUMIF(A1:A3,C1:C3))" 2)
+                     ("=ABS(IF(TRUE,A1:A3))" 2) ("=TRANSPOSE(A1:A3)" -2)
+                     ("=MAX(ABS(A1:A3))" 2) ("=SUMPRODUCT(ABS(A1:A3))" 6)
+                     ("=SUMPRODUCT((A1:A3>0)*1)" 2) ("=COUNTIF(A1:A3,A1:A3)" 1)
+                     ("=AGGREGATE(14,6,A1:A3/(A1:A3>0),1)" 3)
+                     ("=ROW(A1:A3)" 1) ("=SUM({1,2,3})" 6) ("=ABS({-1,-2})" 1)
+                     ;; What a function computes stays several values.
+                     ("=SUM(ABS({-1,-2}))" 3) ("=TYPE(A1:A3)" 64)
+                     ("=SUM(SIGN(FREQUENCY(IF(A1:A3<0,MATCH(A1:A3,A1:A3,0)),ROW(A1:A3))))"
+                      1)))
+      (should (equal (list formula (value formula)) (list formula expected))))
+    ;; A row of cells gives the one in the formula's column.
+    (should (equal (value "=ABS(A1:C1)" 4 1) 7))
+    ;; A formula outside the range's rows has none of them.
+    (should (equal (value "=ABS(A1:A3)" 4 4) "#VALUE!"))))
+
 (ert-deftest grid-table-formula-spill-moves-with-its-formula ()
   (let* ((model (grid-model-create
                  5 2 '(("" "=SUM(A3:A5)") ("" "") ("=SEQUENCE(3)" "")

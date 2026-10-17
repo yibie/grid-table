@@ -2,6 +2,7 @@
 
 (require 'grid-table-parser)
 (require 'grid-table-format)
+(require 'grid-table-calc-classes)
 
 (defvar grid-calc-functions)
 (defvar grid-table-allow-elisp)
@@ -1876,9 +1877,185 @@ Both are references into the same sheet; the result takes in both."
                                top left-edge bottom right-edge)
         (grid-calc-err "#NULL!")))))
 
+;;;----------------------------------------------------------------------
+;;; Where a formula takes one value of a range
+;;;----------------------------------------------------------------------
+
+;; A formula that is not an array formula takes one value of a range
+;; wherever Excel's tokens for it say so, inside a function's arguments
+;; as well as at its top: =MAX(ABS(A1:B1)) in B4 is MAX(ABS(B1)), while
+;; =SUMPRODUCT(ABS(A1:B1)) takes the whole range.  Each token has a
+;; class, a reference, a value or an array, and each argument of a
+;; function converts the class of the tokens in it as
+;; `grid-calc-argument-classes' says.  The rules below follow
+;; RecalcTokenClass in LibreOffice's Excel export,
+;; sc/source/filter/excel/xeformula.cxx (Mozilla Public License 2.0).
+
+(defvar grid-calc-functions)
+
+(defvar grid-calc--classes nil
+  "The class of each part of the formula being computed, or nil.
+A table from the parts of its parsed form to REF, VAL or ARR, made by
+`grid-calc--token-classes' for a formula read as a workbook file holds
+it.  A part whose class is VAL comes to one value.")
+
+(defvar grid-calc--class-cache (make-hash-table :test #'eq :weakness 'key)
+  "Each parsed formula's table of classes, once worked out.")
+
+(defconst grid-calc--class-overrides
+  '(;; Excel takes the third argument on as an array, whatever the
+    ;; table says: AGGREGATE(14,6,A1:A9/(B1:B9="x"),1) needs no array
+    ;; formula.
+    ("AGGREGATE" V (VR RO RA))
+    ;; Excel's TYPE of several cells is 64, not the type of one of them.
+    ("TYPE" V (RX))
+    ;; Newer than the tables, and they give references: A1# is
+    ;; ANCHORARRAY(A1), and SUM(XLOOKUP(2,A1:A3,B1:D3)) adds a row.
+    ("ANCHORARRAY" R (RO))
+    ("XLOOKUP" R (VR RA RA VR VR VR)))
+  "Classes that stand in for those of `grid-calc-argument-classes'.")
+
+(defun grid-calc--kind-class (kind)
+  "Return the class of an argument of grid-table's KIND, for a function
+Excel's tables leave out."
+  (pcase kind
+    ((or 'values 'array 'areas) 'RA)
+    ('ref 'RO)
+    (_ 'VR)))
+
+(defun grid-calc--function-classes (name)
+  "Return (RETURN CLASSES . PAIRS) for the function NAME.
+A function Excel's tables leave out takes its arguments as it always
+has: a range whole where it takes several values, one value elsewhere."
+  (let ((name (upcase name)))
+    (or (cdr (assoc name grid-calc--class-overrides))
+        (gethash name grid-calc-argument-classes)
+        (let ((function (gethash name grid-calc-functions)))
+          (if (and function (not (functionp function))
+                   (not (grid-calc-function-legacy function)))
+              (list 'V (mapcar #'grid-calc--kind-class
+                               (append (grid-calc-function-kinds function)
+                                       (list (or (grid-calc-function-rest function)
+                                                 'any)))))
+            (list 'V '(RA)))))))
+
+(defun grid-calc--argument-class (classes index pairs)
+  "Return the class of the argument at INDEX, from CLASSES.
+The last of CLASSES repeats, or with PAIRS the last two in turn."
+  (let ((count (length classes)))
+    (cond ((< index count) (nth index classes))
+          ((and pairs (>= count 2))
+           (nth (+ count -2 (% (- index count) 2)) classes))
+          (t (car (last classes))))))
+
+(defun grid-calc--token-class (ast)
+  "Return the class AST's token has before any conversion.
+REF for a reference, VAL for a value, ARR for an array, nil for an
+operator."
+  (pcase (car-safe ast)
+    ((or 'CELL-REF 'RANGE 'STRUCT-REF 'NAME) 'REF)
+    ('ARRAY 'ARR)
+    ('FUNCTION-CALL
+     (pcase (car (grid-calc--function-classes (cadr ast)))
+       ('R 'REF) ('A 'ARR) (_ 'VAL)))
+    ((or 'BINARY-OP 'UNARY-OP 'RANGE-OP 'INTERSECT 'UNION) nil)
+    (_ 'VAL)))
+
+(defun grid-calc--operands (ast)
+  "Return each operand of AST with how it is converted.
+Each is (OPERAND CONVERSION . VALUE-TYPE)."
+  (pcase ast
+    (`(FUNCTION-CALL ,name ,arguments)
+     (pcase-let ((`(,_ ,classes . ,pairs) (grid-calc--function-classes name)))
+       (cl-loop for argument in arguments
+                for index from 0
+                collect
+                (let ((class (symbol-name (grid-calc--argument-class
+                                           classes index pairs))))
+                  (cons argument
+                        (cons (pcase (aref class 1)
+                                (?O 'ORG) (?V 'VAL) (?A 'ARR)
+                                (?R 'RPT) (?X 'RPX))
+                              (eq (aref class 0) ?V)))))))
+    (`(UNARY-OP @ ,operand) (list (cons operand (cons 'ORG nil))))
+    (`(UNARY-OP ,_ ,operand) (list (cons operand (cons 'RPO t))))
+    (`(BINARY-OP ,_ ,left ,right)
+     (list (cons left (cons 'RPO t)) (cons right (cons 'RPO t))))
+    ((or `(RANGE-OP ,left ,right) `(INTERSECT ,left ,right))
+     (list (cons left (cons 'RPO nil)) (cons right (cons 'RPO nil))))
+    (`(UNION . ,parts)
+     (mapcar (lambda (part) (cons part (cons 'RPO nil))) parts))))
+
+(defun grid-calc--classify (ast table conversion value-type
+                                previous previous-class was-ref)
+  "Record in TABLE the class of AST and of each part of it.
+AST stands where CONVERSION applies, in an argument that takes a value
+when VALUE-TYPE is non-nil.  PREVIOUS is the conversion of the token it
+is an operand of and PREVIOUS-CLASS the class conversion done there;
+WAS-REF is non-nil when that token is a reference."
+  (let* ((class (grid-calc--token-class ast))
+         (class (if (and value-type (eq class 'REF)) 'VAL class))
+         (conversion (if (eq conversion 'RPO) previous conversion))
+         (class-conversion
+          (pcase conversion
+            ((or 'ORG 'VAL 'ARR) conversion)
+            ('RPT (pcase previous
+                    ((or 'ORG 'VAL 'ARR) (if was-ref 'VAL previous-class))
+                    ('RPT previous-class)
+                    (_ (if was-ref previous-class 'ORG))))
+            (_ (if (or (eq class 'REF) (eq previous-class 'ARR))
+                   previous-class
+                 'ORG)))))
+    (pcase class-conversion
+      ('VAL (when (eq class 'ARR) (setq class 'VAL)))
+      ('ARR (when (eq class 'VAL) (setq class 'ARR))))
+    (if class
+        (puthash ast class table)
+      ;; The reference an operator makes has no token of its own, but
+      ;; is read as one would be: =E:F 11:12 in A9 is #VALUE!.
+      (when (memq (car-safe ast) '(RANGE-OP INTERSECT UNION))
+        (puthash ast (cond ((not value-type) 'REF)
+                           ((eq class-conversion 'ARR) 'ARR)
+                           (t 'VAL))
+                 table)))
+    (dolist (operand (grid-calc--operands ast))
+      (grid-calc--classify (car operand) table (cadr operand) (cddr operand)
+                           conversion class-conversion (eq class 'REF)))))
+
+(defun grid-calc--token-classes (ast)
+  "Return the table of classes of the cell formula AST.
+See `grid-calc--classes'."
+  (or (gethash ast grid-calc--class-cache)
+      (let ((table (make-hash-table :test #'eq)))
+        ;; A cell formula starts as one value.
+        (grid-calc--classify ast table 'VAL t 'VAL 'VAL nil)
+        (puthash ast table grid-calc--class-cache))))
+
+(defun grid-calc--one-value (ast value)
+  "Return the one value VALUE, that of AST, comes to as a value token.
+A range is its cell in the formula's row or column.  Several values
+written out or named are the first; those a function or an operator
+computes stay as they are, as SIGN's do in SUM(SIGN(FREQUENCY(...))):
+its value class only says how it reads the references given it."
+  (cond ((grid-calc-ref-p value) (grid-calc--intersect value))
+        ((eq (car-safe value) 'union) (grid-calc-err "#VALUE!"))
+        ((and (grid-calc-array-p value) (memq (car-safe ast) '(ARRAY NAME)))
+         (grid-calc-aref value 0 0))
+        (t value)))
+
 (defun grid-calc--eval (model ast)
   "Return the value of AST, a parsed formula, computed on MODEL's sheet.
-A reference stays a `grid-calc-ref'; see `grid-calc--scalar-or-array'."
+A reference stays a `grid-calc-ref'; see `grid-calc--scalar-or-array'.
+Under `grid-calc--classes' a part whose class is VAL is one value."
+  (let ((value (grid-calc--eval-node model ast)))
+    (if (and grid-calc--classes
+             (eq (gethash ast grid-calc--classes) 'VAL))
+        (grid-calc--one-value ast value)
+      value)))
+
+(defun grid-calc--eval-node (model ast)
+  "Return the value of AST, a parsed formula, computed on MODEL's sheet,
+whatever its class.  See `grid-calc--eval'."
   (pcase ast
     (`(NUMBER ,value) value)
     (`(STRING ,value) value)
@@ -1965,7 +2142,14 @@ The value is in the form a cell stores; see `grid-calc--store'.  With
 SPILL it is returned as the formula computed it, an array of several
 values included, for `grid-calc--spill' to store."
   (let* ((grid-calc--here (list model row col))
-         (grid-calc--array-context (or grid-calc--array-formula spill))
+         (classes (and grid-calc-legacy-arrays row col
+                       (not grid-calc--array-formula) (not spill)
+                       (not (eq (car-safe ast) 'ELISP-CODE))
+                       (grid-calc--token-classes ast)))
+         (grid-calc--classes classes)
+         ;; With classes, they alone say where a range is one value.
+         (grid-calc--array-context
+          (or grid-calc--array-formula spill classes))
          (value (grid-calc--eval model ast)))
     (if (eq (car-safe ast) 'ELISP-CODE)
         value
@@ -2141,7 +2325,8 @@ A value for a scalar KIND may still be an array, or an error value."
   (pcase kind
     ('lazy ast)
     ('ref
-     (let ((value (grid-calc--eval model ast)))
+     ;; A reference, whatever Excel would make of it
+     (let ((value (grid-calc--eval-node model ast)))
        (if (or (grid-calc-ref-p value) (grid-calc-err-p value)
                (eq (car-safe value) 'union))
            value
