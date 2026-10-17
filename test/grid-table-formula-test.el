@@ -763,6 +763,8 @@
     (should (equal (funcall value "=CHAR(128)") "€"))
     (should (equal (funcall value "=CHAR(200)") "È"))
     (should (equal (funcall value "=CHAR(256)") "#VALUE!"))
+    (should (equal (funcall value "=CODE(CHAR(128))") 128))
+    (should (equal (funcall value "=CODE(\"È\")") 200))
     ;; The first argument that fails gives the error.
     (should (equal (funcall value "=FLOOR(\"x\",1/0)") "#VALUE!"))
     (should (equal (funcall value "=FLOOR(1/0,\"x\")") "#DIV/0!"))))
