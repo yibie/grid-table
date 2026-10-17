@@ -2391,6 +2391,17 @@ come from pycel's and IronCalc's TEXT test workbooks."
                                 ("" "=1/0" "h") ("" "" "i")))))
                    (cdr case)))))
 
+(ert-deftest grid-table-formula-xmatch-by-halves-finds-as-excel-does ()
+  ;; Of equal values, the search by halves finds the first in values
+  ;; sorted up and the last in values sorted down; the next smaller one
+  ;; in values sorted down is the first of its run.
+  (dolist (case '(("=XMATCH(5,{1,5,5,5,9},0,2)" . 2)
+                  ("=XMATCH(5,{9,5,5,5,1},0,-2)" . 4)
+                  ("=XMATCH(6,{1,5,5,5,9},1,2)" . 5)
+                  ("=XMATCH(6,{9,5,5,5,1},-1,-2)" . 2)
+                  ("=XMATCH(0,{1,5,9},-1,2)" . "#N/A")))
+    (should (equal (grid-table-formula-test--eval (car case)) (cdr case)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
