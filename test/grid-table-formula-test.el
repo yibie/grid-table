@@ -3197,7 +3197,10 @@ Excel's values for."
                   ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},2,0)" . "#NUM!")
                   ("=PERCENTRANK.INC({0,0.1,0.7,0.002,4},2,2)" . 0.84)
                   ("=LOGINV(0.4,2,2)" . 4.45178791317475)
-                  ("=ZTEST({3.2,0.7},0.7,3)" . 0.2778448951413972)))
+                  ("=ZTEST({3.2,0.7},0.7,3)" . 0.2778448951413972)
+                  ("=ZTEST({3.2,0.7},2,0)" . "#NUM!")
+                  ("=ZTEST({4},2,2)" . "#DIV/0!")
+                  ("=ZTEST({#NUM!,#REF!},1)" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
 
 (provide 'grid-table-formula-test)

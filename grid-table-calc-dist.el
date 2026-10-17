@@ -298,9 +298,14 @@ the sample."
 (grid-calc-define z.test ((array array) (x number) &optional (sigma number))
   "The one-tailed chance of a mean above that of ARRAY, were it X.
 SIGMA is the standard deviation, by default that of the sample."
-  (let* ((numbers (cl-remove-if-not #'numberp (grid-calc-array-values array)))
+  (let* ((values (grid-calc-array-values array))
+         (numbers (cl-remove-if-not #'numberp values))
          (n (length numbers)))
+    (when-let* ((error (cl-find-if #'grid-calc-err-p values)))
+      (grid-calc-raise (grid-calc-err-code error)))
     (when (= n 0) (grid-calc-raise "#N/A"))
+    (when (= n 1) (grid-calc-raise "#DIV/0!"))
+    (when (and sigma (<= sigma 0)) (grid-calc-raise "#NUM!"))
     (let ((sigma (or sigma (sqrt (grid-calc--variance numbers t))))
           (mean (/ (float (apply #'+ numbers)) n)))
       (when (zerop sigma) (grid-calc-raise "#DIV/0!"))
