@@ -2590,6 +2590,28 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval "=RANDARRAY(0)") "#VALUE!"))
   (should (equal (grid-table-formula-test--eval "=RANDARRAY(1,1,3,2)") "#VALUE!")))
 
+(ert-deftest grid-table-formula-math-functions-excel-had-missing ()
+  "The math functions added from Excel's list give what Excel gives.
+The cases come from IronCalc's and the formulas package's workbooks."
+  (dolist (case '(("=SEC(0)" 1.0) ("=COT(0)" "#DIV/0!") ("=ACOT(0)" 1.5707963267948966)
+                  ("=ACOTH(0.5)" "#NUM!") ("=SQRTPI(-1)" "#NUM!")
+                  ("=FACTDOUBLE(7)" 105.0) ("=FACTDOUBLE(-1)" 1.0)
+                  ("=FACTDOUBLE(-1.1)" "#NUM!") ("=SQRTPI(TRUE)" "#VALUE!")
+                  ("=QUOTIENT(-7,2)" -3) ("=QUOTIENT(TRUE,1)" "#VALUE!")
+                  ("=GCD(24,36)" 12) ("=LCM({4,\"8\",12})" 24)
+                  ("=LCM(\"8\",2,B1)" 8) ("=LCM(B1:C1)" 0) ("=GCD(B1,C1)" "#VALUE!")
+                  ("=GCD(,5)" "#N/A") ("=GCD(-0.0003,1)" "#NUM!") ("=GCD(\"\",1)" "#VALUE!")
+                  ("=LCM(2^31-1,2^30-1)" "#NUM!")
+                  ("=MULTINOMIAL(2,3,4)" 1260.0) ("=MULTINOMIAL({TRUE,1,2})" "#VALUE!")
+                  ("=PERMUT(5,2)" 20.0) ("=PERMUTATIONA(3,2)" 9.0) ("=COMBINA(4,3)" 20)
+                  ("=SERIESSUM(2,0,1,{1,2,3})" 17.0) ("=SERIESSUM(0,0,2,{1,2,3})" "#NUM!")
+                  ("=ROMAN(1999)" "MCMXCIX") ("=ROMAN(1999,4)" "MIM") ("=ARABIC(\"MCMXCIX\")" 1999)))
+    (let* ((model (grid-model-create 1 3 (list (list (car case) "" ""))))
+           (value (grid-model-get-computed-value model 0 0)))
+      (should (if (numberp (cadr case))
+                  (and (numberp value) (= value (cadr case)))
+                (equal (list (car case) value) case))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

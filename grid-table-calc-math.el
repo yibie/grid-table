@@ -247,6 +247,181 @@ A negative NUMBER rounds away from zero, or toward it when MODE is not 0."
             n (/ n radix)))
     (string-pad (if (string-empty-p digits) "0" digits) length ?0 t)))
 
+(grid-calc-define sqrtpi ((number number))
+  "The square root of NUMBER times pi."
+  :toolpak t
+  (when (< number 0) (grid-calc-raise "#NUM!"))
+  (sqrt (* number float-pi)))
+
+(grid-calc-define factdouble ((number number))
+  "The product of every other whole number from NUMBER down to 1."
+  :toolpak t
+  (when (< number -1) (grid-calc-raise "#NUM!"))
+  (let ((n (truncate number)) (product 1.0))
+    (while (> n 1) (setq product (* product n) n (- n 2)))
+    (grid-calc--finite product)))
+
+(grid-calc-define quotient ((number number) (divisor number))
+  "The whole part of NUMBER divided by DIVISOR."
+  :toolpak t
+  (when (zerop divisor) (grid-calc-raise "#DIV/0!"))
+  (grid-calc--tidy-number (ftruncate (/ (float number) divisor))))
+
+(grid-calc-define randbetween ((low number) (high number))
+  "A random whole number from LOW to HIGH."
+  (let ((low (ceiling low)) (high (floor high)))
+    (when (> low high) (grid-calc-raise "#NUM!"))
+    (+ low (random (1+ (- high low))))))
+
+(defun grid-calc--toolpak-numbers (arguments)
+  "Return the numbers of ARGUMENTS, `values' arguments, as GCD reads them.
+Text that reads as a number counts in a range or array too; other text,
+TRUE and FALSE are #VALUE! wherever they are.  A blank cell is 0 in a
+range and left out as an argument; an argument left out is #N/A.  With
+no number at all, a range of nothing but cells past the sheet's filled
+ones gives 0, and arguments that are none #VALUE!."
+  (let (numbers ranges)
+    (dolist (argument arguments)
+      (when (eq argument :blank) (grid-calc-raise "#N/A"))
+      ;; One cell is read as written directly.
+      (let ((one (grid-calc--deref argument)))
+        (unless (grid-calc-array-p one) (setq argument one)))
+      (when (or (grid-calc-ref-p argument) (grid-calc-array-p argument)
+                (consp argument))
+        (setq ranges t))
+      (grid-calc-each-value
+       argument
+       (lambda (value direct)
+         (cond
+          ((numberp value) (push value numbers))
+          ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+          ((eq value :blank) (unless direct (push 0 numbers)))
+          ((and (stringp value) (grid-calc-text-number value))
+           (push (grid-calc-text-number value) numbers))
+          (t (grid-calc-raise "#VALUE!"))))))
+    (cond (numbers (nreverse numbers))
+          (ranges '(0))
+          (t (grid-calc-raise "#VALUE!")))))
+
+(defun grid-calc--whole-numbers (arguments)
+  "Return the numbers of ARGUMENTS with their fractions cut off.
+#NUM! for one below 0 or from 2^53."
+  (mapcar (lambda (n)
+            (unless (and (<= 0 n) (< n (expt 2.0 53))) (grid-calc-raise "#NUM!"))
+            (truncate n))
+          (grid-calc--toolpak-numbers arguments)))
+
+(grid-calc-define gcd (&rest (numbers values))
+  "The greatest whole number that divides each of NUMBERS."
+  (let ((result 0))
+    (dolist (n (grid-calc--whole-numbers numbers) result)
+      (setq result (cl-gcd result n)))))
+
+(grid-calc-define lcm (&rest (numbers values))
+  "The least whole number each of NUMBERS divides; 0 when one of them is."
+  (let ((result 1))
+    (dolist (n (grid-calc--whole-numbers numbers) result)
+      (setq result (if (or (zerop n) (zerop result)) 0 (cl-lcm result n)))
+      ;; Past 2^53 a double cannot hold it.
+      (when (>= result (expt 2 53)) (grid-calc-raise "#NUM!")))))
+
+(grid-calc-define multinomial (&rest (numbers values))
+  "The factorial of the sum of NUMBERS over the product of their factorials."
+  (let ((result 1.0) (sum 0))
+    (dolist (n (grid-calc--whole-numbers numbers))
+      ;; Each step multiplies by the binomial coefficient of SUM + N over N.
+      (cl-loop for i from 1 to n
+               do (setq result (/ (* result (+ sum i)) i)))
+      (setq sum (+ sum n)))
+    (grid-calc--finite (fround result))))
+
+(grid-calc-define permut ((number integer) (chosen integer))
+  "How many ways there are to arrange CHOSEN of NUMBER things."
+  (when (or (< number 0) (< chosen 0) (< number chosen))
+    (grid-calc-raise "#NUM!"))
+  (let ((result 1.0))
+    (cl-loop for i from 0 below chosen do (setq result (* result (- number i))))
+    (grid-calc--finite result)))
+
+(grid-calc-define permutationa ((number integer) (chosen integer))
+  "How many ways there are to arrange CHOSEN of NUMBER things, repeating."
+  (when (or (< number 0) (< chosen 0)) (grid-calc-raise "#NUM!"))
+  (grid-calc--finite (expt (float number) chosen)))
+
+(grid-calc-define combina ((number integer) (chosen integer))
+  "How many ways there are to choose CHOSEN of NUMBER things, repeating."
+  (when (or (< number 0) (< chosen 0) (and (zerop number) (> chosen 0)))
+    (grid-calc-raise "#NUM!"))
+  (let ((result 1.0) (n (+ number chosen -1)))
+    (cl-loop for i from 1 to chosen
+             do (setq result (/ (* result (- n (- i 1))) i)))
+    (grid-calc--tidy-number (fround result))))
+
+(grid-calc-define seriessum ((x number) (n number) (m number) (coefficients values))
+  "The sum of each of COEFFICIENTS times X to N, N + M, N + 2M and so on."
+  :toolpak t
+  (let ((power n) (sum 0.0))
+    (dolist (a (grid-calc-numbers (list coefficients)))
+      (when (and (zerop x) (<= power 0))
+        (grid-calc-raise (if (zerop power) "#NUM!" "#DIV/0!")))
+      (setq sum (+ sum (* a (expt (float x) power))) power (+ power m)))
+    (grid-calc--finite sum)))
+
+(grid-calc-define munit ((size integer))
+  "The SIZE by SIZE unit matrix."
+  (when (< size 1) (grid-calc-raise "#VALUE!"))
+  (grid-calc-array size size (lambda (row col) (if (= row col) 1 0))))
+
+(defconst grid-calc--roman-digits
+  '((?M . 1000) (?D . 500) (?C . 100) (?L . 50) (?X . 10) (?V . 5) (?I . 1))
+  "The Roman digits, largest first, with their values.")
+
+(grid-calc-define roman ((number number) &optional (form any 0))
+  "NUMBER in Roman digits.  FORM 0, the default, is the classic form;
+1 to 4 are ever shorter, as FORM TRUE is 0 and FALSE 4."
+  (let ((form (cond ((eq form t) 0) ((eq form :false) 4)
+                    ((grid-calc-blank-p form) 0)
+                    (t (truncate (grid-calc-num form)))))
+        (value (truncate number))
+        (chars (vconcat (mapcar #'car grid-calc--roman-digits)))
+        (values (vconcat (mapcar #'cdr grid-calc--roman-digits)))
+        (digits '()))
+    (unless (and (<= 0 value 3999) (<= 0 form 4)) (grid-calc-raise "#VALUE!"))
+    ;; As LibreOffice's ROMAN: each of M, C, X and I in turn, a 4 or 9 of
+    ;; it written by taking from a larger digit, as far as FORM allows.
+    (dotimes (i 4)
+      (let* ((index (* 2 i))
+             (digit (/ value (aref values index))))
+        (if (= (% digit 5) 4)
+            (let ((index2 (if (= digit 4) (1- index) (- index 2)))
+                  (steps 0))
+              (while (and (< steps form) (< index 6))
+                (setq steps (1+ steps))
+                (if (<= (- (aref values index2) (aref values (1+ index))) value)
+                    (setq index (1+ index))
+                  (setq steps form)))
+              (push (aref chars index) digits)
+              (push (aref chars index2) digits)
+              (setq value (- (+ value (aref values index)) (aref values index2))))
+          (when (> digit 4) (push (aref chars (1- index)) digits))
+          (dotimes (_ (% digit 5)) (push (aref chars index) digits))
+          (setq value (% value (aref values index))))))
+    (concat (nreverse digits))))
+
+(grid-calc-define arabic ((text text))
+  "The number TEXT writes in Roman digits, which may start with -."
+  (let* ((text (string-trim text))
+         (negative (string-prefix-p "-" text))
+         (text (upcase (if negative (substring text 1) text)))
+         (total 0) (previous 0))
+    (when (> (length text) 255) (grid-calc-raise "#VALUE!"))
+    (cl-loop for i downfrom (1- (length text)) to 0
+             do (let ((value (alist-get (aref text i) grid-calc--roman-digits)))
+                  (unless value (grid-calc-raise "#VALUE!"))
+                  (if (< value previous) (setq total (- total value))
+                    (setq total (+ total value) previous value))))
+    (if negative (- total) total)))
+
 ;;;----------------------------------------------------------------------
 ;;; Trigonometry
 ;;;----------------------------------------------------------------------
@@ -286,6 +461,39 @@ DOMAIN, a function of the number, makes it #NUM! when it does not hold."
                         (lambda (x) (/ (* x float-pi) 180)))
 (grid-calc--define-math degrees "NUMBER radians in degrees."
                         (lambda (x) (/ (* x 180) float-pi)))
+
+(defun grid-calc--within-trig-p (x)
+  "Return non-nil when X is small enough for SEC, CSC and COT."
+  (< (abs x) (expt 2.0 27)))
+
+(defun grid-calc--reciprocal (x)
+  "Return 1 / X, #DIV/0! for 0."
+  (if (zerop x) (grid-calc-raise "#DIV/0!") (/ 1.0 x)))
+
+(grid-calc--define-math sec "The secant of NUMBER, an angle in radians."
+                        (lambda (x) (/ 1.0 (cos x))) #'grid-calc--within-trig-p)
+(grid-calc--define-math csc "The cosecant of NUMBER, an angle in radians."
+                        (lambda (x) (grid-calc--reciprocal (sin x)))
+                        #'grid-calc--within-trig-p)
+(grid-calc--define-math cot "The cotangent of NUMBER, an angle in radians."
+                        (lambda (x) (grid-calc--reciprocal (tan x)))
+                        #'grid-calc--within-trig-p)
+(grid-calc--define-math sech "The hyperbolic secant of NUMBER."
+                        (lambda (x) (if (> (abs x) 710) 0.0
+                                      (/ 2 (+ (exp x) (exp (- x)))))))
+(grid-calc--define-math csch "The hyperbolic cosecant of NUMBER."
+                        (lambda (x) (if (> (abs x) 710) 0.0
+                                      (grid-calc--reciprocal
+                                       (/ (- (exp x) (exp (- x))) 2)))))
+(grid-calc--define-math coth "The hyperbolic cotangent of NUMBER."
+                        (lambda (x) (if (> (abs x) 20) (cl-signum x)
+                                      (grid-calc--reciprocal
+                                       (/ (- (exp (* 2 x)) 1) (+ (exp (* 2 x)) 1))))))
+(grid-calc--define-math acot "The angle whose cotangent is NUMBER."
+                        (lambda (x) (- (/ float-pi 2) (atan x))))
+(grid-calc--define-math acoth "The number whose hyperbolic cotangent is NUMBER."
+                        (lambda (x) (/ (log (/ (+ x 1) (- x 1))) 2))
+                        (lambda (x) (> (abs x) 1)))
 
 (grid-calc-define atan2 ((x number) (y number))
   "The angle of the point X, Y from the x axis."
