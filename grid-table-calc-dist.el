@@ -331,16 +331,16 @@ SIGMA is the standard deviation, by default that of the sample."
 
 (grid-calc-define gamma ((x number))
   "The gamma function at X."
-  (grid-calc--require (not (and (<= x 0) (= x (ffloor x)))))
+  (grid-calc--require (not (and (<= x 0) (= x (ffloor (float x))))))
   (let ((value (exp (grid-calc--log-gamma x))))
     (grid-calc--finite
-     (grid-calc--snap (if (and (< x 0) (cl-oddp (truncate (ffloor x)))) (- value)
+     (grid-calc--snap (if (and (< x 0) (cl-oddp (floor x))) (- value)
                         value)))))
 
 (defun grid-calc--gamma-density (x alpha beta)
   "Return the gamma density of ALPHA and BETA at X."
   (cond ((> x 0)
-         (exp (- (* (- alpha 1) (log x)) (/ x beta) (grid-calc--log-gamma alpha)
+         (exp (- (* (- alpha 1) (log x)) (/ x (float beta)) (grid-calc--log-gamma alpha)
                  (* alpha (log beta)))))
         ((and (= x 0) (= alpha 1)) (/ 1.0 beta))
         (t 0.0)))
@@ -456,7 +456,7 @@ HIGH, is P."
 
 (defun grid-calc--t-cdf (x df)
   "Return the t distribution of DF degrees of freedom at X."
-  (let ((tail (* 0.5 (grid-calc--beta-i (/ df (+ df (* x x))) (/ df 2.0) 0.5))))
+  (let ((tail (* 0.5 (grid-calc--beta-i (/ df (+ df (* x x 1.0))) (/ df 2.0) 0.5))))
     (if (> x 0) (- 1 tail) tail)))
 
 (grid-calc-define t.dist ((x number) (df integer) (cumulative bool))
@@ -464,7 +464,7 @@ HIGH, is P."
   (grid-calc--require (>= df 1))
   (if cumulative (grid-calc--t-cdf x df)
     (exp (- (+ (grid-calc--log-gamma (/ (+ df 1) 2.0))
-               (* (- (/ (+ df 1) 2.0)) (log (+ 1 (/ (* x x) df)))))
+               (* (- (/ (+ df 1) 2.0)) (log (+ 1 (/ (* x x 1.0) df)))))
             (+ (* 0.5 (log (* df float-pi))) (grid-calc--log-gamma (/ df 2.0)))))))
 
 (grid-calc-define t.dist.rt ((x number) (df integer))
@@ -541,7 +541,7 @@ Student's t test: TYPE 1 paired, 2 of equal variance, 3 of unequal."
 (defun grid-calc--f-cdf (x d1 d2)
   "Return the F distribution of D1 and D2 degrees of freedom at X."
   (if (<= x 0) 0.0
-    (grid-calc--beta-i (/ (* d1 x) (+ (* d1 x) d2)) (/ d1 2.0) (/ d2 2.0))))
+    (grid-calc--beta-i (/ (* d1 x 1.0) (+ (* d1 x) d2)) (/ d1 2.0) (/ d2 2.0))))
 
 (grid-calc-define f.dist ((x number) (d1 integer) (d2 integer) (cumulative bool))
   "The F distribution of D1 and D2 degrees of freedom at X, or its density."
@@ -791,7 +791,7 @@ three points in ten missing."
              (ys nil))
         ;; The step is constant, or gaps are whole steps.
         (cl-loop for (a b) on merged while b
-                 for steps = (/ (- (car b) (car a)) step)
+                 for steps = (/ (- (car b) (car a)) (float step))
                  do (unless (= steps (ffloor steps)) (grid-calc-raise "#NUM!"))
                  do (push (cdr a) ys)
                  do (dotimes (_ (1- (truncate steps)))

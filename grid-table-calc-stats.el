@@ -350,7 +350,7 @@ EXCLUSIVE leaves out the first and last as PERCENTILE.EXC does."
     (when (or (= n 0) (< k 0) (> k 1)) (grid-calc-raise "#NUM!"))
     (let ((position (if exclusive (1- (* k (1+ n))) (* k (1- n)))))
       (when (or (< position 0) (> position (1- n))) (grid-calc-raise "#NUM!"))
-      (let* ((low (truncate (ffloor (grid-calc--snap position))))
+      (let* ((low (floor (grid-calc--snap position)))
              (fraction (- position low)))
         (grid-calc--tidy-number
          (grid-calc--snap

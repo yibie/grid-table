@@ -1698,6 +1698,25 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
     (should (equal (first-value "=COUNTIF(B1:B4,#N/A)") 0))
     (should (equal (first-value "=COUNTA(#REF!)") 1))))
 
+(ert-deftest grid-table-formula-whole-numbers-divide-as-numbers ()
+  ;; Numbers typed whole are no whole-number arithmetic: 6/10 is 0.6.
+  (cl-flet ((near (formula expected)
+              (let ((value (grid-table-formula-test--eval formula)))
+                (should (equal (list formula (and (numberp value)
+                                                  (< (abs (- value expected)) 1e-9)))
+                               (list formula t))))))
+    (near "=T.DIST(2,6,TRUE)" 0.9537868442341624)
+    (near "=T.DIST(2,6,FALSE)" 0.06403612261840969)
+    (near "=T.DIST.2T(1,2)" 0.4226497308103734)
+    (near "=F.DIST(2,6,8,TRUE)" 0.8208)
+    (near "=F.DIST.RT(2,5,6)" 0.21167432749937592)
+    (near "=GAMMA.DIST(1,2,3,FALSE)" 0.07961459006375433)
+    (near "=EFFECT(1,2)" 1.25)
+    (near "=PERCENTILE.INC({2,1,4},1)" 4)
+    (near "=BITAND(6,3)" 2)
+    (near "=HOUR(1)" 0))
+  (should (equal (grid-table-formula-test--eval "=GAMMA(-1)") "#NUM!")))
+
 (ert-deftest grid-table-formula-pairs-match-by-count ()
   ;; Excel pairs values in reading order, whatever shape holds them.
   (let ((rows '(("1" "4" "5" "6") ("2" "" "" "") ("3" "x" "" ""))))

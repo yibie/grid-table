@@ -121,7 +121,7 @@ Each pair is (NAME BASE), as (bin 2)."
 
 (defun grid-calc--bit-operand (number)
   "Return NUMBER as a bit operand, a whole number below 2^48."
-  (unless (and (>= number 0) (< number (expt 2.0 48)) (= number (ftruncate number)))
+  (unless (and (>= number 0) (< number (expt 2.0 48)) (= number (ftruncate (float number))))
     (grid-calc-raise "#NUM!"))
   (truncate number))
 

@@ -31,7 +31,7 @@ Text that is not a date or a number, and a negative number, are errors."
 
 (defun grid-calc--time-parts (serial)
   "Return (HOUR MINUTE SECOND) of SERIAL, rounded to the second."
-  (let* ((seconds (round (* (- serial (ffloor serial)) 86400.0)))
+  (let* ((seconds (round (* (- serial (ffloor (float serial))) 86400.0)))
          (seconds (min seconds 86399)))
     (list (/ seconds 3600) (% (/ seconds 60) 60) (% seconds 60))))
 
@@ -74,7 +74,7 @@ carries over into the years and months around it."
   "The fraction of a day the time TEXT names."
   (let ((serial (grid-calc--parse-date-time text)))
     (unless serial (grid-calc-raise "#VALUE!"))
-    (grid-calc--tidy-number (- serial (ffloor serial)))))
+    (grid-calc--tidy-number (- serial (ffloor (float serial))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Parts of a date

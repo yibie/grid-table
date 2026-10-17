@@ -15,7 +15,7 @@
 (defun grid-calc--growth (rate periods)
   "Return (1 + RATE) to the power PERIODS, or #NUM! where it has none."
   (let ((base (+ 1.0 rate)))
-    (when (and (< base 0) (/= periods (ftruncate periods)))
+    (when (and (< base 0) (/= periods (ftruncate (float periods))))
       (grid-calc-raise "#NUM!"))
     (expt base periods)))
 
@@ -88,9 +88,9 @@ TYPE non-zero pays at the start of each period."
       (let* ((adjusted (* payment (+ 1 (* rate type))))
              (top (- adjusted (* future rate)))
              (bottom (+ adjusted (* present rate))))
-        (if (or (zerop bottom) (<= (/ top bottom) 0) (<= (+ 1 rate) 0))
+        (if (or (zerop bottom) (<= (/ top (float bottom)) 0) (<= (+ 1 rate) 0))
             (grid-calc-raise "#NUM!")
-          (/ (log (/ top bottom)) (log (+ 1.0 rate))))))))
+          (/ (log (/ top (float bottom))) (log (+ 1.0 rate))))))))
 
 (defun grid-calc--newton (function guess)
   "Return where FUNCTION is zero, searching from GUESS, or #NUM!.
@@ -203,7 +203,7 @@ off to FUTURE."
 (grid-calc-define effect ((nominal number) (periods integer))
   "The yearly rate NOMINAL comes to, compounded PERIODS times a year."
   (when (or (<= nominal 0) (< periods 1)) (grid-calc-raise "#NUM!"))
-  (- (expt (+ 1.0 (/ nominal periods)) periods) 1))
+  (- (expt (+ 1.0 (/ nominal (float periods))) periods) 1))
 
 (grid-calc-define nominal ((effective number) (periods integer))
   "The yearly rate that, compounded PERIODS times a year, comes to EFFECTIVE."
