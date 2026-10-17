@@ -326,10 +326,12 @@ With no such pair it is #DIV/0!, as in Excel."
 
 (grid-calc-define sumproduct ((first array) &rest (others array))
   "The sum of the products of the values in one place of each array.
-Values that are not numbers count as 0."
+Values that are not numbers count as 0, but text is #VALUE! when every
+array is one value, as Excel takes them then."
   (let* ((arrays (cons first others))
          (rows (grid-calc-array-rows first))
-         (cols (grid-calc-array-cols first)))
+         (cols (grid-calc-array-cols first))
+         (single (and (= rows 1) (= cols 1))))
     (dolist (array others)
       (unless (and (= (grid-calc-array-rows array) rows)
                    (= (grid-calc-array-cols array) cols))
@@ -343,6 +345,7 @@ Values that are not numbers count as 0."
                     (cond ((grid-calc-err-p value)
                            (grid-calc-raise (grid-calc-err-code value)))
                           ((numberp value) (setq product (* product value)))
+                          ((and single (stringp value)) (grid-calc-raise "#VALUE!"))
                           (t (setq product 0))))))
               columns)))))
 

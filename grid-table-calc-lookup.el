@@ -576,7 +576,13 @@ false the text is in R1C1 style; SHEET is put before it."
   (let ((fixed-row (memq absolute '(1 2)))
         (fixed-col (memq absolute '(1 3))))
     (concat
-     (and sheet (not (string-empty-p sheet)) (grid-calc-sheet-prefix sheet))
+     (and sheet (not (string-empty-p sheet))
+          ;; Excel quotes [Book1]Sheet1 only as it would Sheet1.
+          (if (and (string-match "\\`\\[[^]]+\\]\\(.+\\)\\'" sheet)
+                   (not (string-prefix-p "'" (grid-calc-sheet-prefix
+                                              (match-string 1 sheet)))))
+              (concat sheet "!")
+            (grid-calc-sheet-prefix sheet)))
      (if a1
          (concat (and fixed-col "$") (grid-calc-col-number-to-letter (1- column))
                  (and fixed-row "$") (number-to-string row))

@@ -169,7 +169,9 @@ HOW is passed on to `grid-calc-numbers'."
 (grid-calc--define-spread stdevpa "The standard deviation of all VALUES, text as 0."
                           (lambda (ns) (sqrt (grid-calc--variance ns nil))) 'a)
 (grid-calc--define-spread devsq "The sum of squares of NUMBERS from their mean."
-                          (lambda (ns) (if ns (grid-calc--squares ns) 0)))
+                          (lambda (ns)
+                            (unless ns (grid-calc-raise "#NUM!"))
+                            (grid-calc--squares ns)))
 (grid-calc--define-spread avedev "The mean distance of NUMBERS from their mean."
                           (lambda (ns)
                             (unless ns (grid-calc-raise "#NUM!"))
@@ -286,15 +288,33 @@ They are in the order they first come; #N/A when none repeats."
     (when (= best 1) (grid-calc-raise "#N/A"))
     (mapcar #'car (cl-remove-if-not (lambda (cell) (= (cdr cell) best)) counts))))
 
+(defun grid-calc--mode-numbers (arguments)
+  "Return the numbers of ARGUMENTS as MODE takes them.
+Excel takes each argument as an array there, so one written directly,
+or a reference to one cell, is #VALUE! unless it is a number."
+  (dolist (argument arguments)
+    (let ((value (cond ((and (grid-calc-ref-p argument)
+                             (= (grid-calc-ref-rows argument) 1)
+                             (= (grid-calc-ref-cols argument) 1))
+                        (grid-calc--deref argument))
+                       ((not (or (grid-calc-ref-p argument)
+                                 (grid-calc-array-p argument)
+                                 (eq (car-safe argument) 'union)))
+                        argument)
+                       (t 0))))
+      (cond ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+            ((not (numberp value)) (grid-calc-raise "#VALUE!")))))
+  (grid-calc-numbers arguments))
+
 (grid-calc-define mode.sngl (&rest (numbers values))
   "The number coming most often in NUMBERS, the first when several do."
-  (car (grid-calc--modes (grid-calc-numbers numbers))))
+  (car (grid-calc--modes (grid-calc--mode-numbers numbers))))
 
 (grid-calc-alias mode mode.sngl)
 
 (grid-calc-define mode.mult (&rest (numbers values))
   "The numbers coming most often in NUMBERS, as a column."
-  (grid-calc-array-from-list (grid-calc--modes (grid-calc-numbers numbers))))
+  (grid-calc-array-from-list (grid-calc--modes (grid-calc--mode-numbers numbers))))
 
 (defun grid-calc--kth (numbers k largest)
   "Return the Kth LARGEST, or smallest, of NUMBERS, counting from 1."

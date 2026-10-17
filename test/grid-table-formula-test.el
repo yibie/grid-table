@@ -988,6 +988,25 @@
   (should (equal (grid-table-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},0,-1,-2)") 3))
   (should (equal (grid-table-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},\"none\",0,-2)") "none")))
 
+(ert-deftest grid-table-formula-takes-one-value-where-excel-wants-a-number ()
+  ;; MODE takes a value written directly, or one cell, as an array of
+  ;; one, so text or a blank there is #VALUE!, as Excel gives.
+  (dolist (case '(("=MODE(B1,\"1\",2,3)" . "#VALUE!")
+                  ("=MODE(\"1\",1,1/0,2,3)" . "#VALUE!")
+                  ("=MODE(B1,2,2,E1)" . "#VALUE!")
+                  ("=MODE(B1:D1,1,1)" . 1)
+                  ("=DEVSQ(C1:D1)" . "#NUM!")
+                  ("=DEVSQ(B1)" . 0)
+                  ;; So with SUMPRODUCT of single cells.
+                  ("=SUMPRODUCT(C1:C1,B1:B1)" . "#VALUE!")
+                  ("=SUMPRODUCT(C1:D1,B1:C1)" . 0)
+                  ("=SUMPRODUCT(E1:E1,B1:B1)" . 0)
+                  ;; A workbook before a plain sheet name is not quoted.
+                  ("=ADDRESS(2,3,3,TRUE,\"[Book1]Sheet1\")" . "[Book1]Sheet1!$C2")
+                  ("=ADDRESS(2,3,3,TRUE,\"[Book1]My Sheet\")" . "'[Book1]My Sheet'!$C2")))
+    (should (equal (grid-table-formula-test--eval (car case) "1" "x" "y" "")
+                   (cdr case)))))
+
 (ert-deftest grid-table-formula-common-functions ()
   (should (equal (grid-table-formula-test--values
                   '(("=TRUNC(1.59)" "=TRUNC(-1.59,1)" "=FLOOR(7,2)"
