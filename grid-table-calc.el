@@ -2408,25 +2408,30 @@ Several values for one value make the result several values too."
   (let* ((errors (grid-calc-function-errors function))
          (scalar (mapcar #'grid-calc--scalar-kind-p kinds))
          ;; An error where Excel wants a reference, as in
-         ;; COUNTIF(#REF!,1), is the function's answer too.
+         ;; COUNTIF(#REF!,1), is the function's answer too, even of a
+         ;; function that takes errors, as COUNTBLANK(#REF!) is #REF!.
+         ;; ISREF(#REF!), COUNTA(#REF!) and the like, whose class
+         ;; ends in X, take it as a value.
          (stops (pcase-let ((`(,_ ,classes . ,pairs)
                              (grid-calc--function-classes
                               (grid-calc-function-name function))))
                   (cl-loop for kind in kinds
                            for one in scalar
                            for index from 0
-                           collect (or one
-                                       (and (memq kind '(values array areas))
-                                            (string-prefix-p
-                                             "R" (symbol-name
+                           collect
+                           (or (and one (not errors))
+                               (and (memq kind '(values array areas))
+                                    (let ((class (symbol-name
                                                   (grid-calc--argument-class
-                                                   classes index pairs)))))))))
+                                                   classes index pairs))))
+                                      (and (string-prefix-p "R" class)
+                                           (not (and errors
+                                                     (string-suffix-p
+                                                      "X" class)))))))))))
     (cl-flet ((run (values)
-                (or (and (not errors)
-                         (cl-loop for value in values
-                                  for stop in stops
-                                  thereis (and stop (grid-calc-err-p value)
-                                               value)))
+                (or (cl-loop for value in values
+                             for stop in stops
+                             thereis (and stop (grid-calc-err-p value) value))
                     (grid-calc--catching
                       (let ((grid-calc--model model)
                             (grid-calc--lazy-model model))

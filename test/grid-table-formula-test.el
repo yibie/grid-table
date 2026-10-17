@@ -1696,7 +1696,10 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
     (should (equal (first-value "=COUNTIF(#REF!,1)") "#REF!"))
     (should (equal (first-value "=IFNA(MATCH(1,#REF!,0),0)") "#REF!"))
     (should (equal (first-value "=COUNTIF(B1:B4,#N/A)") 0))
-    (should (equal (first-value "=COUNTA(#REF!)") 1))))
+    (should (equal (first-value "=COUNTA(#REF!)") 1))
+    (should (equal (first-value "=COUNTBLANK(#REF!)") "#REF!"))
+    (should (equal (first-value "=ISREF(#REF!)") nil))
+    (should (equal (first-value "=IFERROR(VLOOKUP(1,#REF!,1,0),\"x\")") "x"))))
 
 (ert-deftest grid-table-formula-whole-numbers-divide-as-numbers ()
   ;; Numbers typed whole are no whole-number arithmetic: 6/10 is 0.6.
