@@ -2376,6 +2376,21 @@ come from pycel's and IronCalc's TEXT test workbooks."
                     ("=MATCH(B1,C1:C3,0)" "" "3" "c")))
                  '(("b" "" "1" "a") (2 "" "" "b") ("#N/A" "" "3" "c")))))
 
+(ert-deftest grid-table-formula-xlookup-nearest-crosses-kinds ()
+  ;; Numbers sort below text, text below FALSE and TRUE; blanks and
+  ;; errors are passed over.  B1:B5 hold 2, 5, TRUE, "ala" and #DIV/0!.
+  (dolist (case '(("=XLOOKUP(10,B1:B5,C1:C5,,1)" . "g")
+                  ("=XLOOKUP(\"qwerty\",B1:B5,C1:C5,,1)" . "f")
+                  ("=XLOOKUP(FALSE,B1:B5,C1:C5,,-1)" . "g")
+                  ("=XLOOKUP(1,B1:B5,C1:C5,,-1)" . "#N/A")
+                  ("=XLOOKUP(TRUE,B1:B6,C1:C6,,1)" . "f")
+                  ("=XLOOKUP(\"zz\",B1:B6,C1:C6,,1)" . "f")))
+    (should (equal (car (car (grid-table-formula-test--values
+                              `((,(car case) "2" "a") ("" "5" "b")
+                                ("" "TRUE" "f") ("" "ala" "g")
+                                ("" "=1/0" "h") ("" "" "i")))))
+                   (cdr case)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

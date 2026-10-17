@@ -229,24 +229,34 @@ when none is, the search keeps to the values before it."
               (t (setq low middle)))))
     (or found (and (>= low 0) low))))
 
+(defun grid-calc--nearest-order (left right)
+  "Return -1, 0 or 1 as LEFT sorts before, with or after RIGHT, or nil.
+Numbers, text and TRUE and FALSE compare, as Excel sorts them; blanks
+and error values compare with nothing."
+  (let ((kind-p (lambda (value) (or (numberp value) (stringp value)
+                                    (grid-calc-boolean-p value)))))
+    (and (funcall kind-p left) (funcall kind-p right)
+         (grid-calc--sort-order left right))))
+
 (defun grid-calc--find-nearest (wanted length getter direction &optional from-end)
   "Return the position of WANTED among LENGTH values, or of the nearest.
 Values need not be sorted.  DIRECTION -1 takes the largest value below
-WANTED when none equals it, 1 the smallest above it."
+WANTED when none equals it, 1 the smallest above it, values of another
+kind being below or above as Excel sorts them."
   (let (best best-value)
     (dotimes (n length)
       (let* ((i (if from-end (- length n 1) n))
              (value (funcall getter i))
-             (order (grid-calc--lookup-order value wanted)))
+             (order (grid-calc--nearest-order value wanted)))
         (when order
           (cond
-           ((= order 0) (unless (and best (eql (grid-calc--lookup-order
+           ((= order 0) (unless (and best (eql (grid-calc--nearest-order
                                                  best-value wanted) 0))
                           (setq best i best-value value)))
            ((and (= order direction)
-                 (not (and best (eql (grid-calc--lookup-order best-value wanted) 0)))
+                 (not (and best (eql (grid-calc--nearest-order best-value wanted) 0)))
                  (or (null best)
-                     (eql (grid-calc--lookup-order value best-value)
+                     (eql (grid-calc--nearest-order value best-value)
                           (- direction))))
             (setq best i best-value value))))))
     best))
