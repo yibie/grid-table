@@ -1831,7 +1831,12 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
   (should (= (grid-table-formula-test--eval "=COUNTIF(B1:E1,F1)" "0" "" "x" "") 1))
   ;; "=23" takes the text "23" too, but "<>23" leaves out only the number.
   (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"=23\")" "23" "'23") 2))
-  (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"<>23\")" "23" "'23") 1)))
+  (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"<>23\")" "23" "'23") 1))
+  ;; A comparison with nothing to compare with meets no cell.
+  (dolist (op '(">" ">=" "<" "<="))
+    (should (= (grid-table-formula-test--eval (format "=COUNTIF(B1:D1,\"%s\")" op)
+                                              "1" "a" "")
+               0))))
 
 (ert-deftest grid-table-formula-countif-takes-many-criteria ()
   ;; Each criterion of an array counts on its own.

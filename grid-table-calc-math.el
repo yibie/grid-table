@@ -418,6 +418,9 @@ array is one value, as Excel takes them then."
            (let ((match (grid-calc-criterion
                          (if (stringp wanted) (concat "=" operand) wanted))))
              (lambda (value) (not (funcall match value)))))))
+        ;; ">" or "<=" with nothing after it, as ">"&A1 of an empty A1,
+        ;; meets no cell.
+        ((guard (string-empty-p operand)) #'ignore)
         (_
          (let ((test (pcase op
                        (">" (lambda (order) (> order 0)))
