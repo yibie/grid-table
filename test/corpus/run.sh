@@ -8,6 +8,12 @@
 # whose Emacs crashed or ran out of time still gets a record.
 #
 # run.sh --one RESULTS-DIR WORKBOOK runs a single workbook.
+#
+# The workbooks are read by a byte-compiled copy of the package in
+# RESULTS-DIR/.build, so the times recorded are those of the package in
+# use, and editing the sources during a run changes nothing.  A run of
+# the whole corpus makes the copy again when a source is newer; --one
+# makes it only when there is none.
 
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,13 +28,46 @@ limit() {
   fi
 }
 
+# build RESULTS-DIR [again]: make the compiled copy when there is none,
+# or with "again" also when a source is newer than it.
+build() {
+  dir=$1/.build waited=0
+  until mkdir "$dir.lock" 2>/dev/null; do
+    waited=$((waited + 1))
+    if [ "$waited" -gt 600 ]; then
+      echo "run.sh: $dir.lock is still there; remove it if no run is going" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  if [ ! -f "$dir/stamp" ] ||
+       { [ "${2:-}" = again ] &&
+         [ -n "$(find "$repo" "$repo/plugins" -maxdepth 1 \
+                   \( -name '*.el' -o -name 'grid-table-xlsx-module.*' \) \
+                   -newer "$dir/stamp" | head -1)" ]; }; then
+    rm -rf "$dir"
+    mkdir -p "$dir/plugins"
+    cp "$repo"/*.el "$dir"
+    cp "$repo"/plugins/*.el "$repo"/plugins/grid-table-xlsx-module.* \
+       "$dir/plugins" 2>/dev/null
+    touch "$dir/stamp"
+    # A file that does not compile, as grid-table-etaf.el without etaf,
+    # is loaded as source.
+    (cd "$dir" && "$EMACS" -Q --batch -L . -L plugins \
+       -f batch-byte-compile ./*.el plugins/*.el >"$dir/compile.log" 2>&1)
+  fi
+  rmdir "$dir.lock"
+}
+
 if [ "${1:-}" = --one ]; then
   results=$2 file=$3
+  build "$results"
+  lisp=$results/.build
   id=$(printf '%s' "$file" | shasum | cut -c1-16)
   record=$results/$id.json
   [ -s "$record" ] && exit 0
   start=$(date +%s)
-  limit "$EMACS" -Q --batch -L "$repo" -L "$repo/plugins" \
+  limit "$EMACS" -Q --batch -L "$lisp" -L "$lisp/plugins" \
     -l "$here/grid-table-corpus.el" -f grid-table-corpus-run-file \
     "$file" "$record" >"$results/$id.log" 2>&1
   code=$?
@@ -61,9 +100,10 @@ results=${2:?usage: run.sh CORPUS-DIR RESULTS-DIR}
 [ "$FRESH" = 1 ] && rm -rf "$results"
 mkdir -p "$results"
 results=$(cd "$results" && pwd)
+build "$results" again
 
 find "$corpus" -path '*/.git' -prune -o -type f \( -iname '*.xlsx' -o -iname '*.xlsm' \) -print0 |
   xargs -0 -P "$JOBS" -n 1 "$0" --one "$results"
 
-"$EMACS" -Q --batch -L "$repo" -L "$repo/plugins" -l "$here/grid-table-corpus.el" \
-  -f grid-table-corpus-summarize "$corpus" "$results" 2>/dev/null
+"$EMACS" -Q --batch -L "$results/.build" -L "$results/.build/plugins" \
+  -l "$here/grid-table-corpus.el" -f grid-table-corpus-summarize "$corpus" "$results" 2>/dev/null
