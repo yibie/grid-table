@@ -3185,6 +3185,21 @@ Excel's values for."
     (grid-model-recalculate-all model)
     (should (equal (grid-model-get-computed-value model 0 2) "1, 2, 3, 4"))))
 
+(ert-deftest grid-table-formula-percent-functions-as-excel ()
+  "PERCENTOF, PERCENTRANK.EXC, LOGINV and ZTEST as Excel has them."
+  (dolist (case '(("=PERCENTOF({0,2,2.3},{2,2.3,-0.2,-2})" . 2.047619047619048)
+                  ("=PERCENTOF({1,\"a\",TRUE},{2,\"b\"})" . 0.5)
+                  ("=PERCENTOF({1,#N/A},{2})" . "#NUM!")
+                  ("=PERCENTOF({1},{0})" . "#DIV/0!")
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},4,4)" . 0.8333)
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},2,2)" . 0.73)
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},13)" . "#N/A")
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},2,0)" . "#NUM!")
+                  ("=PERCENTRANK.INC({0,0.1,0.7,0.002,4},2,2)" . 0.84)
+                  ("=LOGINV(0.4,2,2)" . 4.45178791317475)
+                  ("=ZTEST({3.2,0.7},0.7,3)" . 0.2778448951413972)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

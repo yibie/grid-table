@@ -512,6 +512,18 @@ DOMAIN, a function of the number, makes it #NUM! when it does not hold."
   "The sum of NUMBERS."
   (grid-calc--add (grid-calc-numbers numbers)))
 
+(grid-calc-define percentof ((part values) (whole values))
+  "The sum of PART as a fraction of the sum of WHOLE.
+Only numbers count, and an error value in either is #NUM!."
+  :errors t
+  (when (cl-some #'grid-calc-err-p
+                 (append (grid-calc-flat-values part)
+                         (grid-calc-flat-values whole)))
+    (grid-calc-raise "#NUM!"))
+  (let ((whole (apply #'+ 0 (grid-calc-numbers (list whole)))))
+    (when (zerop whole) (grid-calc-raise "#DIV/0!"))
+    (/ (apply #'+ 0.0 (grid-calc-numbers (list part))) whole)))
+
 (grid-calc-define product (&rest (numbers values))
   "The product of NUMBERS; 0 when there are none."
   (let ((numbers (grid-calc-numbers numbers)))

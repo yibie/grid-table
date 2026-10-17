@@ -756,24 +756,36 @@ EXCLUSIVE leaves out the first and last as PERCENTILE.EXC does."
   (unless (<= 1 quart 3) (grid-calc-raise "#NUM!"))
   (grid-calc--percentile (grid-calc-numbers (list numbers)) (/ quart 4.0) t))
 
-(grid-calc-define percentrank.inc ((numbers values) (number number)
-                                   &optional (digits integer 3))
-  "Where NUMBER stands among NUMBERS, from 0 to 1, to DIGITS places."
+(defun grid-calc--percent-rank (numbers number digits exclusive)
+  "Return where NUMBER stands among NUMBERS, to DIGITS places.
+From 0 to 1, or with EXCLUSIVE strictly between them."
   (let* ((sorted (vconcat (sort (grid-calc-numbers (list numbers)) #'<)))
          (n (length sorted)))
     (when (or (= n 0) (< digits 1)) (grid-calc-raise "#NUM!"))
     (when (or (< number (aref sorted 0)) (> number (aref sorted (1- n))))
       (grid-calc-raise "#N/A"))
     (let* ((below (cl-count-if (lambda (x) (< x number)) sorted))
-           (rank (if (= n 1) 1.0
-                   (if (cl-find number sorted :test #'=)
-                       (/ (float below) (1- n))
-                     ;; Between two values: as far between their ranks
-                     (let ((low (aref sorted (1- below)))
-                           (high (aref sorted below)))
-                       (/ (+ (1- below) (/ (- number low) (float (- high low))))
-                          (1- n)))))))
+           ;; Its place among them, counted from 1: between two values
+           ;; as far between their places
+           (place (if (cl-find number sorted :test #'=)
+                      (1+ below)
+                    (let ((low (aref sorted (1- below)))
+                          (high (aref sorted below)))
+                      (+ below (/ (- number low) (float (- high low)))))))
+           (rank (cond (exclusive (/ place (float (1+ n))))
+                       ((= n 1) 1.0)
+                       (t (/ (1- place) (float (1- n)))))))
       (grid-calc--round-to rank digits 'down))))
+
+(grid-calc-define percentrank.inc ((numbers values) (number number)
+                                   &optional (digits integer 3))
+  "Where NUMBER stands among NUMBERS, from 0 to 1, to DIGITS places."
+  (grid-calc--percent-rank numbers number digits nil))
+
+(grid-calc-define percentrank.exc ((numbers values) (number number)
+                                   &optional (digits integer 3))
+  "Where NUMBER stands among NUMBERS, between 0 and 1, to DIGITS places."
+  (grid-calc--percent-rank numbers number digits t))
 
 (grid-calc-alias percentrank percentrank.inc)
 

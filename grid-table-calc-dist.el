@@ -276,6 +276,8 @@ HIGH is pushed up until CDF there passes P."
   (grid-calc--require (> sd 0))
   (exp (+ mean (* sd (grid-calc--normal-inverse p)))))
 
+(grid-calc-alias loginv lognorm.inv)
+
 (grid-calc-define phi ((x number))
   "The standard normal density at X."
   (grid-calc--normal-pdf x))
@@ -303,6 +305,8 @@ SIGMA is the standard deviation, by default that of the sample."
           (mean (/ (float (apply #'+ numbers)) n)))
       (when (zerop sigma) (grid-calc-raise "#DIV/0!"))
       (- 1 (grid-calc--normal-cdf (/ (- mean x) (/ sigma (sqrt n))))))))
+
+(grid-calc-alias ztest z.test)
 
 ;;;----------------------------------------------------------------------
 ;;; Error function
