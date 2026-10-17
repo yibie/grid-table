@@ -736,7 +736,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
         let fields: Vec<&str> = record.split(FIELD).collect();
         match fields[0] {
             // C row col kind text bold italic color fill align format
-            // KIND is f, a:RANGE, d:RANGE, n, b, s or t, empty text.
+            // KIND is f, a:RANGE, d:RANGE, n, b, e, s or t, empty text.
             "C" if fields.len() >= 5 => {
                 let row: u32 = fields[1].parse()?;
                 let col: u32 = fields[2].parse()?;
@@ -765,6 +765,11 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                         }
                         "b" => {
                             cell.set_value_bool(text == "TRUE");
+                        }
+                        // An error value, as #N/A; one a workbook has no
+                        // code for stays text.
+                        "e" => {
+                            cell.set_error(text);
                         }
                         _ => {
                             cell.set_value_string(text);

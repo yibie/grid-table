@@ -26,6 +26,12 @@ pub enum CellErrorType {
     Null,
     /// Getting data
     Data,
+    /// A spill that has no room
+    Spill,
+    /// A calculation the engine cannot do
+    Calc,
+    /// Data still on its way, as Excel writes it
+    GettingData,
 }
 
 impl fmt::Display for CellErrorType {
@@ -40,6 +46,9 @@ impl fmt::Display for CellErrorType {
             CellErrorType::Ref => write!(f, "#REF!"),
             CellErrorType::Value => write!(f, "#VALUE!"),
             CellErrorType::Data => write!(f, "#DATA!"),
+            CellErrorType::Spill => write!(f, "#SPILL!"),
+            CellErrorType::Calc => write!(f, "#CALC!"),
+            CellErrorType::GettingData => write!(f, "#GETTING_DATA"),
         }
     }
 }
@@ -57,6 +66,9 @@ impl FromStr for CellErrorType {
             "#REF!" => Ok(CellErrorType::Ref),
             "#VALUE!" => Ok(CellErrorType::Value),
             "#DATA!" => Ok(CellErrorType::Data),
+            "#SPILL!" => Ok(CellErrorType::Spill),
+            "#CALC!" => Ok(CellErrorType::Calc),
+            "#GETTING_DATA" => Ok(CellErrorType::GettingData),
             _ => Err(XlsxError::CellError(s.into())),
         }
     }

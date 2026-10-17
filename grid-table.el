@@ -138,13 +138,14 @@ stored for them."
 
 (defun grid-table--reads-as-other-than-text-p (text)
   "Return non-nil when TEXT, stored as it is, is not plain text.
-That is a formula, a number, a date, a truth value or text that starts
-with the apostrophe that marks text."
+That is a formula, a number, a date, a truth value, an error value or
+text that starts with the apostrophe that marks text."
   (or (string-prefix-p "=" text)
       (string-prefix-p "'" text)
       (grid-format-number text)
       (grid-format-parse-entry text)
-      (member (upcase (string-trim text)) '("TRUE" "FALSE"))))
+      (member (upcase (string-trim text)) '("TRUE" "FALSE"))
+      (member text grid-calc-error-values)))
 
 (defun grid-table-read-entry (source row col text)
   "Read TEXT as typed into the cell at ROW and COL of SOURCE.

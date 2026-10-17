@@ -83,7 +83,9 @@
                          '(:format (date "yyyy-mm-dd"))))
                  "yyyy-mm-dd"))
   ;; Text that reads as a number is marked as text.
-  (should (equal (grid-table-xlsx--raw '(0 0 "007" :text "1")) "'007")))
+  (should (equal (grid-table-xlsx--raw '(0 0 "007" :text "1")) "'007"))
+  ;; So is text that spells an error value.
+  (should (equal (grid-table-xlsx--raw '(0 0 "#N/A" :text "1")) "'#N/A")))
 
 (ert-deftest grid-table-xlsx-test-cell-records ()
   (let ((fields (lambda (record)
@@ -213,7 +215,7 @@
                     '("" "")
                     (append (mapcar (lambda (text) (list (concat "'" text) ""))
                                     texts)
-                            '(("3" "=SUM(A7:A7)"))))))
+                            '(("3" "=SUM(A7:A7)") ("'#N/A" "") ("#N/A" "") ("#SPILL!" ""))))))
       (grid-set-style-at source 6 0 '(:format (text)))
       (grid-table-xlsx-write-data-source source file "Texts")
       (let ((back (grid-table-xlsx-create-data-source file "Texts")))
@@ -226,7 +228,12 @@
         (should (equal (grid-get-raw-value-at back 6 0) "3"))
         (should (equal (plist-get (grid-get-style-at back 6 0) :format)
                        '(text)))
-        (should (equal (grid-get-computed-value-at back 6 1) 3))))))
+        (should (equal (grid-get-computed-value-at back 6 1) 3))
+        ;; Text that spells an error value stays text, and an error
+        ;; value stays one.
+        (should (equal (grid-get-raw-value-at back 7 0) "'#N/A"))
+        (should (equal (grid-get-raw-value-at back 8 0) "#N/A"))
+        (should (equal (grid-get-raw-value-at back 9 0) "#SPILL!"))))))
 
 (ert-deftest grid-table-xlsx-test-empty-text-is-no-blank ()
   (skip-unless grid-table-xlsx-test--available)

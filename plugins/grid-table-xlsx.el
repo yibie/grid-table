@@ -911,6 +911,7 @@ is its record kind, as `grid-table-xlsx--array-kind' gives it."
                  (or array "f"))
                 ((string-match-p grid-table-xlsx--number-regexp text) "n")
                 ((member text '("TRUE" "FALSE")) "b")
+                ((member text grid-calc-error-values) "e")
                 (t "s"))))
     (unless (and (string-empty-p text) (null style) (not (equal kind "t")))
       (mapconcat #'identity
