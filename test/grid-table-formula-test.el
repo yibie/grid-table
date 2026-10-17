@@ -1665,6 +1665,10 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),1)") 2))
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),2)") 1))
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),3)") 0))
+    ;; So does each of COUNTIFS's and SUMIFS's.
+    (should (equal (first-value "=SUM(COUNTIFS(B1:B4,{\"x\",\"y\"}))") 3))
+    (should (equal (first-value "=SUM(SUMIFS(C1:C4,B1:B4,{\"x\",\"y\"}))") 0))
+    (should (equal (first-value "=SUM(COUNTIFS(B1:B4,\"x\",B1:B4,{\"x\",\"y\"}))") 2))
     ;; A reference that is lost is the answer where one is wanted.
     (should (equal (first-value "=COUNTIF(#REF!,1)") "#REF!"))
     (should (equal (first-value "=IFNA(MATCH(1,#REF!,0),0)") "#REF!"))

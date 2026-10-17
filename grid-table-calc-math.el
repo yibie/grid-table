@@ -480,12 +480,21 @@ criterion takes a blank cell."
            (* (- (car shape) rows) (cdr shape))
          0))))
 
-(defun grid-calc--criteria-pairs (arguments)
-  "Return ARGUMENTS, alternating ranges and criteria, as (RANGE . CRITERION)."
+(defun grid-calc--each-criteria (arguments function)
+  "Return FUNCTION of ARGUMENTS made (RANGE . CRITERION) pairs.
+A criterion of several values, as {\"a\",\"b\"}, makes the result an
+array, FUNCTION of the pairs with each of them in turn."
   (when (or (null arguments) (cl-oddp (length arguments)))
     (grid-calc-raise "#VALUE!"))
-  (cl-loop for (range criterion) on arguments by #'cddr
-           collect (cons range (grid-calc--first criterion))))
+  (let ((ranges (cl-loop for (range) on arguments by #'cddr collect range))
+        (criteria (cl-loop for (_ criterion) on arguments by #'cddr
+                           collect (grid-calc--scalar-or-array criterion))))
+    (if (cl-some #'grid-calc-array-p criteria)
+        (grid-calc--broadcast
+         (lambda (&rest ones)
+           (grid-calc--catching (funcall function (cl-mapcar #'cons ranges ones))))
+         criteria)
+      (funcall function (cl-mapcar #'cons ranges criteria)))))
 
 (defun grid-calc--numbers-at (range positions)
   "Return the numbers of RANGE at POSITIONS; an error value signals."
@@ -527,13 +536,15 @@ that meet CRITERION."
 (grid-calc-define sumifs ((sum-range values) &rest (criteria values))
   "The sum of the cells of SUM-RANGE beside cells meeting every criterion.
 CRITERIA alternate a range and the criterion its cells must meet."
-  (let ((pairs (grid-calc--criteria-pairs criteria)))
-    (unless (equal (grid-calc--range-shape sum-range)
-                   (grid-calc--range-shape (caar pairs)))
-      (grid-calc-raise "#VALUE!"))
-    (grid-calc--add (grid-calc--numbers-at sum-range
-                                           (grid-calc--matching-cells
-                                            pairs sum-range)))))
+  (grid-calc--each-criteria
+   criteria
+   (lambda (pairs)
+     (unless (equal (grid-calc--range-shape sum-range)
+                    (grid-calc--range-shape (caar pairs)))
+       (grid-calc-raise "#VALUE!"))
+     (grid-calc--add (grid-calc--numbers-at sum-range
+                                            (grid-calc--matching-cells
+                                             pairs sum-range))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Matrices

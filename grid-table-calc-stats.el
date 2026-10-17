@@ -78,7 +78,7 @@ count too."
 (grid-calc-define countifs (&rest (criteria values))
   "How many cells meet every criterion, beside each other in their ranges.
 CRITERIA alternate a range and the criterion its cells must meet."
-  (grid-calc--matching-count (grid-calc--criteria-pairs criteria)))
+  (grid-calc--each-criteria criteria #'grid-calc--matching-count))
 
 (grid-calc-define frequency ((data array) (bins array))
   "How many numbers of DATA fall in each bin BINS bound, as a column.
@@ -139,10 +139,12 @@ RANGE that meet CRITERION."
 (grid-calc-define averageifs ((average-range values) &rest (criteria values))
   "The mean of the cells of AVERAGE-RANGE beside cells meeting every
 criterion of CRITERIA, which alternate ranges and criteria."
-  (grid-calc--mean (grid-calc--numbers-at
-                    average-range
-                    (grid-calc--matching-cells (grid-calc--criteria-pairs criteria)
-                                               average-range))))
+  (grid-calc--each-criteria
+   criteria
+   (lambda (pairs)
+     (grid-calc--mean (grid-calc--numbers-at
+                       average-range
+                       (grid-calc--matching-cells pairs average-range))))))
 
 (defmacro grid-calc--define-spread (name doc function &optional how)
   "Define NAME, DOC, as FUNCTION of the numbers of its arguments.
@@ -240,17 +242,21 @@ HOW is passed on to `grid-calc-numbers'."
 
 (grid-calc-define minifs ((range values) &rest (criteria values))
   "The smallest cell of RANGE beside cells meeting every criterion."
-  (let ((numbers (grid-calc--numbers-at
-                  range (grid-calc--matching-cells (grid-calc--criteria-pairs criteria)
-                                                   range))))
-    (if numbers (apply #'min numbers) 0)))
+  (grid-calc--each-criteria
+   criteria
+   (lambda (pairs)
+     (let ((numbers (grid-calc--numbers-at
+                     range (grid-calc--matching-cells pairs range))))
+       (if numbers (apply #'min numbers) 0)))))
 
 (grid-calc-define maxifs ((range values) &rest (criteria values))
   "The largest cell of RANGE beside cells meeting every criterion."
-  (let ((numbers (grid-calc--numbers-at
-                  range (grid-calc--matching-cells (grid-calc--criteria-pairs criteria)
-                                                   range))))
-    (if numbers (apply #'max numbers) 0)))
+  (grid-calc--each-criteria
+   criteria
+   (lambda (pairs)
+     (let ((numbers (grid-calc--numbers-at
+                     range (grid-calc--matching-cells pairs range))))
+       (if numbers (apply #'max numbers) 0)))))
 
 (defun grid-calc--sorted-numbers (argument)
   "Return the numbers of ARGUMENT, a `values' argument, sorted up."
