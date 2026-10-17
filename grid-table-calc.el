@@ -2405,13 +2405,27 @@ A value for a scalar KIND may still be an array, or an error value."
 (defun grid-calc--apply (function model kinds values)
   "Run FUNCTION on VALUES, its arguments as KINDS take them, on MODEL.
 Several values for one value make the result several values too."
-  (let ((errors (grid-calc-function-errors function))
-        (scalar (mapcar #'grid-calc--scalar-kind-p kinds)))
+  (let* ((errors (grid-calc-function-errors function))
+         (scalar (mapcar #'grid-calc--scalar-kind-p kinds))
+         ;; An error where Excel wants a reference, as in
+         ;; COUNTIF(#REF!,1), is the function's answer too.
+         (stops (pcase-let ((`(,_ ,classes . ,pairs)
+                             (grid-calc--function-classes
+                              (grid-calc-function-name function))))
+                  (cl-loop for kind in kinds
+                           for one in scalar
+                           for index from 0
+                           collect (or one
+                                       (and (memq kind '(values array areas))
+                                            (string-prefix-p
+                                             "R" (symbol-name
+                                                  (grid-calc--argument-class
+                                                   classes index pairs)))))))))
     (cl-flet ((run (values)
                 (or (and (not errors)
                          (cl-loop for value in values
-                                  for one in scalar
-                                  thereis (and one (grid-calc-err-p value)
+                                  for stop in stops
+                                  thereis (and stop (grid-calc-err-p value)
                                                value)))
                     (grid-calc--catching
                       (let ((grid-calc--model model)

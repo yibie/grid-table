@@ -1664,7 +1664,12 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
                    2))
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),1)") 2))
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),2)") 1))
-    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),3)") 0))))
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),3)") 0))
+    ;; A reference that is lost is the answer where one is wanted.
+    (should (equal (first-value "=COUNTIF(#REF!,1)") "#REF!"))
+    (should (equal (first-value "=IFNA(MATCH(1,#REF!,0),0)") "#REF!"))
+    (should (equal (first-value "=COUNTIF(B1:B4,#N/A)") 0))
+    (should (equal (first-value "=COUNTA(#REF!)") 1))))
 
 (ert-deftest grid-table-formula-pairs-match-by-count ()
   ;; Excel pairs values in reading order, whatever shape holds them.
