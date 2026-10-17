@@ -375,9 +375,23 @@ the next recalculation."
     (grid-calc-forget model))
   arrays)
 
+(defvar grid-model--array-index (make-hash-table :test 'eq :weakness 'key)
+  "Maps a model's list of array formulas to a table of the same entries.
+The list is never changed in place, only replaced, so a table made for
+it stays right.")
+
 (defun grid-model-array-at (model row col)
   "Return the range the array formula at ROW and COL of MODEL fills, or nil."
-  (cdr (assoc (cons row col) (grid-data-model-arrays model))))
+  (let ((arrays (grid-data-model-arrays model)))
+    (if (length< arrays 16)
+        (cdr (assoc (cons row col) arrays))
+      (gethash (cons row col)
+               (or (gethash arrays grid-model--array-index)
+                   (let ((table (make-hash-table :test 'equal
+                                                 :size (length arrays))))
+                     (dolist (array (reverse arrays))
+                       (puthash (car array) (cdr array) table))
+                     (puthash arrays table grid-model--array-index)))))))
 
 (defun grid-model-forget-array (model row col)
   "Make the formula at ROW and COL of MODEL a plain one, if it was not."
