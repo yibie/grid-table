@@ -83,7 +83,9 @@ Its keys are :title, :headers, :rows, :merges, :styles and
             (list :frozen (list (car frozen) (cdr frozen)))))
      (let ((hidden (grid-table-hidden data-source)))
        (and (or (car hidden) (cdr hidden))
-            (list :hidden (list (car hidden) (cdr hidden)))))
+            (list :hidden (append (list (car hidden) (cdr hidden))
+                                  (and (grid-table-filters data-source)
+                                       (list (grid-table-filters data-source)))))))
      (and (grid-table-validations data-source)
           (list :validations (grid-table-validations data-source)))
      (and (grid-table-charts data-source)
@@ -206,7 +208,8 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
 WIDTHS is a list of (COLUMN . WIDTH) for the columns sized by hand.
 NO-HEADER says the first row of the sheet is a row like any other.
 FROZEN is (ROWS COLS), the leading rows and columns kept in place.
-HIDDEN is (ROWS COLS), lists of the rows and columns hidden.
+HIDDEN is (ROWS COLS), lists of the rows and columns hidden, and then
+the filtered ranges, which say which hidden rows a filter left out.
 VALIDATIONS are the sheet's validation rules and CHARTS its floating
 charts."
   (unless (grid-table-persistence--table-data-p headers rows)
@@ -237,9 +240,14 @@ charts."
     (when (and (listp frozen) (= (length frozen) 2)
                (cl-every #'natnump frozen))
       (grid-table-set-frozen source (nth 0 frozen) (nth 1 frozen)))
-    (when (and (listp hidden) (= (length hidden) 2)
+    (when (and (listp hidden) (<= 2 (length hidden) 3)
                (cl-every #'listp hidden))
-      (grid-table-set-hidden source (nth 0 hidden) (nth 1 hidden)))
+      (grid-table-set-hidden source (nth 0 hidden) (nth 1 hidden))
+      (grid-table-set-filters
+       source (cl-remove-if-not (lambda (range)
+                                  (and (proper-list-p range) (= (length range) 4)
+                                       (cl-every #'natnump range)))
+                                (nth 2 hidden))))
     (when (listp validations)
       (grid-table-set-validations
        source

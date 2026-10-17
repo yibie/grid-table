@@ -764,6 +764,7 @@ the header row."
           (grid-table-set-frozen source (nth 0 frozen) (nth 1 frozen)))
         (grid-table-set-hidden source (plist-get data :hidden-rows)
                                (plist-get data :hidden-cols))
+        (grid-table-set-filters source (plist-get data :filters))
         (grid-table-set-validations
          source (grid-table-xlsx--validations (plist-get data :validations)))
         (grid-table-set-charts
@@ -1142,6 +1143,10 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
       (dolist (col (cdr hidden))
         (push (format "H%sc%s%d" grid-table-xlsx--field grid-table-xlsx--field col)
               records)))
+    (dolist (range (grid-table-filters source))
+      (push (mapconcat #'identity (cons "A" (mapcar #'number-to-string range))
+                       grid-table-xlsx--field)
+            records))
     (dolist (rule (grid-table-validations source))
       (pcase-let ((`(,top ,left ,bottom ,right ,_kind ,spec) rule))
         (push (concat "V" grid-table-xlsx--field

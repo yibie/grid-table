@@ -437,14 +437,18 @@ AGGREGATE, which these functions leave out to not count twice."
                                            &optional keep-nested)
   "Return the values of ARGUMENTS as SUBTOTAL and AGGREGATE see them.
 Cells holding a SUBTOTAL or AGGREGATE are left out unless KEEP-NESTED,
-and with SKIP-HIDDEN the hidden rows; SKIP-ERRORS leaves error values
+and with SKIP-HIDDEN the hidden rows, or with `filtered' only the ones
+a filter left out; SKIP-ERRORS leaves error values
 out, and `keep' keeps them, for COUNT and COUNTA to count.  Otherwise
 an error value signals."
   (let (values)
     (dolist (argument arguments)
       (if (grid-calc-ref-p argument)
           (let* ((model (grid-calc-ref-model argument))
-                 (hidden (and skip-hidden (car (grid-data-model-hidden model))))
+                 (hidden (pcase skip-hidden
+                           ('nil nil)
+                           ('filtered (grid-model-filtered-rows model))
+                           (_ (car (grid-data-model-hidden model)))))
                  (top (grid-calc-ref-top argument))
                  (left (grid-calc-ref-left argument))
                  (cols (max 0 (min (grid-calc-ref-cols argument)
@@ -500,12 +504,12 @@ K is the extra argument of AGGREGATE's functions 14 to 19."
   "FUNCTION of the values of RANGES, leaving out other subtotals.
 FUNCTION 1 to 11 is AVERAGE, COUNT, COUNTA, MAX, MIN, PRODUCT, STDEV,
 STDEVP, SUM, VAR and VARP; 101 to 111 is the same leaving out hidden
-rows."
+rows.  Either leaves out the rows a filter left out."
   (unless (or (<= 1 function 11) (<= 101 function 111))
     (grid-calc-raise "#VALUE!"))
   (grid-calc--aggregate-by (% function 100)
                            (grid-calc--shown-values
-                            ranges (> function 100)
+                            ranges (if (> function 100) t 'filtered)
                             (and (grid-calc--counting-p function) 'keep))))
 
 (grid-calc-define aggregate ((function integer) (options integer) (range values)

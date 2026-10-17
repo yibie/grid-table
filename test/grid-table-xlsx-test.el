@@ -244,6 +244,20 @@
         (should-not (grid-get-computed-value-at back 0 3))
         (should (equal (grid-get-computed-value-at back 0 4) 1))))))
 
+(ert-deftest grid-table-xlsx-test-filtered-rows ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let ((source (make-default-data-source
+                   '("" "")
+                   '(("V" "") ("1" "") ("2" "") ("3" "")
+                     ("" "=SUBTOTAL(9,A2:A4)")))))
+      (grid-table-set-hidden source '(2) nil)
+      (grid-table-set-filters source '((0 0 3 0)))
+      (grid-table-xlsx-write-data-source source file "Filtered")
+      (let ((back (grid-table-xlsx-create-data-source file "Filtered")))
+        (should (equal (grid-table-filters back) '((0 0 3 0))))
+        (should (equal (grid-get-computed-value-at back 4 1) 4))))))
+
 (ert-deftest grid-table-xlsx-test-spills-and-array-formulas ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

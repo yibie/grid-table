@@ -1963,6 +1963,32 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
                            (grid-table-hidden source)))))
       (delete-file file))))
 
+;; A row a filter left out is hidden under the filter's header.
+(ert-deftest grid-table-subtotal-leaves-out-the-rows-a-filter-left-out ()
+  (let* ((source (make-default-data-source
+                  '("A" "B")
+                  '(("V" "") ("1" "") ("2" "") ("3" "") ("4" "") ("5" "")
+                    ("" "=SUBTOTAL(9,A2:A6)") ("" "=SUBTOTAL(109,A2:A6)"))))
+         (file (make-temp-file "grid-filtered" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Rows 2 and 4 are hidden; the filter over A1:A4 hid row 2.
+          (grid-table-set-hidden source '(2 4) nil)
+          (grid-table-set-filters source '((0 0 3 0)))
+          (should (equal (grid-model-filtered-rows (gethash :model source)) '(2)))
+          (should (equal (grid-get-computed-value-at source 6 1) 13))
+          (should (equal (grid-get-computed-value-at source 7 1) 9))
+          ;; The range grows with a row inserted inside it.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (grid-table-filters source) '((0 0 4 0))))
+          (should (equal (car (grid-table-hidden source)) '(3 5)))
+          (grid-table-persistence--save-to-file source file)
+          (let ((loaded (grid-table-persistence-create-data-source-from-file
+                         file)))
+            (should (equal (grid-table-filters loaded) '((0 0 4 0))))
+            (should (equal (grid-get-computed-value-at loaded 7 1) 13))))
+      (delete-file file))))
+
 (ert-deftest grid-table-chart-data-reads-a-range-like-a-spreadsheet ()
   "A first row and column of text name the series and the categories."
   (let* ((cells [["" "Q1" "Q2" "Q3"] ["North" 1 2 3] ["South" 4 5 6]])

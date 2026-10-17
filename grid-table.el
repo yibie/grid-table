@@ -251,6 +251,19 @@ Return non-nil when SOURCE can hide rows and columns."
     (funcall function source rows cols)
     t))
 
+(defun grid-table-filters (source)
+  "Return SOURCE's filtered ranges, (TOP LEFT BOTTOM RIGHT) each.
+TOP is a range's header row; its hidden rows below are filtered out."
+  (when-let* ((function (gethash :get-filters source)))
+    (funcall function source)))
+
+(defun grid-table-set-filters (source ranges)
+  "Replace SOURCE's filtered ranges with RANGES.
+Return non-nil when SOURCE keeps filtered ranges."
+  (when-let* ((function (gethash :set-filters source)))
+    (funcall function source ranges)
+    t))
+
 (defun grid-table-charts (source)
   "Return the floating charts of SOURCE, chart plists."
   (when-let* ((function (gethash :get-charts source)))

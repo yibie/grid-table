@@ -72,7 +72,24 @@ TITLE is an optional string for the grid title."
              source)
     (puthash :set-hidden
              (lambda (s rows cols)
-               (grid-model-set-hidden (gethash :model s) rows cols))
+               (let* ((model (gethash :model s))
+                      (old (grid-model-filtered-rows model))
+                      (hidden (car (grid-data-model-hidden model))))
+                 (grid-model-set-hidden model rows cols)
+                 (unless (and (equal old (grid-model-filtered-rows model))
+                              (equal hidden (car (grid-data-model-hidden model))))
+                   (grid-model-subtotals-changed model))))
+             source)
+    (puthash :get-filters
+             (lambda (s) (grid-data-model-filters (gethash :model s)))
+             source)
+    (puthash :set-filters
+             (lambda (s ranges)
+               (let* ((model (gethash :model s))
+                      (old (grid-model-filtered-rows model)))
+                 (grid-model-set-filters model ranges)
+                 (unless (equal old (grid-model-filtered-rows model))
+                   (grid-model-subtotals-changed model))))
              source)
     (puthash :get-charts
              (lambda (s) (grid-data-model-charts (gethash :model s)))
@@ -768,6 +785,7 @@ change rewrote in other sheets go back with it."
                   (grid-model-carry-widths old-model model at delta)
                   (grid-model-carry-frozen old-model model 'col at delta)
                   (grid-model-carry-hidden old-model model 'col at delta)
+                  (grid-model-carry-filters old-model model 'col at delta)
                   (grid-model-carry-arrays old-model model 'col at delta)
                   (grid-model-carry-validations
                    old-model model 'col at delta (grid-workbook-sheet-name s))
@@ -777,6 +795,7 @@ change rewrote in other sheets go back with it."
                   (grid-model-carry-widths old-model model)
                   (grid-model-carry-frozen old-model model 'row at delta)
                   (grid-model-carry-hidden old-model model 'row at delta)
+                  (grid-model-carry-filters old-model model 'row at delta)
                   (grid-model-carry-arrays old-model model 'row at delta)
                   (grid-model-carry-validations
                    old-model model 'row at delta (grid-workbook-sheet-name s))
@@ -787,6 +806,7 @@ change rewrote in other sheets go back with it."
                     (grid-model-carry-validations old-model model)
                     (grid-model-carry-charts old-model model)
                     (grid-model-carry-arrays old-model model)
+                    (grid-model-carry-filters old-model model)
                     ;; A sort moved the hidden rows along itself.
                     (unless (eq key :sort-by-column)
                       (grid-model-carry-hidden old-model model)))))))))

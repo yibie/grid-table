@@ -15,7 +15,8 @@ use umya_spreadsheet::{
     PaneStateValues, PaneValues, PatternValues, Selection, SheetView, ShowColumn, ShowStripes,
     Style, Table, TableColumn, TableStyleInfo, Workbook, Worksheet,
 };
-use umya_spreadsheet::helper::coordinate::string_from_column_index;
+use umya_spreadsheet::structs::{AutoFilter, FilterColumn};
+use umya_spreadsheet::helper::coordinate::{index_from_coordinate, string_from_column_index};
 use umya_spreadsheet::structs::drawing::Theme;
 use umya_spreadsheet::structs::drawing::charts::{
     AreaChartSeries, BarDirectionValues, CategoryAxisData, ChartText, GroupingValues, NumericValue,
@@ -341,6 +342,24 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
         out.push_str("))");
     }
     out.push(')');
+    // Filtered ranges, the sheet's and its tables': (TOP LEFT BOTTOM
+    // RIGHT) each, zero-based and inclusive.  A hidden row under a
+    // range's header is one the filter left out.  A range filtering on
+    // no column only shows its buttons, and its hidden rows are hidden
+    // by hand.
+    out.push_str(" :filters (");
+    let ranges = sheet
+        .auto_filter()
+        .into_iter()
+        .chain(sheet.tables().iter().map(|table| table.auto_filter()))
+        .filter(|filter| !filter.filter_columns().is_empty())
+        .map(|filter| filter.range().range());
+    for range in ranges {
+        if let Some((top, left, bottom, right)) = area_of(&range) {
+            write!(out, "({top} {left} {bottom} {right})")?;
+        }
+    }
+    out.push(')');
     if let Some(pane) = frozen_pane(sheet) {
         write!(
             out,
@@ -351,6 +370,19 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
     }
     out.push(')');
     Ok(())
+}
+
+/// The rows and columns of RANGE, such as A1:B7, zero-based and
+/// inclusive: (TOP LEFT BOTTOM RIGHT).
+fn area_of(range: &str) -> Option<(u32, u32, u32, u32)> {
+    let mut ends = range.split(':').map(|end| index_from_coordinate(end.to_uppercase()));
+    let (Some(left), Some(top), ..) = ends.next()? else { return None };
+    let (right, bottom) = match ends.next() {
+        Some((Some(right), Some(bottom), ..)) => (right, bottom),
+        Some(_) => return None,
+        None => (left, top),
+    };
+    (left > 0 && top > 0).then(|| (top - 1, left - 1, bottom - 1, right - 1))
 }
 
 /// The pane that keeps rows and columns of SHEET in place, if it has one.
@@ -641,6 +673,62 @@ fn tables(sheet: &mut Worksheet, payload: &str) {
     *sheet.tables_mut() = kept;
 }
 
+/// Give SHEET and its tables the filtered ranges PAYLOAD lists, as
+/// A TOP LEFT BOTTOM RIGHT records, zero-based and inclusive.  A range a
+/// table starts at is the table's; another is the sheet's, which has
+/// one.  A filter already there keeps the columns it filters on; a new
+/// one filters on its first, for its hidden rows to read as filtered.
+fn filters(sheet: &mut Worksheet, payload: &str) {
+    fn filtering(filter: &AutoFilter, range: &str) -> bool {
+        filter.range().range() == range && !filter.filter_columns().is_empty()
+    }
+    fn filter(range: String) -> AutoFilter {
+        let mut filter = AutoFilter::default();
+        filter.set_range(range);
+        let mut column = FilterColumn::default();
+        column.set_font(0);
+        filter.add_filter_column(column);
+        filter
+    }
+    let mut sheet_filter = None;
+    for fields in payload
+        .split(RECORD)
+        .map(|record| record.split(FIELD).collect::<Vec<&str>>())
+        .filter(|fields| fields[0] == "A" && fields.len() >= 5)
+    {
+        let number = |index: usize| fields[index].parse::<u32>().unwrap_or(0);
+        let range = format!(
+            "{}{}:{}{}",
+            string_from_column_index(number(2) + 1),
+            number(1) + 1,
+            string_from_column_index(number(4) + 1),
+            number(3) + 1
+        );
+        let table = sheet.tables_mut().iter_mut().find(|table| {
+            let (start, end) = table.area();
+            start.row_num() == number(1) + 1
+                && start.col_num() == number(2) + 1
+                && end.col_num() == number(4) + 1
+        });
+        match table {
+            Some(table) => {
+                if !filtering(table.auto_filter(), &range) {
+                    *table.auto_filter_mut() = filter(range);
+                }
+            }
+            None => sheet_filter = Some(range),
+        }
+    }
+    if let Some(range) = sheet_filter {
+        if !sheet.auto_filter().is_some_and(|old| filtering(old, &range)) {
+            sheet.set_auto_filter(range.clone());
+            if let Some(old) = sheet.auto_filter_mut() {
+                *old = filter(range);
+            }
+        }
+    }
+}
+
 fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     let mut conditionals = Vec::new();
     let mut validations = DataValidations::default();
@@ -717,6 +805,8 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
             "Y" => {}
             // U and T, the sheet's tables, which `tables' has taken.
             "U" | "T" => {}
+            // A, the filtered ranges, which `filters' has taken.
+            "A" => {}
             // G type from to title names categories ref...: a chart
             "G" if fields.len() >= 8 => {
                 sheet.add_chart(chart(&fields)?);
@@ -1209,6 +1299,7 @@ fn write(path: String, base: Option<String>, sheet: String, payload: String) -> 
     clear(target);
     fill(target, &payload)?;
     tables(target, &payload);
+    filters(target, &payload);
     writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
     Ok(())
 }

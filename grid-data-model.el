@@ -73,6 +73,9 @@ CONDITIONALS a list of conditional format rules."
           nil
           ;; The formulas read as a workbook file holds them, a hash
           ;; table of (ROW . COL); see `grid-calc-legacy-arrays'
+          nil
+          ;; Filtered ranges: (TOP LEFT BOTTOM RIGHT) each, TOP the
+          ;; header; a hidden row under it is one the filter left out
           nil))
 
 (defun grid-data-model-rows (model) (aref model 0))
@@ -301,6 +304,42 @@ SHEET, follows them too.  Sorting leaves the ranges in place."
   new)
 
 ;;;----------------------------------------------------------------------
+;;; Filtered rows
+;;;----------------------------------------------------------------------
+
+(defun grid-data-model-filters (model)
+  "Return MODEL's filtered ranges, (TOP LEFT BOTTOM RIGHT) each.
+TOP is the range's header row; a hidden row below it is one a filter
+left out, which SUBTOTAL leaves out too."
+  (and (> (length model) 13) (aref model 13)))
+
+(defun grid-model-set-filters (model ranges)
+  "Replace MODEL's filtered ranges with RANGES."
+  (when (> (length model) 13)
+    (aset model 13 (copy-tree ranges)))
+  ranges)
+
+(defun grid-model-filtered-rows (model)
+  "Return the rows of MODEL a filter left out: hidden under a header."
+  (let ((ranges (grid-data-model-filters model)))
+    (and ranges
+         (cl-remove-if-not
+          (lambda (row)
+            (cl-some (lambda (range) (< (nth 0 range) row (1+ (nth 2 range))))
+                     ranges))
+          (car (grid-data-model-hidden model))))))
+
+(defun grid-model-carry-filters (old new &optional axis at delta)
+  "Give model NEW the filtered ranges of model OLD and return NEW.
+AXIS, AT and DELTA are as for `grid-model-carry-frozen': the ranges move
+with the lines.  Sorting leaves them in place."
+  (unless (eq old new)
+    (let ((ranges (grid-data-model-filters old)))
+      (grid-model-set-filters
+       new (if axis (grid-model--shift-rules ranges axis at delta) ranges))))
+  new)
+
+;;;----------------------------------------------------------------------
 ;;; Floating charts
 ;;;----------------------------------------------------------------------
 
@@ -462,6 +501,19 @@ A line past the last cell stays hidden as well, as a workbook keeps it."
                                                      (copy-sequence indexes)))
                       #'<)))
       (aset model 8 (cons (clean rows) (clean cols))))))
+
+(defun grid-model-subtotals-changed (model)
+  "Compute again what SUBTOTAL and AGGREGATE give in MODEL, and what reads
+them, for its hidden or filtered rows changed."
+  (let ((cols (grid-data-model-cols model))
+        touched)
+    (dotimes (index (length (grid-data-model-cells model)))
+      (let ((row (/ index cols)) (col (% index cols)))
+        (when (grid-calc--subtotal-cell-p model row col)
+          (grid-calc-touch model row col)
+          (setq touched t))))
+    (when touched
+      (grid-table-calc-evaluate model))))
 
 (defun grid-model--lines-after (lines at delta)
   "Return the line indexes LINES after a line was inserted or deleted.
