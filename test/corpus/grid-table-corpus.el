@@ -23,6 +23,8 @@
 (require 'grid-table)
 (require 'grid-table-xlsx)
 
+(defvar grid-calc-date-order)
+
 (defconst grid-table-corpus-features
   '(values styles merges conditionals charts widths frozen hidden validations)
   "What a sheet keeps that a round trip through a file must keep too.")
@@ -449,9 +451,17 @@ RECORD is a JSON file of what was found."
         (insert (json-encode grid-table-corpus--record))))))
 
 (defun grid-table-corpus-run-file ()
-  "Run `grid-table-corpus-run' on the workbook and record named on the command line."
-  (let ((file (pop command-line-args-left))
-        (record (pop command-line-args-left)))
+  "Run `grid-table-corpus-run' on the workbook and record named on the command line.
+A workbook whose name matches the regexp in CORPUS_DAY_FIRST was
+calculated where text dates name the day before the month."
+  (let* ((file (pop command-line-args-left))
+         (record (pop command-line-args-left))
+         (day-first (getenv "CORPUS_DAY_FIRST"))
+         (grid-calc-date-order
+          (if (and day-first (not (string-empty-p day-first))
+                   (string-match-p day-first file))
+              'day-month-year
+            grid-calc-date-order)))
     (grid-table-corpus-run file record)))
 
 ;;;----------------------------------------------------------------------

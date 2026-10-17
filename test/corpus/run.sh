@@ -5,7 +5,9 @@
 # in an Emacs of its own, JOBS at a time and for at most LIMIT seconds
 # each, then print the report.  A workbook already recorded in RESULTS-DIR
 # is skipped unless FRESH=1, which empties RESULTS-DIR first.  A workbook
-# whose Emacs crashed or ran out of time still gets a record.
+# whose Emacs crashed or ran out of time still gets a record.  A workbook
+# whose name matches the regexp CORPUS_DAY_FIRST, by default those of the
+# formulas project, reads text dates with the day before the month.
 #
 # run.sh --one RESULTS-DIR WORKBOOK runs a single workbook.
 #
@@ -19,7 +21,8 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 : "${EMACS:=emacs}" "${JOBS:=8}" "${LIMIT:=120}" "${FRESH:=0}"
-export EMACS JOBS LIMIT
+: "${CORPUS_DAY_FIRST=/formulas/}"
+export EMACS JOBS LIMIT CORPUS_DAY_FIRST
 
 limit() {
   if command -v timeout >/dev/null; then timeout -k 5 "$LIMIT" "$@"
