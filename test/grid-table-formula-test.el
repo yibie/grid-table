@@ -2612,6 +2612,40 @@ The cases come from IronCalc's and the formulas package's workbooks."
                   (and (numberp value) (= value (cadr case)))
                 (equal (list (car case) value) case))))))
 
+(ert-deftest grid-table-formula-engineering-complex-parts-in-full ()
+  "A complex number writes its parts out in full where the digits fit."
+  (dolist (case '(("=COMPLEX(0.0000000000000001,0)" . "0.0000000000000001")
+                  ("=COMPLEX(0.00000000000000001,0)" . "0.00000000000000001")
+                  ("=COMPLEX(0.00000000000000000001,0)" . "1E-20")
+                  ("=COMPLEX(0.0000012,0)" . "0.0000012")
+                  ("=COMPLEX(1.2E-45,-3)" . "1.2E-45-3i")
+                  ("=IMPRODUCT(\"7+0i\",\"\")" . "0")
+                  ("=IMSUM(\"\",\"2+3i\")" . "2+3i")))
+    (should (equal (list (car case) (grid-table-formula-test--eval
+                                     (car case)))
+                   (cons (car case) (list (cdr case))))))
+  ;; An empty cell counts as zero to the product as well.
+  (should (equal (grid-table-formula-test--eval "=IMPRODUCT(B1,C1)" "" "") "0"))
+  (should (equal (grid-table-formula-test--eval "=IMPRODUCT(\"7+0i\",B1)" "") "0")))
+
+(ert-deftest grid-table-formula-engineering-number-systems-places ()
+  "A negative number's PLACES, and an empty one, as Excel takes them."
+  (dolist (case '(("=BIN2HEX(\"1100011011\",2)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",0)" . "#NUM!")
+                  ("=BIN2HEX(\"1100011011\",1)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",2.3)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",10)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",11)" . "#NUM!")
+                  ("=BIN2HEX(\"1100011011\",TRUE)" . "#VALUE!")
+                  ("=BIN2OCT(\"1100011011\",-2)" . "#NUM!")
+                  ("=BIN2OCT(\"1111111111\",2)" . "7777777777")
+                  ("=BIN2HEX(100,0)" . "#NUM!")
+                  ("=BIN2OCT(B1)" . "0")
+                  ("=BIN2DEC(C1)" . 0)
+                  ("=DEC2HEX(12)" . "C")))
+    (should (equal (list (car case) (grid-table-formula-test--eval (car case) "" ""))
+                   (cons (car case) (list (cdr case)))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

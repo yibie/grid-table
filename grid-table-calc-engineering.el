@@ -22,7 +22,9 @@
 
 (defun grid-calc--from-base (text base)
   "Return the number TEXT, up to ten digits in BASE, stands for."
-  (let* ((text (upcase (if (numberp text) (grid-calc-number-text text) text)))
+  (let* ((text (upcase (cond ((eq text :blank) "")
+                             ((numberp text) (grid-calc-number-text text))
+                             (t text))))
          (bits (cdr (assq base grid-calc--bases)))
          (digits (pcase base (2 "01") (8 "0-7") (_ "0-9A-F"))))
     (unless (and (<= (length text) 10)
@@ -38,12 +40,16 @@
          (number (truncate number)))
     (unless (and (>= number (- (ash 1 (1- bits)))) (< number (ash 1 (1- bits))))
       (grid-calc-raise "#NUM!"))
+    (when (and places (> places 10)) (grid-calc-raise "#NUM!"))
     (if (< number 0)
-        ;; A negative number is always ten digits, PLACES or not.
-        (grid-calc--base-digits (+ number (ash 1 bits)) base)
+        ;; A negative number is always ten digits, PLACES or not, but it
+        ;; wants a PLACES from one to ten and writes no digits for none.
+        (progn
+          (when (and places (< places 1)) (grid-calc-raise "#NUM!"))
+          (grid-calc--base-digits (+ number (ash 1 bits)) base))
       (let ((text (grid-calc--base-digits number base)))
         (cond ((null places) text)
-              ((or (< places 0) (> places 10) (< places (length text)))
+              ((or (< places 0) (< places (length text)))
                (grid-calc-raise "#NUM!"))
               (t (concat (make-string (- places (length text)) ?0) text)))))))
 
@@ -150,6 +156,14 @@ Each pair is (NAME BASE), as (bin 2)."
   "NUMBER's bits moved SHIFT places to the right."
   (ash (grid-calc--bit-operand number) (- shift)))
 
+(defun grid-calc--polynomial (variable coefficients)
+  "Return the value at VARIABLE of a polynomial, COEFFICIENTS constant first.
+The series of the hyperbolic sine below and the fits of the Bessel
+functions after it are polynomials in one variable."
+  (let ((value 0.0))
+    (dolist (coefficient (reverse coefficients) value)
+      (setq value (+ coefficient (* variable value))))))
+
 ;;;----------------------------------------------------------------------
 ;;; Complex numbers
 ;;;----------------------------------------------------------------------
@@ -195,15 +209,34 @@ Each pair is (NAME BASE), as (bin 2)."
            (t (grid-calc-raise "#NUM!")))))
        (t (grid-calc-raise "#NUM!")))))))
 
+(defun grid-calc--complex-part (number)
+  "Return NUMBER as the complex numbers write it, out in full if it fits.
+Excel writes a part of a complex number in full wherever the digits
+reach, where the text of a number alone would have turned to an
+exponent much sooner: 1e-16 is 0.0000000000000001, 1e-20 is 1E-20."
+  (let ((text (grid-calc-number-text number)))
+    (if (and (string-match
+              "\\`\\(-?\\)\\([0-9]\\)\\(?:\\.\\([0-9]*\\)\\)?E-\\([0-9]+\\)\\'"
+              text)
+             (<= (+ (length (concat (match-string 2 text)
+                                    (or (match-string 3 text) "")))
+                    (string-to-number (match-string 4 text)))
+                 20))
+        (let ((digits (concat (match-string 2 text) (or (match-string 3 text) "")))
+              (exponent (string-to-number (match-string 4 text))))
+          (concat (match-string 1 text) "0."
+                  (make-string (1- exponent) ?0) digits))
+      text)))
+
 (defun grid-calc--complex-text (real imag &optional suffix)
   "Return the complex number REAL + IMAG SUFFIX as text, as Excel writes it."
   (let* ((suffix (or suffix "i"))
          (real (grid-calc--tidy-number (grid-calc--snap real)))
          (imag (grid-calc--tidy-number (grid-calc--snap imag)))
-         (real-text (unless (zerop real) (grid-calc-number-text real)))
+         (real-text (unless (zerop real) (grid-calc--complex-part real)))
          (imag-text (unless (zerop imag)
                       (concat (cond ((< imag 0) "-") (real-text "+") (t ""))
-                              (if (= (abs imag) 1) "" (grid-calc-number-text (abs imag)))
+                              (if (= (abs imag) 1) "" (grid-calc--complex-part (abs imag)))
                               suffix))))
     (if (or real-text imag-text) (concat real-text imag-text) "0")))
 
@@ -243,15 +276,15 @@ Each pair is (NAME BASE), as (bin 2)."
     (grid-calc--complex-text a (- b) s)))
 
 (defun grid-calc--complex-args (arguments)
-  "Return the complex numbers of ARGUMENTS, `values' arguments."
+  "Return the complex numbers of ARGUMENTS, `values' arguments.
+An empty cell is zero here, so that IMPRODUCT of it is 0."
   (let (numbers)
     (dolist (argument arguments)
       (grid-calc-each-value argument
                             (lambda (value _)
                               (when (grid-calc-err-p value)
                                 (grid-calc-raise (grid-calc-err-code value)))
-                              (unless (eq value :blank)
-                                (push (grid-calc--complex value) numbers)))))
+                              (push (grid-calc--complex value) numbers))))
     (nreverse numbers)))
 
 (grid-calc-define imsum (&rest (numbers values))
@@ -335,7 +368,20 @@ Each pair is (NAME BASE), as (bin 2)."
 
 (defun grid-calc--sinh (x)
   "Return the hyperbolic sine of X."
-  (/ (- (exp x) (exp (- x))) 2))
+  (if (< (abs x) 2.5)
+      ;; Its series is of one sign throughout, so it keeps every digit,
+      ;; where the difference of two exponentials rounds the small ones
+      ;; away; the terms are summed as Kahan sums them, to that end.
+      (let ((square (* x x)) (term x) (sum x) (carry 0.0) (k 0))
+        (while (and (< k 100) (> (abs term) (* 1e-19 (abs sum))))
+          (setq k (1+ k)
+                term (/ (* term square) (* 2 k (1+ (* 2 k)))))
+          (let* ((part (- term carry))
+                 (total (+ sum part)))
+            (setq carry (- (- total sum) part)
+                  sum total)))
+        sum)
+    (/ (- (exp x) (exp (- x))) 2)))
 
 (defun grid-calc--cosh (x)
   "Return the hyperbolic cosine of X."
