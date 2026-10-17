@@ -802,16 +802,21 @@ the header row."
 ;;;###autoload
 (defun grid-table-xlsx-create-workbook (file)
   "Return a workbook holding every sheet of the xlsx FILE, and its names."
-  (let* ((grid-format-date-system (grid-table-xlsx-date-system file))
-         (workbook
-          (grid-workbook-create
-           (mapcar (lambda (name)
-                     (cons name (grid-table-xlsx-create-data-source file name)))
-                   (or (grid-table-xlsx-sheet-names file)
-                       (error "No sheet in %s" file)))
-           t grid-format-date-system)))
-    (grid-table-xlsx-give-names workbook (expand-file-name file))
-    workbook))
+  (let ((grid-format-date-system (grid-table-xlsx-date-system file)))
+    ;; Each sheet, the workbook and its names would each compute every
+    ;; formula; only once all are there can a formula read another sheet
+    ;; or a name, so they are computed then, once.
+    (grid-workbook-with-held-recalculation
+      (let ((workbook
+             (grid-workbook-create
+              (mapcar (lambda (name)
+                        (cons name (grid-table-xlsx-create-data-source
+                                    file name)))
+                      (or (grid-table-xlsx-sheet-names file)
+                          (error "No sheet in %s" file)))
+              t grid-format-date-system)))
+        (grid-table-xlsx-give-names workbook (expand-file-name file))
+        workbook))))
 
 ;;;###autoload
 (defun grid-table-xlsx-find-file (file &optional sheet)
