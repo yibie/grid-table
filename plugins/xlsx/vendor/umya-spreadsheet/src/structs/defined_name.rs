@@ -73,13 +73,16 @@ impl DefinedName {
     }
 
     pub fn set_address<S: Into<String>>(&mut self, value: S) -> &mut Self {
-        let list = Self::split_str(value);
-        for v in &list {
-            if is_address(v) {
+        let value = value.into();
+        let list = Self::split_str(value.as_str());
+        // Only a list of addresses is kept as addresses; anything else,
+        // as {1,2;3,4} or IF(A1,"a","b"), is kept whole, as written.
+        if !list.is_empty() && list.iter().all(|v| is_address(v)) {
+            for v in &list {
                 self.add_address(v);
-            } else {
-                self.set_string_value(v);
             }
+        } else {
+            self.set_string_value(value);
         }
         self
     }

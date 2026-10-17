@@ -496,6 +496,24 @@ grid reads them back without it."
           (should-not (grid-workbook-tables
                        (grid-table-xlsx-create-workbook file))))))))
 
+(ert-deftest grid-table-xlsx-test-names-of-constants-keep-their-text ()
+  "A name for an array or for text with commas is read back whole."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((sheet (make-default-data-source
+                   '("" "" "") '(("=INDEX(Months,2)" "=Label" "=Global1"))))
+           (workbook (grid-workbook-create (list (cons "Sheet1" sheet)))))
+      (grid-workbook-define-name workbook "Months" "={\"Jan\",\"Feb\"}")
+      (grid-workbook-define-name workbook "Label" "=\"a, b\"")
+      (grid-workbook-define-name workbook "Global1" "=7")
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((sheet (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
+                                        "Sheet1")))
+        (should (equal (list (grid-get-computed-value-at sheet 0 0)
+                             (grid-get-computed-value-at sheet 0 1)
+                             (grid-get-computed-value-at sheet 0 2))
+                       '("Feb" "a, b" 7)))))))
+
 (ert-deftest grid-table-xlsx-test-table-names-keep-their-text ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file
