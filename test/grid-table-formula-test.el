@@ -2901,6 +2901,32 @@ IronCalc's and the formulas package's workbooks."
                   ("=TYPE(LAMBDA(x,x))" 128)))
     (should (equal (list (car case) (grid-table-formula-test--eval (car case)))
                    case))))
+(ert-deftest grid-table-formula-regex-functions-read-patterns-as-excel ()
+  "REGEXTEST, REGEXEXTRACT and REGEXREPLACE read a pattern as PCRE2
+does.  The cases come from IronCalc's and the formulas package's
+workbooks."
+  (dolist (case '(("=REGEXTEST(\"Another\",\"[A-Z]her\")" nil)
+                  ("=REGEXTEST(\"There\",\"[A-Z]her\")" t)
+                  ("=REGEXTEST(\"ciao\",\"^ciaO$\",1)" t)
+                  ("=REGEXTEST(\"ciao\",\"^ciaO$\")" nil)
+                  ("=REGEXTEST(\"10\",\"^\\d+$\",2)" "#VALUE!")
+                  ("=REGEXTEST(1.9,1.9)" t)
+                  ("=REGEXTEST(\"a]b\",\"[]x]\")" t)
+                  ("=REGEXTEST(\"a-b\",\"a[\\-+]b\")" t)
+                  ("=REGEXTEST(\"ab\",\"(?=a)\")" "#VALUE!")
+                  ("=REGEXEXTRACT(\"LonelyPlanet\",\"[A-Z][a-z]+\")" "Lonely")
+                  ("=INDEX(REGEXEXTRACT(\"LonelyPlanet\",\"[A-Z][a-z]+\",1),2)" "Planet")
+                  ("=INDEX(REGEXEXTRACT(\"1a2b3c\",\"((\\d)[bc]+|(3c))\",2),2)" "2")
+                  ("=REGEXEXTRACT(\"Rees (378) 555-4197\",\"[0-9()]+ [0-9-]+\",2)" "#VALUE!")
+                  ("=REGEXEXTRACT(\"1.9\",\"^\\d+$\")" "#N/A")
+                  ("=REGEXEXTRACT(\"a12\",\"\\d{2}\")" "12")
+                  ("=REGEXREPLACE(\"JamesBond\",\"([A-Z][a-z]+)([A-Z][a-z]+)\",\"$2, $1 $2\")"
+                   "Bond, James Bond")
+                  ("=REGEXREPLACE(\"a1b2c3\",\"\\d\",\"#\")" "a#b#c#")
+                  ("=REGEXREPLACE(\"a1b2c3\",\"\\d\",\"#\",-1)" "a1b2c#")
+                  ("=REGEXREPLACE(10,\"^\\d+$\",TRUE)" "TRUE")))
+    (should (equal (list (car case) (grid-table-formula-test--eval (car case)))
+                   case))))
 
 (ert-deftest grid-table-formula-finance-finds-coupons-and-accrual ()
   "COUP*, ACCRINT and ACCRINTM as Excel has them.

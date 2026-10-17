@@ -312,6 +312,201 @@ no such delimiter."
   (grid-calc--text-around text delimiter instance (= mode 1) missing t))
 
 ;;;----------------------------------------------------------------------
+;;; Regular expressions
+;;;----------------------------------------------------------------------
+;;
+;; REGEXTEST and its like read a pattern as PCRE2 does, which
+;; `grid-calc--regexp' rewrites as an Emacs regexp.  ^ and $ are the
+;; ends of the text, as PCRE2 has them without its multiline flag.
+
+(defconst grid-calc--regexp-escapes
+  '((?d "[0-9]" "0-9") (?D "[^0-9]") (?w "[[:alnum:]_]" "[:alnum:]_")
+    (?W "[^[:alnum:]_]") (?s "[[:space:]]" "[:space:]") (?S "[^[:space:]]")
+    (?b "\\b") (?B "\\B") (?A "\\`") (?z "\\'") (?Z "\\'")
+    (?n "\n" "\n") (?t "\t" "\t") (?r "\r" "\r") (?f "\f" "\f") (?v "\v" "\v"))
+  "What a backslash and a letter stand for in a pattern: as an Emacs
+regexp, and inside a [ ] class.")
+
+(defun grid-calc--regexp-class (pattern start)
+  "Return (REGEXP . END) for the [ ] class of PATTERN opening at START.
+END is the index past its ]."
+  (let ((i (1+ start)) (n (length pattern)) negated items has-bracket has-caret
+        has-dash)
+    (when (and (< i n) (eq (aref pattern i) ?^)) (setq negated t) (cl-incf i))
+    (cl-labels
+        ((one-char ()
+           ;; The next character of the class, a backslash read off;
+           ;; a string where the escape stands for a set.
+           (let ((c (aref pattern i)))
+             (cl-incf i)
+             (if (and (eq c ?\\) (< i n))
+                 (let* ((e (aref pattern i))
+                        (known (assq e grid-calc--regexp-escapes)))
+                   (cl-incf i)
+                   (cond ((null known) e)
+                         ((nth 2 known)
+                          (if (= (length (nth 2 known)) 1)
+                              (aref (nth 2 known) 0)
+                            (nth 2 known)))
+                         (t (grid-calc-raise "#VALUE!"))))
+               c))))
+      (while (and (< i n) (or (not (eq (aref pattern i) ?\]))
+                              ;; ] first is a ]
+                              (= i (+ start 1 (if negated 1 0)))))
+        (if (and (eq (aref pattern i) ?\[) (< (1+ i) n)
+                 (eq (aref pattern (1+ i)) ?:))
+            ;; [:alpha:] and its like
+            (let ((end (string-search ":]" pattern (+ i 2))))
+              (unless end (grid-calc-raise "#VALUE!"))
+              (push (substring pattern i (+ end 2)) items)
+              (setq i (+ end 2)))
+          (let ((c (one-char)))
+            (if (and (characterp c) (< (1+ i) n) (eq (aref pattern i) ?-)
+                     (not (eq (aref pattern (1+ i)) ?\])))
+                (progn
+                  (cl-incf i)
+                  (let ((last (one-char)))
+                    (unless (and (characterp last) (<= c last))
+                      (grid-calc-raise "#VALUE!"))
+                    (push (format "%c-%c" c last) items)))
+              (pcase c
+                (?\] (setq has-bracket t))
+                (?^ (setq has-caret t))
+                (?- (setq has-dash t))
+                ((pred characterp) (push (string c) items))
+                (_ (push c items)))))))
+      (unless (< i n) (grid-calc-raise "#VALUE!"))
+      ;; Emacs reads ] only first, ^ anywhere but first and - only last.
+      (let ((body (concat (if has-bracket "]" "")
+                          (apply #'concat (nreverse items))
+                          (if has-caret "^" "")
+                          (if has-dash "-" ""))))
+        (when (string-prefix-p "^" body)
+          (setq body (concat (substring body 1) "^")))
+        (when (equal body "")
+          (grid-calc-raise "#VALUE!"))
+        (cons (concat "[" (if negated "^" "") body "]") (1+ i))))))
+
+(defun grid-calc--regexp (pattern)
+  "Return PATTERN, a regular expression as PCRE2 reads one, as an Emacs
+regexp.  What Emacs has nothing for, as a lookahead, is #VALUE!."
+  (let ((i 0) (n (length pattern)) parts)
+    (while (< i n)
+      (let ((c (aref pattern i)))
+        (cl-incf i)
+        (push
+         (pcase c
+           (?\\
+            (unless (< i n) (grid-calc-raise "#VALUE!"))
+            (let ((e (aref pattern i)))
+              (cl-incf i)
+              (cond ((assq e grid-calc--regexp-escapes)
+                     (nth 1 (assq e grid-calc--regexp-escapes)))
+                    ((<= ?1 e ?9) (format "\\%c" e))
+                    ((or (<= ?a e ?z) (<= ?A e ?Z) (<= ?0 e ?9))
+                     (grid-calc-raise "#VALUE!"))
+                    (t (regexp-quote (string e))))))
+           (?\[
+            (let ((class (grid-calc--regexp-class pattern (1- i))))
+              (setq i (cdr class))
+              (car class)))
+           (?\(
+            (cond ((not (eq (and (< i n) (aref pattern i)) ??)) "\\(")
+                  ((string-prefix-p "?:" (substring pattern i))
+                   (cl-incf i 2) "\\(?:")
+                  ;; A named group counts as any other.
+                  ((string-match "\\`?P?<[[:alpha:]_][[:alnum:]_]*>"
+                                 (substring pattern i))
+                   (cl-incf i (match-end 0)) "\\(")
+                  (t (grid-calc-raise "#VALUE!"))))
+           (?\) "\\)")
+           (?| "\\|")
+           (?^ "\\`")
+           (?$ "\\'")
+           (?{
+            (if (string-match "\\`\\([0-9]+\\)\\(,[0-9]*\\)?}" (substring pattern i))
+                (prog1 (concat "\\{" (substring pattern i (+ i (1- (match-end 0))))
+                               "\\}")
+                  (cl-incf i (match-end 0)))
+              "{"))
+           (_ (string c)))
+         parts)))
+    (apply #'concat (nreverse parts))))
+
+(defun grid-calc--regexp-matches (pattern text case)
+  "Return the match data of each match of PATTERN in TEXT, from the left.
+CASE is 0 to match case or 1 to ignore it; any other is #VALUE!."
+  (unless (memq case '(0 1)) (grid-calc-raise "#VALUE!"))
+  (let ((regexp (grid-calc--regexp pattern))
+        (case-fold-search (= case 1))
+        (start 0) matches)
+    (condition-case nil
+        (while (and (<= start (length text)) (string-match regexp text start))
+          (push (match-data) matches)
+          (setq start (max (match-end 0) (1+ (match-beginning 0)))))
+      (invalid-regexp (grid-calc-raise "#VALUE!")))
+    (nreverse matches)))
+
+(defun grid-calc--match-part (text match group)
+  "Return the GROUPth part of MATCH, match data in TEXT, or \"\"."
+  (let ((start (nth (* 2 group) match)))
+    (if start (substring text start (nth (1+ (* 2 group)) match)) "")))
+
+(grid-calc-define regextest ((text text) (pattern text) &optional (case integer 0))
+  "TRUE when PATTERN matches some of TEXT; CASE 1 ignores case."
+  :empty t
+  (grid-calc-bool (grid-calc--regexp-matches pattern text case)))
+
+(grid-calc-define regexextract ((text text) (pattern text) &optional
+                                (mode integer 0) (case integer 0))
+  "What PATTERN matches in TEXT: with MODE 0 the first match, 1 all of
+them and 2 the groups of the first.  No match is #N/A."
+  :empty t
+  (unless (memq mode '(0 1 2)) (grid-calc-raise "#VALUE!"))
+  (let* ((matches (grid-calc--regexp-matches pattern text case))
+         (parts (pcase mode
+                  (0 (list (grid-calc--match-part text (car matches) 0)))
+                  (1 (mapcar (lambda (match) (grid-calc--match-part text match 0))
+                             matches))
+                  (2 (let ((groups (regexp-opt-depth (grid-calc--regexp pattern))))
+                       (when (zerop groups) (grid-calc-raise "#VALUE!"))
+                       (cl-loop for group from 1 to groups
+                                collect (grid-calc--match-part
+                                         text (car matches) group)))))))
+    (cond ((null matches) (grid-calc-err "#N/A"))
+          ((cdr parts) (grid-calc-array 1 (length parts)
+                                        (lambda (_ col) (nth col parts))))
+          (t (car parts)))))
+
+(grid-calc-define regexreplace ((text text) (pattern text) (replacement text)
+                                &optional (occurrence integer 0) (case integer 0))
+  "TEXT with what PATTERN matches written as REPLACEMENT, where $1 is the
+first group matched.  OCCURRENCE 0 replaces every match, another number
+that one, counting from the end when it is less than 0."
+  :empty t
+  (let* ((matches (grid-calc--regexp-matches pattern text case))
+         (count (length matches))
+         (chosen (cond ((zerop occurrence) matches)
+                       ((<= 1 occurrence count) (list (nth (1- occurrence) matches)))
+                       ((<= 1 (- occurrence) count)
+                        (list (nth (+ count occurrence) matches)))))
+         (start 0) parts)
+    (dolist (match chosen)
+      (push (substring text start (car match)) parts)
+      (push (replace-regexp-in-string
+             "\\$\\(?:\\([0-9]+\\)\\|{\\([0-9]+\\)}\\|\\$\\)"
+             (lambda (found)
+               (let ((group (or (match-string 1 found) (match-string 2 found))))
+                 (if group
+                     (grid-calc--match-part text match (string-to-number group))
+                   "$")))
+             replacement t t)
+            parts)
+      (setq start (cadr match)))
+    (push (substring text start) parts)
+    (apply #'concat (nreverse parts))))
+
+;;;----------------------------------------------------------------------
 ;;; Reading numbers
 ;;;----------------------------------------------------------------------
 
