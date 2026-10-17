@@ -24,7 +24,12 @@ fetch() {
     return
   fi
   git -C "$dest/$name" sparse-checkout set --no-cone '*.xlsx' '*.xlsm' '*.XLSX' >/dev/null 2>&1
-  git -C "$dest/$name" checkout -q
+  if ! git -C "$dest/$name" checkout -q; then
+    # Else the next run would take the project as fetched.
+    rm -rf "${dest:?}/$name"
+    echo "FAIL  $name"
+    return
+  fi
   echo "got   $name $(find "$dest/$name" -type f \( -iname '*.xlsx' -o -iname '*.xlsm' \) | wc -l | tr -d ' ') workbooks"
 }
 
@@ -36,4 +41,14 @@ fetch calamine https://github.com/tafia/calamine.git &
 fetch pandas https://github.com/pandas-dev/pandas.git &
 fetch exceljs https://github.com/exceljs/exceljs.git &
 fetch libreoffice https://github.com/LibreOffice/core.git &
+# Projects that compute formulas, whose test workbooks Excel saved with
+# its own values.
+fetch ironcalc https://github.com/ironcalc/IronCalc.git &
+fetch phpspreadsheet https://github.com/PHPOffice/PhpSpreadsheet.git &
+fetch closedxml https://github.com/ClosedXML/ClosedXML.git &
+fetch epplus https://github.com/EPPlusSoftware/EPPlus.git &
+fetch xlcalculator https://github.com/bradbase/xlcalculator.git &
+fetch formulas https://github.com/vinci1it2000/formulas.git &
+fetch pycel https://github.com/dgorissen/pycel.git &
+fetch excelize https://github.com/xuri/excelize.git &
 wait
