@@ -260,12 +260,72 @@ Workbooks store the operators as these functions."
                   start from)))))
     formula))
 
+(defconst grid-calc--many-value-functions
+  '("ANCHORARRAY" "UNIQUE" "SORT" "SORTBY" "FILTER" "SEQUENCE" "RANDARRAY"
+    "TEXTSPLIT" "VSTACK" "HSTACK" "TOCOL" "TOROW" "WRAPROWS" "WRAPCOLS"
+    "TAKE" "DROP" "CHOOSEROWS" "CHOOSECOLS" "EXPAND")
+  "Functions Excel shows an @ before where a formula takes one value of
+them, as several values are all they are for.")
+
+(defun grid-calc--many-values-node-p (node)
+  "Return non-nil when the formula part NODE may stand for several cells
+or values, as a range does and A1:A1 does not."
+  (pcase node
+    (`(RANGE ,first ,last) (not (equal first last)))
+    (`(RANGE-OP . ,_) t)
+    (`(FUNCTION-CALL ,name . ,_)
+     (member (upcase name) grid-calc--many-value-functions))))
+
+(defun grid-calc--explicit-singles (ast)
+  "Return the parts of AST an @ of their own already takes one value of."
+  (let (singles)
+    (named-let walk ((node ast))
+      (when (consp node)
+        (pcase node
+          (`(UNARY-OP @ ,operand) (push operand singles))
+          (`(FUNCTION-CALL ,(and name (pred stringp)) (,operand))
+           (when (string-equal (upcase name) "SINGLE")
+             (push operand singles))))
+        (mapc #'walk node)))
+    singles))
+
+(defun grid-calc--legacy-formula-text (formula)
+  "Return FORMULA, read as a workbook file holds it, with @ shown before
+each part that it takes one value of, as Excel shows it: A1:A3+1 as
+@A1:A3+1.  See `grid-calc--token-classes'."
+  (pcase-let ((`(,ast . ,starts)
+               (ignore-errors (grid-parser-parse-starts (substring formula 1)))))
+    (if (or (null ast) (eq (car-safe ast) 'ELISP-CODE))
+        formula
+      (let ((singles (grid-calc--explicit-singles ast))
+            positions)
+        (maphash (lambda (node class)
+                   (let ((start (gethash node starts)))
+                     (when (and start (eq class 'VAL) (not (memq node singles))
+                                (grid-calc--many-values-node-p node))
+                       (push (1+ start) positions))))
+                 (grid-calc--token-classes ast))
+        (dolist (position (sort (delete-dups positions) #'>) formula)
+          (setq formula (concat (substring formula 0 position) "@"
+                                (substring formula position))))))))
+
 (grid-calc-define formulatext ((reference ref))
   "The formula of the cell REFERENCE names, as text, as Excel shows it;
 #N/A when there is none."
-  (let ((raw (grid-calc--raw-at reference)))
+  (let* ((raw (grid-calc--raw-at reference))
+         (model (grid-calc-ref-model reference))
+         (row (grid-calc-ref-top reference))
+         (col (grid-calc-ref-left reference)))
     (if (grid-calc--formula-p raw)
-        (grid-calc-excel-formula-text (substring-no-properties raw))
+        (let ((raw (substring-no-properties raw)))
+          (grid-calc-excel-formula-text
+           (if (and (not (grid-model-array-at model row col))
+                    (or (grid-model-legacy-at model row col)
+                        (if (eq grid-calc--legacy-outside 'unset)
+                            grid-calc-legacy-arrays
+                          grid-calc--legacy-outside)))
+               (grid-calc--legacy-formula-text raw)
+             raw)))
       (grid-calc-err "#N/A"))))
 
 (defconst grid-calc--error-numbers

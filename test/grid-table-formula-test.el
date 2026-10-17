@@ -1183,6 +1183,29 @@
     ;; A formula outside the range's rows has none of them.
     (should (equal (value "=ABS(A1:A3)" 4 4) "#VALUE!"))))
 
+(ert-deftest grid-table-formula-text-shows-where-a-file-formula-takes-one-value ()
+  ;; Excel shows an @ where a workbook file's formula takes one value
+  ;; of what may be several, and none where it takes them all.
+  (cl-flet ((text (formula)
+              (let ((model (grid-model-create
+                            3 3 '(("1" "2" "") ("3" "4" "") ("" "" "")))))
+                (grid-model-set-raw-value model 0 2 formula)
+                (grid-model-set-raw-value model 2 0 "=FORMULATEXT(C1)")
+                (grid-model-set-legacy model '((0 . 2)))
+                (grid-calc-forget model)
+                (grid-model-recalculate-all model)
+                (grid-model-get-computed-value model 2 0))))
+    (pcase-dolist (`(,formula ,expected)
+                   '(("=A1:A2+B1:B2" "=@A1:A2+@B1:B2") ("=-A1:A2" "=-@A1:A2")
+                     ("=SUM(A1:A2*2)" "=SUM(@A1:A2*2)") ("=SUM(A1:B2)" "=SUM(A1:B2)")
+                     ("=SUMPRODUCT(A1:A2*2)" "=SUMPRODUCT(A1:A2*2)")
+                     ("=ANCHORARRAY(A1)" "=@A1#") ("=A1" "=A1") ("=A1:A1" "=A1:A1")
+                     ("=UNIQUE(A1:A2)" "=@UNIQUE(A1:A2)")
+                     ("=SINGLE((UNIQUE(A1:A2)))" "=@(UNIQUE(A1:A2))")
+                     ("=TYPE(ANCHORARRAY(A1))" "=TYPE(A1#)")
+                     ("=SUM((A1,B1))" "=SUM((A1,B1))") ("=\"A1:A2\"" "=\"A1:A2\"")))
+      (should (equal (list formula (text formula)) (list formula expected))))))
+
 (ert-deftest grid-table-formula-spill-moves-with-its-formula ()
   (let* ((model (grid-model-create
                  5 2 '(("" "=SUM(A3:A5)") ("" "") ("=SEQUENCE(3)" "")

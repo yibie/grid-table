@@ -203,6 +203,11 @@ opening parenthesis is a function, not a reference."
                   ;; A column alone is a name, as a function's is
                   ((grid-parser--cell-text-p first) (cons first-end first))))))))))
 
+(defvar grid-parser--starts nil
+  "Nil, or a table where parsing keeps where each token and node starts.
+Keys are tokens and the AST nodes made of them, compared with `eq';
+values are positions in the formula text.  See `grid-parser-parse-starts'.")
+
 (defun grid-parser-tokenize (formula-str)
   "Return the tokens of FORMULA-STR, a formula without its equals sign.
 Whitespace between two references, where it intersects them, is a SPACE
@@ -211,7 +216,7 @@ token; elsewhere it separates tokens and is dropped."
         (pos 0)
         (len (length formula-str)))
     (while (< pos len)
-      (let ((char (aref formula-str pos)))
+      (let ((char (aref formula-str pos)) (before tokens) (start pos))
         (cond
          ((memq char '(?\s ?\t ?\n ?\r))
           (let ((start pos))
@@ -341,7 +346,9 @@ token; elsewhere it separates tokens and is dropped."
           (push (grid-parser-make-token grid-parser-token-type-operator
                                         (char-to-string char))
                 tokens)
-          (setq pos (1+ pos))))))
+          (setq pos (1+ pos))))
+        (when (and grid-parser--starts (not (eq tokens before)))
+          (puthash (car tokens) start grid-parser--starts))))
     ;; Whitespace kept before something that turned out no reference
     (setq tokens (nreverse tokens))
     (let ((kept '()))
@@ -652,7 +659,7 @@ Returns (ast . remaining-tokens)."
                                    grid-parser-token-type-operator ":")
       (pop remaining)
       (let ((right (grid-parser--parse-spilled remaining)))
-        (setq left (list 'RANGE-OP left (car right))
+        (setq left (grid-parser--starting (list 'RANGE-OP left (car right)) left)
               remaining (cdr right))))
     (cons left remaining)))
 
@@ -661,7 +668,9 @@ Returns (ast . remaining-tokens)."
 Workbooks store A1# so.  Returns (ast . remaining-tokens)."
   (let ((result (grid-parser-parse-primary-expression tokens)))
     (if (grid-parser-token-is-p (cadr result) grid-parser-token-type-operator "#")
-        (cons (list 'FUNCTION-CALL "ANCHORARRAY" (list (car result)))
+        (cons (grid-parser--starting
+               (list 'FUNCTION-CALL "ANCHORARRAY" (list (car result)))
+               (car result))
               (cddr result))
       result)))
 
@@ -703,7 +712,22 @@ Returns ((ARRAY ROWS) . remaining-tokens), each row a list of nodes."
       (error "Rows of an array must be as long as each other"))
     (cons (list 'ARRAY rows) tokens)))
 
+(defun grid-parser--starting (node from)
+  "Return NODE, kept as starting where the token or node FROM starts.
+See `grid-parser--starts'."
+  (when grid-parser--starts
+    (let ((start (gethash from grid-parser--starts)))
+      (when start (puthash node start grid-parser--starts))))
+  node)
+
 (defun grid-parser-parse-primary-expression (tokens)
+  "Parse one primary expression, keeping where it starts.
+Returns (ast . remaining-tokens).  See `grid-parser--starts'."
+  (let ((result (grid-parser--parse-primary tokens)))
+    (grid-parser--starting (car result) (car tokens))
+    result))
+
+(defun grid-parser--parse-primary (tokens)
   "Parses primary expressions (numbers, strings, cell references, function calls, parenthesized expressions)."
   (when (null tokens)
     (error "Unexpected end of expression"))
@@ -810,6 +834,14 @@ Returns ((ARRAY ROWS) . remaining-tokens), each row a list of nodes."
                   (grid-parser-token-is-p (car rest) grid-parser-token-type-eof))
         (error "Unexpected %s" (grid-parser-token-value (car rest))))
       (car result))))
+
+(defun grid-parser-parse-starts (formula-str)
+  "Return (AST . STARTS) for FORMULA-STR, as `grid-parser-parse' parses it.
+STARTS is a table of where each node of AST starts in FORMULA-STR, for
+the nodes a token starts; see `grid-parser--starts'."
+  (let* ((grid-parser--starts (make-hash-table :test #'eq))
+         (ast (grid-parser-parse formula-str)))
+    (cons ast grid-parser--starts)))
 
 ;;;----------------------------------------------------------------------
 ;;; AST Evaluator (Moved to grid-table-calc.el)
