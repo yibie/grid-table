@@ -36,6 +36,8 @@ another sheet has that cell computed first and a cycle through several
 sheets is found.")
 
 (declare-function grid-model-find-merge "grid-data-model")
+(declare-function grid-calc--day-number "grid-table-calc-date")
+(declare-function grid-calc--day-checked "grid-table-calc-date")
 
 (defvar grid-calc--spills (make-hash-table :test 'eq :weakness 'key)
   "For each model, the formulas whose values spill over the cells below
@@ -2315,6 +2317,8 @@ of them, row after row."
 ;;   integer  a number with its fraction cut off;
 ;;   text     text, as & writes values;
 ;;   bool     TRUE or FALSE, as IF reads a condition: t or nil;
+;;   date     a day, the serial number of a date without its time (text
+;;            that reads as a date, a number from 0 to 9999's end);
 ;;   any      one value of any kind, a range being the cell of it in the
 ;;            formula's row or column;
 ;;   values   the argument as written: a `grid-calc-ref', an array or a
@@ -2328,10 +2332,13 @@ of them, row after row."
 ;;   lazy     the argument unevaluated, for `grid-calc-arg' to compute
 ;;            when the function wants it, as IF's branches are.
 ;;
-;; An argument of the first five kinds that is an error value makes the
+;; An argument of the first six kinds that is an error value makes the
 ;; function give that error, unless the function says :errors.  One that
 ;; is several values makes the function give several values, computed for
-;; each of them.
+;; each of them.  A function that says :toolpak t, one Excel once took
+;; from the Analysis ToolPak, gives #VALUE! for TRUE or FALSE in any of
+;; them, and checks each date as it reads it, where the others check the
+;; dates once all are read.
 
 (cl-defstruct (grid-calc-function (:constructor grid-calc-function--make))
   "A function formulas can call.
@@ -2340,8 +2347,9 @@ them, or nil; MIN is how many must be given.  ERRORS non-nil takes error
 values in as arguments.  BODY is the Lisp function.  LEGACY marks one
 defined with `grid-calc-defun'.  EMPTY, when non-nil, lists the default
 of each argument, which then also stands in for one left empty, as in
-SORT(A1:A3,,-1); otherwise an empty argument is blank, so 0 or FALSE."
-  name kinds rest min errors body legacy empty)
+SORT(A1:A3,,-1); otherwise an empty argument is blank, so 0 or FALSE.
+TOOLPAK non-nil marks one Excel once took from the Analysis ToolPak."
+  name kinds rest min errors body legacy empty toolpak)
 
 (defvar grid-calc-functions (make-hash-table :test 'equal)
   "The functions formulas can call, by their names in capitals.")
@@ -2350,7 +2358,7 @@ SORT(A1:A3,,-1); otherwise an empty argument is blank, so 0 or FALSE."
   "The model of the sheet whose formula calls the function being run.")
 
 (defconst grid-calc--kinds
-  '(number integer text bool any values areas array ref lazy)
+  '(number integer text bool date any values areas array ref lazy)
   "The kinds an argument may be; see the commentary above.")
 
 (defun grid-calc--parse-arglist (arglist)
@@ -2380,24 +2388,27 @@ Each element is NAME, of kind any, or (NAME KIND [DEFAULT]), with
 (defmacro grid-calc-define (name arglist &rest body)
   "Define NAME as a function formulas can call, taking ARGLIST.
 See the commentary above for ARGLIST's kinds.  BODY may start with a
-docstring and with :errors t, to take error values as arguments, and
-with :empty t, for an empty argument to take its default.  It
+docstring and with :errors t, to take error values as arguments, with
+:empty t, for an empty argument to take its default, and with :toolpak
+t, for one of the Analysis ToolPak.  It
 returns a value as a formula has it, or signals one with
 `grid-calc-raise'; for TRUE and FALSE see `grid-calc-bool'."
   (declare (indent 2) (doc-string 3))
   (pcase-let ((`(,names ,kinds ,rest ,min ,defaults)
                (grid-calc--parse-arglist arglist))
-              (errors nil) (empty nil))
+              (errors nil) (empty nil) (toolpak nil))
     (when (stringp (car body)) (pop body))
     (while (and (keywordp (car body)) (cdr body))
       (pcase (pop body)
         (:errors (setq errors (pop body)))
         (:empty (setq empty (pop body)))
+        (:toolpak (setq toolpak (pop body)))
         (key (error "Unknown keyword %s" key))))
     `(puthash ,(upcase (symbol-name name))
               (grid-calc-function--make
                :name ,(upcase (symbol-name name))
                :kinds ',kinds :rest ',(cdr rest) :min ,min :errors ,errors
+               :toolpak ,toolpak
                :empty ,(and empty `(list ,@defaults))
                ;; A default stands in only for an argument left out, not
                ;; for one that came to nil, as FALSE does for bool.
@@ -2439,11 +2450,12 @@ An error value signals."
       ('integer (grid-calc-int value))
       ('text (grid-calc-text value))
       ('bool (grid-calc-truth value))
+      ('date (grid-calc--day-number value))
       (_ value))))
 
 (defun grid-calc--scalar-kind-p (kind)
   "Return non-nil when an argument of KIND is one value."
-  (memq kind '(number integer text bool any)))
+  (memq kind '(number integer text bool date any)))
 
 (defun grid-calc--argument (model ast kind)
   "Return the argument AST computed on MODEL as one of KIND wants it.
@@ -2583,7 +2595,7 @@ KINDS, SCALAR, STOPS and ERRORS are as that function works them out."
   (grid-calc--catching
     (let ((grid-calc--model model)
           (grid-calc--lazy-model model))
-      (apply (grid-calc-function-body function)
+      (let ((arguments
              ;; The arguments are taken from the left, so the first one
              ;; that fails, as text where a number is wanted or an
              ;; error value, gives the function's error.
@@ -2596,12 +2608,26 @@ KINDS, SCALAR, STOPS and ERRORS are as that function works them out."
                        ((eq value 'grid-calc--omitted) nil)
                        ((and stop (grid-calc-err-p value))
                         (grid-calc-raise (grid-calc-err-code value)))
+                       ((and one (memq value '(t :false))
+                             (grid-calc-function-toolpak function))
+                        (grid-calc-raise "#VALUE!"))
                        ((and one (not (grid-calc-err-p value)))
-                        (grid-calc--coerce value kind))
+                        (let ((argument (grid-calc--coerce value kind)))
+                          (if (and (eq kind 'date)
+                                   (grid-calc-function-toolpak function))
+                              (grid-calc--day-checked argument t)
+                            argument)))
                        ((and (eq kind 'ref) (grid-calc-err-p value)
                              (not errors))
                         (grid-calc-raise (grid-calc-err-code value)))
-                       (t value)))))))
+                       (t value)))))
+        ;; Only then is a date seen to be one, so WEEKDAY(-1,"x") is
+        ;; #VALUE! and WEEKDAY(-1,1) #NUM!; WEEKNUM(-1,"x") is #NUM!.
+        (cl-loop for kind in kinds
+                 for argument in arguments
+                 when (and (eq kind 'date) argument)
+                 do (grid-calc--day-checked argument))
+        (apply (grid-calc-function-body function) arguments)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Functions defined the earlier way

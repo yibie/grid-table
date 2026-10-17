@@ -2263,6 +2263,28 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
   (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(C3:D4)")
                  "ศูนย์บาทถ้วน")))
 
+(ert-deftest grid-table-formula-date-arguments-fail-as-excel-has-them ()
+  ;; A date that is no date fails once all the arguments are read, so a
+  ;; later argument's failure wins.  The Analysis ToolPak functions check
+  ;; each as they read it, and take no TRUE or FALSE.  B1 holds "abc".
+  (dolist (case '(("=WEEKDAY(-1,\"x\")" . "#VALUE!")
+                  ("=WEEKDAY(-1,TRUE)" . "#NUM!")
+                  ("=WEEKDAY(\"1/1/10000\",1/0)" . "#VALUE!")
+                  ("=WEEKNUM(-1,\"x\")" . "#NUM!")
+                  ("=WEEKNUM(TRUE)" . "#VALUE!")
+                  ("=WEEKNUM(1,TRUE)" . "#VALUE!")
+                  ("=EDATE(TRUE,1)" . "#VALUE!")
+                  ("=DEC2BIN(TRUE)" . "#VALUE!")
+                  ("=YEARFRAC(1/0,1,9)" . "#NUM!")
+                  ("=YEARFRAC(2958466,1)" . "#NUM!")
+                  ("=YEARFRAC(DATE(2024,2,29),DATE(2025,2,28))" . 1)
+                  ("=NETWORKDAYS(1,10,B1)" . "#VALUE!")
+                  ("=NETWORKDAYS(1,10,-2)" . "#NUM!")
+                  ("=NETWORKDAYS.INTL(1,10,\"1111111\")" . 0)
+                  ("=WORKDAY.INTL(1,10,\"1111111\")" . "#VALUE!")))
+    (should (equal (grid-table-formula-test--eval (car case) "abc")
+                   (cdr case)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

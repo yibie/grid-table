@@ -66,10 +66,12 @@ Each pair is (NAME BASE), as (bin 2)."
         (append
          (list `(grid-calc-define ,(intern (format "%s2dec" from)) ((text any))
                   ,(format "The number TEXT, in base %d, stands for." from-base)
+                  :toolpak t
                   (grid-calc--from-base text ,from-base))
                `(grid-calc-define ,(intern (format "dec2%s" from))
                     ((number number) &optional (places integer))
                   ,(format "NUMBER in base %d, at least PLACES digits long." from-base)
+                  :toolpak t
                   (grid-calc--to-base number ,from-base places)))
          (cl-loop for (to to-base) in pairs
                   unless (eq from to)
@@ -77,6 +79,7 @@ Each pair is (NAME BASE), as (bin 2)."
                   `(grid-calc-define ,(intern (format "%s2%s" from to))
                        ((text any) &optional (places integer))
                      ,(format "TEXT, in base %d, in base %d." from-base to-base)
+                     :toolpak t
                      (grid-calc--to-base (grid-calc--from-base text ,from-base)
                                          ,to-base places)))))))
 
