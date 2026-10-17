@@ -79,7 +79,7 @@
 (grid-calc-define char ((code integer))
   "The character whose code is CODE, 1 to 255."
   (unless (<= 1 code 255) (grid-calc-raise "#VALUE!"))
-  (string (decode-char 'ucs (if (< code 128) code
+  (string (decode-char 'ucs (if (or (< code 128) (>= code 160)) code
                               ;; Windows-1252, as Excel on Windows has it
                               (or (aref [#x20AC nil #x201A #x0192 #x201E #x2026 #x2020
                                          #x2021 #x02C6 #x2030 #x0160 #x2039 #x0152 nil

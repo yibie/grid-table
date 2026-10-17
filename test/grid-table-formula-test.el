@@ -758,6 +758,11 @@
     (should (equal (funcall value "=\" 2024-01-10 \"+1") "#VALUE!"))
     (should (equal (funcall value "=\"2024-01-10\"+1") 45302))
     (should (equal (funcall value "=DATEVALUE(\" 2024-01-10 \")") 45301))
+    ;; CHAR reads codes past 127 as Windows-1252 does.
+    (should (equal (funcall value "=CHAR(65)") "A"))
+    (should (equal (funcall value "=CHAR(128)") "€"))
+    (should (equal (funcall value "=CHAR(200)") "È"))
+    (should (equal (funcall value "=CHAR(256)") "#VALUE!"))
     ;; The first argument that fails gives the error.
     (should (equal (funcall value "=FLOOR(\"x\",1/0)") "#VALUE!"))
     (should (equal (funcall value "=FLOOR(1/0,\"x\")") "#DIV/0!"))))
