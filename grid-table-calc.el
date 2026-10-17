@@ -1471,8 +1471,9 @@ March 2024."
   "Return the number TEXT reads as, the way Excel reads text, or nil.
 Spaces around it, thousands separators, a currency sign, a percent sign
 and parentheses for a negative are allowed; a date or a time is its
-serial number."
-  (let ((text (string-trim (substring-no-properties text))))
+serial number, but only with no spaces around it."
+  (let* ((raw (substring-no-properties text))
+         (text (string-trim raw)))
     (unless (string-empty-p text)
       (or (and (string-match-p "\\`[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
                                text)
@@ -1494,7 +1495,7 @@ serial number."
                 (if (= scale 1)
                     (* sign number)
                   (* sign number scale)))))
-          (grid-calc--parse-date-time text)))))
+          (and (string= text raw) (grid-calc--parse-date-time text))))))
 
 (defun grid-calc-num (value)
   "Return VALUE as a number, as arithmetic takes it.

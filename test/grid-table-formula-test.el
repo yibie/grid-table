@@ -751,7 +751,13 @@
     (should (equal (funcall value "=DAYS(A1,B1)") 221))
     (should (equal (funcall value "=TEXT(A1,\"yyyy/mm/dd\")") "2026/10/12"))
     (should (equal (funcall value "=TEXT(0.256,\"0.0%\")") "25.6%"))
-    (should (equal (funcall value "=VALUE(\"12.5%\")") 0.125))))
+    (should (equal (funcall value "=VALUE(\"12.5%\")") 0.125))
+    ;; Arithmetic reads a number with spaces around it, but not a date;
+    ;; DATEVALUE reads the date all the same.
+    (should (equal (funcall value "=\" 10 \"+1") 11))
+    (should (equal (funcall value "=\" 2024-01-10 \"+1") "#VALUE!"))
+    (should (equal (funcall value "=\"2024-01-10\"+1") 45302))
+    (should (equal (funcall value "=DATEVALUE(\" 2024-01-10 \")") 45301))))
 
 (ert-deftest grid-table-sort-keeps-a-formula-reading-its-own-row ()
   (let* ((model (grid-model-create
