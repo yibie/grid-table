@@ -1828,7 +1828,10 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
       (should (= (count "\"\"") 1))
       (should (= (count "\"<>\"") 6))))
   ;; An empty cell given as the criterion means 0, not an empty cell.
-  (should (= (grid-table-formula-test--eval "=COUNTIF(B1:E1,F1)" "0" "" "x" "") 1)))
+  (should (= (grid-table-formula-test--eval "=COUNTIF(B1:E1,F1)" "0" "" "x" "") 1))
+  ;; "=23" takes the text "23" too, but "<>23" leaves out only the number.
+  (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"=23\")" "23" "'23") 2))
+  (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"<>23\")" "23" "'23") 1)))
 
 (ert-deftest grid-table-formula-countif-takes-many-criteria ()
   ;; Each criterion of an array counts on its own.

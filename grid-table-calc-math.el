@@ -406,11 +406,18 @@ array is one value, as Excel takes them then."
                            (string-match-p regexp value))))))
                (t (grid-calc-criterion wanted))))
         ("<>"
-         (if (string-empty-p operand)
-             (lambda (value) (not (eq value :blank)))
+         (cond
+          ((string-empty-p operand)
+           (lambda (value) (not (eq value :blank))))
+          ;; "=23" takes the text "23" too, but "<>23" leaves out only
+          ;; the number.
+          ((numberp wanted)
+           (lambda (value)
+             (not (and (numberp value) (grid-calc--numbers-equal-p value wanted)))))
+          (t
            (let ((match (grid-calc-criterion
                          (if (stringp wanted) (concat "=" operand) wanted))))
-             (lambda (value) (not (funcall match value))))))
+             (lambda (value) (not (funcall match value)))))))
         (_
          (let ((test (pcase op
                        (">" (lambda (order) (> order 0)))
