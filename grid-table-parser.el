@@ -380,11 +380,15 @@ token; elsewhere it separates tokens and is dropped."
 
 (defun grid-parser--error-literal-at (formula pos)
   "Return the error value written in FORMULA at POS, or nil."
-  (cl-find-if (lambda (text)
-                (let ((end (+ pos (length text))))
-                  (and (<= end (length formula))
-                       (string= (upcase (substring formula pos end)) text))))
-              grid-parser-error-literals))
+  (and (< pos (length formula))
+       (eq (aref formula pos) ?#)
+       (cl-loop with length = (length formula)
+                for text in grid-parser-error-literals
+                for end = (+ pos (length text))
+                when (and (<= end length)
+                          (eq t (compare-strings formula pos end
+                                                 text nil nil t)))
+                return text)))
 
 ;;;----------------------------------------------------------------------
 ;;; AST Node Definitions
