@@ -1797,6 +1797,13 @@ Row, and of (COLUMN NAME) and (COLUMNS FIRST LAST)."
        (t (push (item (substring text pos end)) parts))))
     (nreverse parts)))
 
+(defun grid-calc--same-column-p (one other)
+  "Return non-nil when the column names ONE and OTHER are the same.
+Case does not count, nor how a line break is written: a formula may
+write it as CR LF where the table has LF."
+  (cl-flet ((lines (name) (replace-regexp-in-string "\r\n?" "\n" name t t)))
+    (string-equal-ignore-case (lines one) (lines other))))
+
 (defun grid-calc--struct-area (table text row)
   "Return (TOP LEFT BOTTOM RIGHT) of TABLE that the bracketed TEXT takes.
 TABLE is as `grid-calc-tables' returns it; ROW is the row of the formula,
@@ -1809,7 +1816,7 @@ for #This Row."
                (data-top (+ top headers))
                (data-bottom (- bottom totals)))
     (cl-flet ((column (name)
-                (or (cl-position name columns :test #'string-equal-ignore-case)
+                (or (cl-position name columns :test #'grid-calc--same-column-p)
                     (signal 'grid-calc-error '("#REF!")))))
       (pcase-let
           ((`(,first-row . ,last-row)

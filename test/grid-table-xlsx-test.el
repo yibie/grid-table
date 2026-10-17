@@ -454,6 +454,27 @@ grid reads them back without it."
        file)
       (should (= (grid-table-xlsx-date-system file) 1900)))))
 
+(ert-deftest grid-table-xlsx-test-table-column-with-a-line-break ()
+  "A column name with a line break is read whole, however written.
+Excel writes it as _x000a_ in the table, and a formula may write it
+as CR LF."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source
+                  '("" "")
+                  '(("Item" "Two\nlines") ("a" "2") ("b" "3")
+                    ("" "=SUM(T1[Two\r\nlines])"))))
+           (workbook (grid-workbook-create (list (cons "Data" data)))))
+      (setf (grid-workbook-tables workbook)
+            (list (list "T1" "Data" 0 0 2 1 1 0 '("Item" "Two\nlines"))))
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((back (grid-table-xlsx-create-workbook file)))
+        (should (equal (car (last (car (grid-workbook-tables back))))
+                       '("Item" "Two\nlines")))
+        (should (equal (grid-get-computed-value-at
+                        (grid-workbook-sheet back "Data") 3 1)
+                       5))))))
+
 (ert-deftest grid-table-xlsx-test-tables-move-with-their-cells ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

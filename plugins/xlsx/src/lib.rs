@@ -54,6 +54,33 @@ fn quote(out: &mut String, text: &str) {
     out.push('"');
 }
 
+/// TEXT with each _xHHHH_ escape, as OOXML writes a line break in a table
+/// column's name, taken back to its character.
+fn unescape_x(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("_x") {
+        let code = rest.get(at + 2..at + 6);
+        let ok = code.filter(|c| c.chars().all(|c| c.is_ascii_hexdigit()))
+            .and_then(|c| u32::from_str_radix(c, 16).ok())
+            .and_then(char::from_u32)
+            .filter(|_| rest.get(at + 6..at + 7) == Some("_"));
+        match ok {
+            Some(c) => {
+                out.push_str(&rest[..at]);
+                out.push(c);
+                rest = &rest[at + 7..];
+            }
+            None => {
+                out.push_str(&rest[..at + 2]);
+                rest = &rest[at + 2..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn keyword(out: &mut String, name: &str, text: &str) {
     out.push(' ');
     out.push_str(name);
@@ -308,7 +335,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             table.totals_row_count()
         )?;
         for column in table.columns() {
-            quote(out, column.name());
+            quote(out, &unescape_x(column.name()));
             out.push(' ');
         }
         out.push_str("))");
@@ -589,7 +616,10 @@ fn tables(sheet: &mut Worksheet, payload: &str) {
         let mut columns: Vec<TableColumn> = table.take_columns();
         let named: Vec<TableColumn> = fields[8..]
             .iter()
-            .map(|name| match columns.iter().position(|column| column.name() == *name) {
+            .map(|name| match columns
+                .iter()
+                .position(|column| unescape_x(column.name()) == *name)
+            {
                 Some(index) => columns.remove(index),
                 None => TableColumn::new(name),
             })
