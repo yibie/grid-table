@@ -3117,8 +3117,10 @@ as 2.  Return nil when REF-STR is no reference."
 (defun grid-calc--range-bounds (model start-cell-ref-ast end-cell-ref-ast)
   "Return (MODEL ROW-START ROW-END COL-START COL-END) for a range.
 MODEL is the sheet the range reads.  Whole columns and whole rows reach
-the edges of the sheet, and the bounds are kept inside it; an end before
-its start means nothing of the range is on the sheet."
+the edges of the sheet's cells; an end before its start means nothing
+of the range is on the sheet.  A range written out keeps its size where
+it reaches past them, as ROWS(A2:A12) is 11 on a sheet of 5 rows: the
+cells there are blank."
   (let* ((model (grid-calc--sheet-model model (nth 2 start-cell-ref-ast)))
          (start (grid-calc--reference-coords (cadr start-cell-ref-ast)))
          (end (grid-calc--reference-coords (cadr end-cell-ref-ast)))
@@ -3129,8 +3131,8 @@ its start means nothing of the range is on the sheet."
     (let ((row-a (or (car start) 0)) (row-b (or (car end) last-row))
           (col-a (or (cdr start) 0)) (col-b (or (cdr end) last-col)))
       (list model
-            (max 0 (min row-a row-b)) (min last-row (max row-a row-b))
-            (max 0 (min col-a col-b)) (min last-col (max col-a col-b))))))
+            (max 0 (min row-a row-b)) (max row-a row-b)
+            (max 0 (min col-a col-b)) (max col-a col-b)))))
 
 (provide 'grid-table-calc)
 
