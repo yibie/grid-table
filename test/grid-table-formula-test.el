@@ -17,6 +17,11 @@
   "Return the value of FORMULA in A1 of a row whose other cells are CELLS."
   (caar (grid-table-formula-test--values (list (cons formula cells)))))
 
+(defun grid-table-formula-test--grid (formula rows cols)
+  "Return a ROWS by COLS sheet of raw values with FORMULA in its first cell."
+  (cons (cons formula (make-list (1- cols) ""))
+        (make-list (1- rows) (make-list cols ""))))
+
 (ert-deftest grid-table-formula-offset-takes-empty-arguments-as-excel-does ()
   ;; An empty height or width keeps the size of the reference; an
   ;; empty row or column offset is 0.
@@ -2413,6 +2418,177 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval "=XLOOKUP(2,{1,2;3,4},{1,2;3,4})")
                  "#VALUE!"))
   (should (equal (grid-table-formula-test--eval "=MATCH(2,{1,2;3,4},0)") "#N/A")))
+
+(ert-deftest grid-table-formula-vstack-and-hstack-fill-out-with-na ()
+  ;; A shorter array is filled out with #N/A, as Excel fills it.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=VSTACK({1;2},{3;4;5})" 5 1))
+                 '((1) (2) (3) (4) (5))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=VSTACK({1,2},{3})" 2 2))
+                 '((1 2) (3 "#N/A"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=HSTACK({1;2},{3;4;5})" 3 2))
+                 '((1 3) (2 4) ("#N/A" 5)))))
+
+(ert-deftest grid-table-formula-tocol-and-torow-read-a-line-first ()
+  ;; A row after a row, or a column after a column with scan_by_column.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TOCOL({1,2;3,4})" 4 1))
+                 '((1) (2) (3) (4))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TOCOL({1,2;3,4},0,TRUE)" 4 1))
+                 '((1) (3) (2) (4))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TOROW({1;2;3})" 1 3))
+                 '((1 2 3))))
+  ;; IGNORE leaves out 1 blanks, 2 error values, 3 both.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TOCOL({1,NA();3,4},2)" 3 1))
+                 '((1) (3) (4))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TOCOL({1,NA();3,4},3)" 3 1))
+                 '((1) (3) (4))))
+  (let ((sheet (grid-table-formula-test--values
+                '(("=ROWS(TOCOL(B1:B2))" "=1") ("" "")))))
+    (should (equal (car sheet) '(2 1)))
+    (should (equal (car (grid-table-formula-test--values
+                         '(("=ROWS(TOCOL(B1:B2,1))" "=1") ("" ""))))
+                   '(1 1)))))
+
+(ert-deftest grid-table-formula-wraprows-and-wrapcols-wrap-a-vector ()
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=WRAPROWS({1,2,3,4,5},2)" 3 2))
+                 '((1 2) (3 4) (5 "#N/A"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=WRAPROWS({1,2,3},2,\"x\")" 2 2))
+                 '((1 2) (3 "x"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=WRAPCOLS({1,2,3,4,5},2)" 2 3))
+                 '((1 3 5) (2 4 "#N/A"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=WRAPCOLS({1},2,0)" 2 1))
+                 '((1) (0))))
+  ;; Not a vector, or no count to wrap by.
+  (should (equal (grid-table-formula-test--eval "=WRAPROWS({1,2;3,4},2)")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=WRAPROWS({1,2},0)") "#NUM!")))
+
+(ert-deftest grid-table-formula-take-and-drop-count-from-the-last ()
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TAKE({1;2;3;4;5},2)" 2 1))
+                 '((1) (2))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TAKE({1;2;3;4;5},-2)" 2 1))
+                 '((4) (5))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=DROP({1;2;3;4;5},2)" 3 1))
+                 '((3) (4) (5))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=DROP({1;2;3;4;5},-2)" 3 1))
+                 '((1) (2) (3))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TAKE({1,2,3;4,5,6},2,2)" 2 2))
+                 '((1 2) (4 5))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TAKE({1,2,3;4,5,6},,-2)" 2 2))
+                 '((2 3) (5 6))))
+  ;; Dropping none keeps it all.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=DROP({1;2},0)" 2 1))
+                 '((1) (2))))
+  ;; None taken, or all of it dropped, is no array at all.
+  (should (equal (grid-table-formula-test--eval "=TAKE({1;2},0)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=DROP({1;2},2)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=DROP({1;2},1,1)") "#VALUE!")))
+
+(ert-deftest grid-table-formula-choosecols-picks-columns ()
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=CHOOSECOLS({1,2,3;4,5,6},3,1)" 2 2))
+                 '((3 1) (6 4))))
+  (should (equal (grid-table-formula-test--eval "=CHOOSECOLS({1,2,3},-1)") 3))
+  (should (equal (grid-table-formula-test--eval "=CHOOSECOLS({1,2,3},4)")
+                 "#VALUE!")))
+
+(ert-deftest grid-table-formula-expand-fills-out-to-its-size ()
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=EXPAND({1,2},2,3,0)" 2 3))
+                 '((1 2 0) (0 0 0))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=EXPAND({1},2)" 2 1))
+                 '((1) ("#N/A"))))
+  ;; A size left out stays as it is; below the array is #VALUE!.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=EXPAND({1,2},1)" 1 2))
+                 '((1 2))))
+  (should (equal (grid-table-formula-test--eval "=EXPAND({1,2},1,1)") "#VALUE!")))
+
+(ert-deftest grid-table-formula-sortby-sorts-by-other-values ()
+  ;; The last array sorts first; the one before it keeps what it leaves.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=SORTBY({10;20;30;40},{2;1;2;1},1,{1;2;3;4},-1)" 4 1))
+                 '((40) (20) (30) (10))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=SORTBY({1;2;3},{3;1;2},-1)" 3 1))
+                 '((1) (3) (2))))
+  ;; A row of values sorts the columns of the array.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=SORTBY({1,2,3},{3,1,2})" 1 3))
+                 '((2 3 1))))
+  ;; Not as many values as the array has, or an order that is no order.
+  (should (equal (grid-table-formula-test--eval "=SORTBY({1;2;3},{1;2})")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=SORTBY({1;2;3},{1;2;3},2)")
+                 "#VALUE!")))
+
+(ert-deftest grid-table-formula-textsplit-splits-at-its-delimiters ()
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=TEXTSPLIT(\"a,b;c,d\",\",\",\";\")" 2 2))
+                 '(("a" "b") ("c" "d"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=TEXTSPLIT(\"a,,b\",\",\")" 1 3))
+                 '(("a" "" "b"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=TEXTSPLIT(\"a,,b\",\",\",,TRUE)" 1 2))
+                 '(("a" "b"))))
+  ;; Uneven rows are filled out; a delimiter may be several values.
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=TEXTSPLIT(\"a,b;c\",\",\",\";\")" 2 2))
+                 '(("a" "b") ("c" "#N/A"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=TEXTSPLIT(\"a1b2c\",{\"1\",\"2\"})" 1 3))
+                 '(("a" "b" "c"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=TEXTSPLIT(\"aXbxc\",\"X\",,FALSE,1)" 1 3))
+                 '(("a" "b" "c"))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=TEXTSPLIT(\"a-b;c-d\",\"-\",\";\",FALSE,0,\"?\")" 2 2))
+                 '(("a" "b") ("c" "d"))))
+  ;; No delimiter to split at, or an empty text among them.
+  (should (equal (grid-table-formula-test--eval "=TEXTSPLIT(\"abc\",)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=TEXTSPLIT(\"abc\",\"\")")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=TEXTSPLIT(\"abc\",,\"\")")
+                 "#VALUE!")))
+
+(ert-deftest grid-table-formula-randarray-keeps-to-its-size-and-range ()
+  (should (equal (grid-table-formula-test--eval "=ROWS(RANDARRAY(3,2))") 3))
+  (should (equal (grid-table-formula-test--eval "=COLUMNS(RANDARRAY(3,2))") 2))
+  (should (equal (grid-table-formula-test--eval "=ROWS(RANDARRAY())") 1))
+  (should (<= 0 (grid-table-formula-test--eval "=SUM(RANDARRAY(20,20))") 400))
+  ;; Whole numbers count both ends in.
+  (let ((sum (grid-table-formula-test--eval "=SUM(RANDARRAY(20,20,2,3,TRUE))")))
+    (should (and (<= 800 sum 1200) (= sum (truncate sum)))))
+  (should (equal (grid-table-formula-test--eval "=RANDARRAY(0)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=RANDARRAY(1,1,3,2)") "#VALUE!")))
 
 (provide 'grid-table-formula-test)
 

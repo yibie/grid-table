@@ -219,6 +219,22 @@ A negative NUMBER rounds away from zero, or toward it when MODE is not 0."
   "A random number from 0 up to 1."
   (/ (random most-positive-fixnum) (float most-positive-fixnum)))
 
+(defun grid-calc--random (min max whole)
+  "Return a random number from MIN up to MAX, a whole one with WHOLE."
+  (if whole
+      (+ (truncate min)
+         (random (max 1 (1+ (- (truncate max) (truncate min))))))
+    (+ min (* (- max min) (/ (random most-positive-fixnum)
+                             (float most-positive-fixnum))))))
+
+(grid-calc-define randarray (&optional (rows integer 1) (cols integer 1)
+                            (min number 0) (max number 1) (whole bool))
+  "ROWS by COLS random numbers from MIN up to MAX, whole ones with WHOLE."
+  :empty t
+  (when (or (< rows 1) (< cols 1) (> min max)) (grid-calc-raise "#VALUE!"))
+  (grid-calc-array rows cols
+                   (lambda (_row _col) (grid-calc--random min max whole))))
+
 (grid-calc-define base ((number integer) (radix integer) &optional (length integer 0))
   "NUMBER written in base RADIX, padded with zeros to LENGTH digits."
   (unless (and (>= number 0) (<= 2 radix 36) (>= length 0))

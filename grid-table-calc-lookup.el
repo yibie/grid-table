@@ -685,6 +685,21 @@ number counts from the last."
     (grid-calc-array (length picked) (grid-calc-array-cols array)
                      (lambda (row col) (grid-calc-aref array (nth row picked) col)))))
 
+(grid-calc-define choosecols ((array array) &rest (cols values))
+  "The columns of ARRAY whose numbers are COLS, counting from 1; a
+negative number counts from the last."
+  (let* ((width (grid-calc-array-cols array))
+         (picked (mapcar (lambda (n)
+                           (let ((n (truncate n)))
+                             (cond ((<= 1 n width) (1- n))
+                                   ((<= 1 (- n) width) (+ width n))
+                                   (t (grid-calc-raise "#VALUE!")))))
+                         (grid-calc-numbers cols))))
+    (unless picked (grid-calc-raise "#VALUE!"))
+    (grid-calc-array (grid-calc-array-rows array) (length picked)
+                     (lambda (row col)
+                       (grid-calc-aref array row (nth col picked))))))
+
 (grid-calc-define sequence ((rows integer) &optional (cols integer 1)
                             (start number 1) (step number 1))
   "ROWS by COLS numbers from START, each STEP more than the one before."
@@ -753,6 +768,245 @@ INCLUDE is a row.  EMPTY is given when none is; without it #CALC!."
             ((and empty (not (equal empty '(MISSING))))
              (grid-calc-arg empty 'values))
             (t (grid-calc-err "#CALC!"))))))
+
+;;;----------------------------------------------------------------------
+;;; Stacking, wrapping and cutting several values
+;;;----------------------------------------------------------------------
+
+;; These take the cells they fill from a lazy argument, whose error
+;; value is a value like any other: a PAD-WITH of #N/A fills cells as
+;; Excel's does.
+
+(defun grid-calc--pad-value (argument)
+  "Return the value ARGUMENT, a `values' argument, gives the cells it fills."
+  (or (car (grid-calc-flat-values argument)) :blank))
+
+(defun grid-calc--fill-value (argument)
+  "Return the value the lazy ARGUMENT gives the cells a function fills,
+#N/A when it is left out."
+  (if argument
+      (grid-calc--pad-value (grid-calc-arg argument 'values))
+    (grid-calc-err "#N/A")))
+
+(defun grid-calc--line-values (array)
+  "Return the values of ARRAY, one row of them or one column.
+Several rows and columns are #VALUE!."
+  (if (or (= 1 (grid-calc-array-rows array))
+          (= 1 (grid-calc-array-cols array)))
+      (append (grid-calc-array-data array) nil)
+    (grid-calc-raise "#VALUE!")))
+
+(defun grid-calc--stack (arrays across)
+  "Return ARRAYS put together, side by side when ACROSS, else one under
+another.  A cell past the size of one of them is #N/A, as Excel fills
+it."
+  (let* ((height (if across
+                     (apply #'max (mapcar #'grid-calc-array-rows arrays))
+                   (cl-loop for array in arrays
+                            sum (grid-calc-array-rows array))))
+         (width (if across
+                    (cl-loop for array in arrays
+                             sum (grid-calc-array-cols array))
+                  (apply #'max (mapcar #'grid-calc-array-cols arrays))))
+         (result (grid-calc-array height width
+                                  (lambda (_row _col)
+                                    (grid-calc-err "#N/A"))))
+         (data (grid-calc-array-data result))
+         (row 0) (col 0))
+    (dolist (array arrays)
+      (let ((array-data (grid-calc-array-data array))
+            (cols (grid-calc-array-cols array)))
+        (dotimes (r (grid-calc-array-rows array))
+          (dotimes (c cols)
+            (aset data (+ (* (+ row r) width) (+ col c))
+                  (aref array-data (+ (* r cols) c)))))
+        (if across (setq col (+ col cols))
+          (setq row (+ row (grid-calc-array-rows array))))))
+    result))
+
+(grid-calc-define vstack (&rest (arrays array))
+  "The values of ARRAYS running one under another, #N/A where one is
+shorter than the rest."
+  (if arrays (grid-calc--stack arrays nil) (grid-calc-raise "#VALUE!")))
+
+(grid-calc-define hstack (&rest (arrays array))
+  "The values of ARRAYS running side by side, #N/A where one is shorter
+than the rest."
+  (if arrays (grid-calc--stack arrays t) (grid-calc-raise "#VALUE!")))
+
+(defun grid-calc--values-in-order (array ignore by-col)
+  "Return the values of ARRAY one after another, row by row, or column by
+column when BY-COL.  IGNORE 1 leaves out blanks, 2 error values, 3 both."
+  (let ((rows (grid-calc-array-rows array))
+        (cols (grid-calc-array-cols array))
+        (values '()))
+    (dotimes (outer (if by-col cols rows))
+      (dotimes (inner (if by-col rows cols))
+        (let ((value (if by-col
+                         (grid-calc-aref array inner outer)
+                       (grid-calc-aref array outer inner))))
+          (unless (or (and (memq ignore '(1 3)) (eq value :blank))
+                      (and (memq ignore '(2 3)) (grid-calc-err-p value)))
+            (push value values)))))
+    (nreverse values)))
+
+(grid-calc-define tocol ((array array) &optional (ignore integer 0)
+                         (scan-by-column bool))
+  "The values of ARRAY in one column, a row after a row, or a column after
+a column with SCAN-BY-COLUMN.  IGNORE 1 leaves out blanks, 2 error
+values, 3 both."
+  :empty t
+  (unless (memq ignore '(0 1 2 3)) (grid-calc-raise "#VALUE!"))
+  (grid-calc-array-from-list
+   (grid-calc--values-in-order array ignore scan-by-column)))
+
+(grid-calc-define torow ((array array) &optional (ignore integer 0)
+                         (scan-by-column bool))
+  "The values of ARRAY in one row, a row after a row, or a column after a
+column with SCAN-BY-COLUMN.  IGNORE 1 leaves out blanks, 2 error values,
+3 both."
+  :empty t
+  (unless (memq ignore '(0 1 2 3)) (grid-calc-raise "#VALUE!"))
+  (grid-calc-array-from-list
+   (grid-calc--values-in-order array ignore scan-by-column) t))
+
+(defun grid-calc--wrapped (values wrap-count rows-first pad)
+  "Return VALUES in lines of WRAP-COUNT, the last filled out with PAD.
+Lines are rows when ROWS-FIRST, else columns."
+  (let* ((count (length values))
+         (lines (ceiling (max count 1) wrap-count))
+         (height (if rows-first lines wrap-count))
+         (width (if rows-first wrap-count lines)))
+    (grid-calc-array height width
+                     (lambda (row col)
+                       (let ((at (if rows-first
+                                     (+ (* row wrap-count) col)
+                                   (+ (* col wrap-count) row))))
+                         (if (< at count) (nth at values) pad))))))
+
+(grid-calc-define wraprows ((array array) (wrap-count integer)
+                            &optional (pad-with lazy))
+  "The values of ARRAY wrapped into rows of WRAP-COUNT columns, the last
+row filled out with PAD-WITH, #N/A without one."
+  (unless (> wrap-count 0) (grid-calc-raise "#NUM!"))
+  (grid-calc--wrapped (grid-calc--line-values array) wrap-count t
+                      (grid-calc--fill-value pad-with)))
+
+(grid-calc-define wrapcols ((array array) (wrap-count integer)
+                            &optional (pad-with lazy))
+  "The values of ARRAY wrapped into columns of WRAP-COUNT rows, the last
+column filled out with PAD-WITH, #N/A without one."
+  (unless (> wrap-count 0) (grid-calc-raise "#NUM!"))
+  (grid-calc--wrapped (grid-calc--line-values array) wrap-count nil
+                      (grid-calc--fill-value pad-with)))
+
+(defun grid-calc--taken (count size)
+  "Return (START . COUNT) of the rows or columns TAKE keeps of SIZE of
+them: the first COUNT of them, or the last ones when COUNT is negative."
+  (cond ((null count) (cons 0 size))
+        ((zerop count) (grid-calc-raise "#VALUE!"))
+        ((> count 0) (cons 0 (min count size)))
+        (t (let ((count (min (- count) size)))
+             (cons (- size count) count)))))
+
+(defun grid-calc--dropped (count size)
+  "Return (START . COUNT) of the rows or columns DROP keeps of SIZE of
+them, COUNT of them dropped from the first, or from the last when
+negative, all of them when COUNT is left out or 0.  Dropping all of
+them is #VALUE!, as DROP gives it."
+  (cond ((or (null count) (zerop count)) (cons 0 size))
+        (t (let ((dropped (min (abs count) size)))
+             (when (= dropped size) (grid-calc-raise "#VALUE!"))
+             (if (> count 0)
+                 (cons dropped (- size dropped))
+               (cons 0 (- size dropped)))))))
+
+(grid-calc-define take ((array array) &optional (rows integer) (cols integer))
+  "The first ROWS rows of ARRAY and the first COLS columns of it; a
+negative number counts from the last."
+  :empty t
+  (let ((height (grid-calc-array-rows array))
+        (width (grid-calc-array-cols array)))
+    (pcase-let ((`(,top . ,kept-rows) (grid-calc--taken rows height))
+                (`(,left . ,kept-cols) (grid-calc--taken cols width)))
+      (grid-calc--part array top left kept-rows kept-cols))))
+
+(grid-calc-define drop ((array array) &optional (rows integer) (cols integer))
+  "ARRAY without its first ROWS rows and its first COLS columns; a
+negative number counts from the last."
+  :empty t
+  (let ((height (grid-calc-array-rows array))
+        (width (grid-calc-array-cols array)))
+    (pcase-let ((`(,top . ,kept-rows) (grid-calc--dropped rows height))
+                (`(,left . ,kept-cols) (grid-calc--dropped cols width)))
+      (grid-calc--part array top left kept-rows kept-cols))))
+
+(grid-calc-define expand ((array array) &optional (rows integer) (cols integer)
+                          (pad-with lazy))
+  "ARRAY made ROWS by COLS cells, filled out with PAD-WITH, #N/A without
+one; a size left out stays as it is."
+  :empty t
+  (let* ((height (or rows (grid-calc-array-rows array)))
+         (width (or cols (grid-calc-array-cols array)))
+         (pad (grid-calc--fill-value pad-with)))
+    (when (or (< height (grid-calc-array-rows array))
+              (< width (grid-calc-array-cols array)))
+      (grid-calc-raise "#VALUE!"))
+    (grid-calc-array height width
+                     (lambda (row col)
+                       (if (and (< row (grid-calc-array-rows array))
+                                (< col (grid-calc-array-cols array)))
+                           (grid-calc-aref array row col)
+                         pad)))))
+
+(grid-calc-define sortby ((array array) (by-array values) &rest (rest values))
+  "The rows of ARRAY sorted by the values of BY-ARRAY, or its columns when
+BY-ARRAY is a row of them.  Each array after BY-ARRAY sorts what the ones
+before it leave in order, and a 1 after one of them sorts up, a -1 down."
+  (let (pairs)
+    ;; Each array to sort by, with the 1 or -1 that follows it.
+    (dolist (argument (cons by-array rest))
+      (cond
+       ((numberp argument)
+        (unless (and pairs (memq (truncate argument) '(1 -1)))
+          (grid-calc-raise "#VALUE!"))
+        (setcar (car pairs) (truncate argument)))
+       ((grid-calc-err-p argument)
+        (grid-calc-raise (grid-calc-err-code argument)))
+       (t (push (cons 1 (grid-calc-arg-array argument)) pairs))))
+    (setq pairs (nreverse pairs))
+    (let* ((first (cdr (car pairs)))
+           (by-rows (grid-calc-array-rows first))
+           (by-cols (grid-calc-array-cols first))
+           (rows (grid-calc-array-rows array))
+           (cols (grid-calc-array-cols array))
+           (by-col (cond ((and (= by-cols 1) (= by-rows rows)) nil)
+                         ((and (= by-rows 1) (= by-cols cols)) t)
+                         (t (grid-calc-raise "#VALUE!"))))
+           (count (if by-col cols rows))
+           (lines (grid-calc--lines array by-col))
+           (keys (mapcar (lambda (pair)
+                           (let ((values (grid-calc--line-values (cdr pair))))
+                             (unless (= (length values) count)
+                               (grid-calc-raise "#VALUE!"))
+                             values))
+                         pairs))
+           (order (number-sequence 0 (1- count))))
+      ;; The last pair sorts first, the ones before it keeping what it
+      ;; leaves in order.
+      (cl-loop for key in (reverse keys)
+               for direction in (mapcar #'car (reverse pairs))
+               do (setq order
+                        (cl-stable-sort
+                         order
+                         (lambda (a b)
+                           (let ((order-of (grid-calc-compare (nth a key)
+                                                              (nth b key))))
+                             (if (= direction 1)
+                                 (< order-of 0)
+                               (> order-of 0)))))))
+      (grid-calc--from-lines (mapcar (lambda (index) (nth index lines)) order)
+                             by-col))))
 
 (provide 'grid-table-calc-lookup)
 

@@ -115,6 +115,68 @@ Windows has them; nil where it has none, and the code stands for itself.")
   (apply #'concat (make-list times text)))
 
 ;;;----------------------------------------------------------------------
+;;; Splitting text
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--split-delimiters (argument)
+  "Return the delimiters of ARGUMENT, a `values' argument, as a list of
+text, the longest first so that it cuts before the shorter it starts.
+A cell left empty is no delimiter, and an empty text is #VALUE!."
+  (let (delimiters)
+    (dolist (value (grid-calc-flat-values argument))
+      (cond ((grid-calc-err-p value)
+             (grid-calc-raise (grid-calc-err-code value)))
+            ((eq value :blank))
+            (t (let ((text (grid-calc-text value)))
+                 (when (string-empty-p text) (grid-calc-raise "#VALUE!"))
+                 (push text delimiters)))))
+    (cl-stable-sort delimiters (lambda (a b) (> (length a) (length b))))))
+
+(defun grid-calc--splitting (text delimiters case-fold)
+  "Return TEXT cut at each of DELIMITERS, empty pieces and all.
+CASE-FOLD ignores case."
+  (let ((regexp (mapconcat #'regexp-quote delimiters "\\|"))
+        (case-fold-search case-fold)
+        (start 0) (pieces '()))
+    (while (string-match regexp text start)
+      (push (substring text start (match-beginning 0)) pieces)
+      (setq start (match-end 0)))
+    (nreverse (cons (substring text start) pieces))))
+
+(grid-calc-define textsplit ((text text) (columns values)
+                             &optional (rows values) (ignore-empty bool)
+                             (match-mode integer 0) (pad-with lazy))
+  "TEXT cut at its COLUMNS delimiters into the cells of a row, and at its
+ROWS delimiters into rows.  IGNORE-EMPTY leaves out empty pieces,
+MATCH-MODE 1 ignores case, and PAD-WITH fills out rows, #N/A without it."
+  :empty t
+  (let ((columns (grid-calc--split-delimiters columns))
+        (rows (grid-calc--split-delimiters rows))
+        (pad (grid-calc--fill-value pad-with)))
+    (unless (memq match-mode '(0 1)) (grid-calc-raise "#VALUE!"))
+    ;; Neither delimiter is no way to split at all.
+    (when (and (null columns) (null rows)) (grid-calc-raise "#VALUE!"))
+    (let* ((case-fold (= match-mode 1))
+           (lines (if rows (grid-calc--splitting text rows case-fold)
+                    (list text)))
+           (pieces (mapcar (lambda (line)
+                             (let ((pieces (if columns
+                                               (grid-calc--splitting
+                                                line columns case-fold)
+                                             (list line))))
+                               (if ignore-empty
+                                   (cl-remove "" pieces :test #'string=)
+                                 pieces)))
+                           lines))
+           (pieces (if ignore-empty
+                       (or (cl-remove-if #'null pieces) '(("")))
+                     pieces))
+           (width (apply #'max (mapcar #'length pieces))))
+      (grid-calc-array (length pieces) width
+                       (lambda (row col)
+                         (or (nth col (nth row pieces)) pad))))))
+
+;;;----------------------------------------------------------------------
 ;;; Putting text together
 ;;;----------------------------------------------------------------------
 
