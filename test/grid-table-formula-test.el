@@ -1781,6 +1781,55 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
         (should (equal (list value code (grid-calc-format-code value code))
                        (list value code expected)))))))
 
+(ert-deftest grid-table-text-follows-excel-with-elapsed-times ()
+  "TEXT writes an elapsed time of any size, and refuses a negative one
+that has more fields than its hours, minutes or seconds.  The cases
+come from pycel's text test workbook."
+  (dolist (case '((71003160 "[hh]" "1704075840")
+                  (2958465 "[hh]" "71003160")
+                  (2958466 "h" "#VALUE!")
+                  (2958465 "h" "0")
+                  (-1 "[h]" "-24")
+                  (-1 "[h]:m" "#VALUE!")
+                  (0 "[h]:m" "0:0")
+                  (-1 "[m]:s" "#VALUE!")
+                  (0 "[s].000" "0.000")))
+    (pcase-let ((`(,value ,code ,expected) case))
+      (let ((model (grid-model-create 1 3 (list (list (number-to-string value) code
+                                                     "=TEXT(A1,B1)")))))
+        (should (equal (list value code (grid-model-get-computed-value model 0 2))
+                       (list value code expected)))))))
+
+(ert-deftest grid-table-text-reads-times-written-as-text ()
+  "TEXT reads a date or a time written as text before it writes it.
+The cases come from pycel's and IronCalc's TEXT test workbooks."
+  (dolist (case
+           '(;; A date and a time together.
+             ("2007-02-03 19:08:07.0123" "[h]" "938803")
+             ("2007-02-03 19:08:07.0123" "[m]" "56328188")
+             ("2007-02-03 19:08:07.0123" "[s]" "3379691287")
+             ;; The last of the fields may be up to 9999, and a fraction
+             ;; of it counts as seconds.
+             ("0:59:99" "#.#####" ".04212")
+             ("23:99" "#.#####" "1.02708")
+             ("23:9999" "#.#####" "7.90208")
+             ("0:0:9999" "#.#####" ".11573")
+             ("23:59:9999" "#.#####" "1.11503")
+             ("59:9999.0" "#.#####" ".1567")
+             ("23:59.012345" "#.#######" ".0166552")
+             ("59:9999.012345" "0.########" "0.15670153")
+             ("23:59." "#.###########" ".99930555556")
+             ;; Not a time, so it is left as it is.
+             ("60:99" "#.#####" "60:99")
+             ("24:99" "#.#####" "24:99")
+             ("23:10000" "#.#####" "23:10000")
+             ("23:60:9999" "#.#####" "23:60:9999")
+             ("23:59.:0" "#.###########" "23:59.:0")))
+    (pcase-let ((`(,value ,code ,expected) case))
+      (let ((model (grid-model-create 1 3 (list (list value code "=TEXT(A1,B1)")))))
+        (should (equal (list value code (grid-model-get-computed-value model 0 2))
+                       (list value code expected)))))))
+
 (ert-deftest grid-table-text-render-needs-no-buffer ()
   (let* ((source (make-default-data-source
                   '("" "" "")

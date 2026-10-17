@@ -812,6 +812,43 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
             (">" (> number bound)) (">=" (>= number bound))
             ("=" (= number bound)) ("<>" (/= number bound)))))))
 
+(defun grid-calc--text-time (text)
+  "Return the fraction of a day TEXT names as a time, or nil.
+As 13:30, 0:59:99 or 23:59.5: the last of up to three fields may be
+up to 9999, and a last field with a fraction counts as seconds, so
+23:59.5 is 23 minutes and 59.5 seconds."
+  (let ((fields (split-string text ":")))
+    (when (and (<= 2 (length fields) 3)
+               (cl-every (lambda (field) (string-match-p "\\`[0-9]+\\.?[0-9]*\\'" field))
+                         fields)
+               (cl-every (lambda (field) (string-match-p "\\`[0-9]+\\'" field))
+                         (butlast fields)))
+      (let* ((numbers (mapcar #'string-to-number fields))
+             (units (cond ((= (length fields) 3) '(3600 60 1))
+                          ((string-match-p "\\.[0-9]" (car (last fields))) '(60 1))
+                          (t '(3600 60))))
+             (limits (if (= (car units) 3600) '(24 60) '(60))))
+        (when (and (< (car (last numbers)) 10000)
+                   (cl-every (lambda (number limit) (< number limit))
+                             (butlast numbers) limits))
+          (/ (cl-loop for number in numbers
+                      for unit in units sum (* number unit))
+             86400.0))))))
+
+(defun grid-calc--text-date-time (text)
+  "Return the serial number TEXT names as a date, a time or both, or nil."
+  (let ((text (string-trim text)))
+    (or (grid-calc--parse-day text)
+        (grid-calc--text-time text)
+        (grid-calc--parse-time text)
+        (and (string-match "\\`\\(.*[0-9a-z]\\)[ T]+\\([0-9]\\{1,2\\}:.*\\)\\'" text)
+             (let ((day (match-string 1 text))
+                   (time (match-string 2 text)))
+               (when-let* ((day (grid-calc--parse-day day))
+                           (time (or (grid-calc--text-time time)
+                                     (grid-calc--parse-time time))))
+                 (+ day time)))))))
+
 (defun grid-calc--number-sections (sections)
   "Return SECTIONS without the one that writes a text value."
   (let ((count (length sections)))
@@ -857,7 +894,11 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
              ;; Only the first section, and conditional ones, write the
              ;; minus sign; the others are written as a negative's own.
              (negative-shown (or (eql section-index 0) conditional))
-             (exp-at (cl-position 'exp tokens :key #'car)))
+             (exp-at (cl-position 'exp tokens :key #'car))
+             (elapsed (assq 'elapsed tokens))
+             ;; A date or a time of day beside the elapsed hours or seconds,
+             ;; which a negative serial cannot have.
+             (dated (cl-some (lambda (tok) (eq (car tok) 'date)) tokens)))
         (cond
          ((assq 'at tokens) (grid-calc-raise "#VALUE!"))
          ;; A point after an exponent is not a number code.
@@ -869,9 +910,11 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
                         tokens))
           (grid-calc-raise "#VALUE!"))
          ((grid-calc--date-code-p tokens)
-          (unless (if (assq 'elapsed tokens) (<= (abs value) grid-calc--last-serial*)
-                    (<= 0 value grid-calc--last-serial*))
-            (grid-calc-raise "#VALUE!"))
+          (if (< value 0)
+              ;; A minus is written for an elapsed time only.
+              (unless (and elapsed (not dated)) (grid-calc-raise "#VALUE!"))
+            (unless (or (and elapsed (not dated)) (<= value grid-calc--last-serial*))
+              (grid-calc-raise "#VALUE!")))
           (grid-calc--format-date value tokens))
          ((and (assq 'general tokens)
                (not (cl-some (lambda (tok) (eq (car tok) 'digit)) tokens)))
@@ -896,7 +939,10 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
   (let ((value (cond ((eq value :blank) 0)
                      ((eq value t) "TRUE")
                      ((eq value :false) "FALSE")
-                     ((stringp value) (or (grid-calc-text-number value) value))
+                     ((stringp value)
+                      (or (grid-calc-text-number value)
+                          (grid-calc--text-date-time value)
+                          value))
                      (t value))))
     (grid-calc--checked-length (grid-calc-format-code value code))))
 
