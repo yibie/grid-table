@@ -2911,6 +2911,33 @@ Excel's values for."
                    . 131.5377155865953)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-pays-and-depreciates ()
+  "CUMIPMT, MIRR, PDURATION, RRI, DOLLARDE, DB and VDB as Excel has them."
+  (dolist (case '(("=CUMIPMT(0.0083,36,8000,1,10,1)" . -520.1181191021385)
+                  ("=CUMPRINC(0.0083,36,8000,1,10,1)" . -2038.518055313885)
+                  ("=CUMIPMT(0.1,2,8000,1,10,1)" . "#NUM!")
+                  ("=CUMIPMT(0.1,36,8000,3,10,1)" . -5676.255396537561)
+                  ("=ISPMT(0.2,1,3,100)" . -13.333333333333336)
+                  ("=ISPMT(0.2,1,0,100)" . "#DIV/0!")
+                  ("=MIRR({-6,1},0.1,0.2)" . -0.8333333333333334)
+                  ("=MIRR({5,6},0.1,0.2)" . "#DIV/0!")
+                  ("=FVSCHEDULE(120,{0.2,0.4,0.6,0.8})" . 580.6080000000001)
+                  ("=FVSCHEDULE(1,{0.09,0.11,0.1})" . 1.3308900000000004)
+                  ("=FVSCHEDULE(1,{0.1,TRUE})" . "#VALUE!")
+                  ("=PDURATION(0.2,100,200)" . 3.8017840169239268)
+                  ("=PDURATION(0,100,200)" . "#NUM!")
+                  ("=RRI(2,3,4)" . 0.15470053837925146)
+                  ("=RRI(-1,3,4)" . "#NUM!")
+                  ("=DOLLARDE(1.2345,3.2)" . 1.7816666666666663)
+                  ("=DOLLARFR(1.7816666666666663,3.2)" . 1.2345)
+                  ("=DOLLARDE(1.2345,0)" . "#DIV/0!")
+                  ("=DB(100,10,5,3,1)" . 22.567920075)
+                  ("=DB(100,10,4,3,13)" . "#NUM!")
+                  ("=DB(100,10,4,3,9.2222)" . 16.529375400000003)
+                  ("=VDB(2400,300,120,4.2,18,1.4,TRUE)" . 341.59973986675504)
+                  ("=VDB(10000,1000,10,0,1)" . 2000)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

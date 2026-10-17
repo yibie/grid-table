@@ -857,6 +857,184 @@ for it, the interest accrued since the last coupon taken off."
         price))
    0.1))
 
+;;;----------------------------------------------------------------------
+;;; Payments over several periods
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--finance-periods-check (rate periods present start end type)
+  "Give #NUM! unless the periods of CUMIPMT make sense."
+  (when (or (<= rate 0) (<= periods 0) (<= present 0)
+            (< start 1) (< end start) (> end periods)
+            (not (memq type '(0 1))))
+    (grid-calc-raise "#NUM!"))
+  (list (ceiling start) (truncate end)))
+
+(grid-calc-define cumipmt ((rate number) (periods number) (present number)
+                           (start number) (end number) (type number))
+  "The interest paid from payment START to END of PERIODS on PRESENT."
+  :toolpak t
+  (let* ((bounds (grid-calc--finance-periods-check
+                  rate periods present start end type))
+         (start (nth 0 bounds))
+         (end (nth 1 bounds))
+         (sum 0.0))
+    (dotimes (i (1+ (- end start)))
+      (setq sum (+ sum (grid-calc--interest-part
+                        rate (+ start i) periods present 0 type))))
+    sum))
+
+(grid-calc-define cumprinc ((rate number) (periods number) (present number)
+                            (start number) (end number) (type number))
+  "The principal paid from payment START to END of PERIODS on PRESENT."
+  :toolpak t
+  (let* ((bounds (grid-calc--finance-periods-check
+                  rate periods present start end type))
+         (start (nth 0 bounds))
+         (end (nth 1 bounds))
+         (sum 0.0)
+         (payment (grid-calc--payment rate periods present 0 type)))
+    (dotimes (i (1+ (- end start)))
+      (setq sum (+ sum (- payment
+                          (grid-calc--interest-part
+                           rate (+ start i) periods present 0 type)))))
+    sum))
+
+(grid-calc-define ispmt ((rate number) (period number) (periods number)
+                         (present number))
+  "The interest paid in PERIOD of a loan of PRESENT paying no principal."
+  (when (zerop periods) (grid-calc-raise "#DIV/0!"))
+  (* present rate (- (/ (float period) periods) 1)))
+
+;;;----------------------------------------------------------------------
+;;; Investments
+;;;----------------------------------------------------------------------
+
+(grid-calc-define mirr ((values values) (finance number) (reinvest number))
+  "The rate at which VALUES, one per period, are worth nothing."
+  (let ((flows (grid-calc--range-numbers values)))
+    (unless (<= 2 (length flows)) (grid-calc-raise "#DIV/0!"))
+    (let ((positive 0.0) (negative 0.0) (i 0)
+          (last (length flows)))
+      (dolist (flow flows)
+        (cond ((> flow 0)
+               (setq positive (+ positive
+                                 (* flow (expt (+ 1.0 reinvest)
+                                               (- last i 1))))))
+              ((< flow 0)
+               (setq negative (+ negative
+                                 (/ flow (expt (+ 1.0 finance) i))))))
+        (setq i (1+ i)))
+      (when (>= negative 0) (grid-calc-raise "#DIV/0!"))
+      (- (expt (/ (- positive) negative) (/ 1.0 (1- last))) 1))))
+
+(grid-calc-define fvschedule ((principal number) (schedule values))
+  "PRINCIPAL grown by each of the rates in SCHEDULE, one after another."
+  (let ((total principal))
+    (grid-calc-each-value
+     schedule
+     (lambda (value _)
+       (cond
+        ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+        ((grid-calc-blank-p value))
+        ((numberp value) (setq total (* total (+ 1 value))))
+        (t (grid-calc-raise "#VALUE!")))))
+    total))
+
+(grid-calc-define pduration ((rate number) (present number) (future number))
+  "How many periods PRESENT takes to become FUTURE at RATE."
+  (when (or (<= rate 0) (<= present 0) (<= future 0))
+    (grid-calc-raise "#NUM!"))
+  (/ (log (/ (float future) present)) (log (+ 1.0 rate))))
+
+(grid-calc-define rri ((periods number) (present number) (future number))
+  "The rate per period at which PRESENT becomes FUTURE."
+  (when (or (<= periods 0) (<= present 0) (< future 0))
+    (grid-calc-raise "#NUM!"))
+  (- (expt (/ (float future) present) (/ 1.0 periods)) 1))
+
+(defun grid-calc--finance-dollar-scale (fraction)
+  "The power of ten FRACTION is written over, as DOLLARDE takes it."
+  (let ((scale 1))
+    (while (> fraction scale) (setq scale (* scale 10)))
+    scale))
+
+(grid-calc-define dollarde ((fractional number) (fraction number))
+  "FRACTIONAL read as a fraction of FRACTION, as a decimal."
+  :toolpak t
+  (let* ((fraction (grid-calc-int fraction))
+         (sign (if (< fractional 0) -1 1))
+         (whole (truncate (abs fractional)))
+         (part (- (abs fractional) whole)))
+    (when (zerop fraction) (grid-calc-raise "#DIV/0!"))
+    (* sign (+ whole (/ (* part (grid-calc--finance-dollar-scale fraction))
+                        (float fraction))))))
+
+(grid-calc-define dollarfr ((fractional number) (fraction number))
+  "FRACTIONAL as a decimal read back as a fraction of FRACTION."
+  :toolpak t
+  (let* ((fraction (grid-calc-int fraction))
+         (sign (if (< fractional 0) -1 1))
+         (whole (truncate (abs fractional)))
+         (part (- (abs fractional) whole)))
+    (when (zerop fraction) (grid-calc-raise "#DIV/0!"))
+    (* sign (+ whole (/ (* part (float fraction))
+                        (grid-calc--finance-dollar-scale fraction))))))
+
+;;;----------------------------------------------------------------------
+;;; Depreciation
+;;;----------------------------------------------------------------------
+
+(grid-calc-define db ((cost number) (salvage number) (life number)
+                      (period number) &optional (month number 12))
+  "The depreciation in PERIOD by the fixed declining balance."
+  (let ((period (truncate period))
+        (month (truncate month)))
+    (when (or (< cost 0) (< salvage 0) (<= life 0) (< period 1)
+              (< month 1) (> month 12))
+      (grid-calc-raise "#NUM!"))
+    (if (or (zerop cost) (> period (+ life 1)))
+        0.0
+      (let* ((rate (/ (round (* 1000
+                              (- 1 (expt (/ salvage (float cost))
+                                         (/ 1.0 life)))))
+                      1000.0))
+             (value (float cost))
+             (depreciation 0.0))
+        (dotimes (i period)
+          (setq depreciation
+                (* value rate
+                   (cond ((and (= i 0) (< month 12)) (/ month 12.0))
+                         ((>= i life) (/ (- 12 month) 12.0))
+                         (t 1.0)))
+                value (- value depreciation)))
+        depreciation))))
+
+(grid-calc-define vdb ((cost number) (salvage number) (life number)
+                       (start number) (end number)
+                       &optional (factor number 2) (no-switch bool))
+  "The depreciation from START to END by the declining balance."
+  (when (or (< cost 0) (< salvage 0) (<= life 0) (< start 0) (< end start)
+            (> end life) (<= factor 0))
+    (grid-calc-raise "#NUM!"))
+  (let ((rate (/ factor (float life)))
+        (value (float cost))
+        (total 0.0)
+        (i 0))
+    (while (< i (ceiling end))
+      (let* ((room (max 0.0 (- value salvage)))
+             (balance (min (* value rate) room))
+             (straight (if (> (- life i) 0) (/ room (- life i)) 0.0))
+             (depreciation (if no-switch
+                               balance
+                             (max balance straight)))
+             (from (max start i))
+             (to (min end (1+ i))))
+        (when (< from to)
+          (setq total (+ total (* depreciation (- to from)))))
+        (setq value (- value depreciation)
+              i (1+ i))))
+    total))
+
 (provide 'grid-table-calc-finance)
 
 ;;; grid-table-calc-finance.el ends here
