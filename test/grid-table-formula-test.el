@@ -3152,6 +3152,17 @@ Excel's values for."
       (should (equal (value formula nil) typed))
       (should (equal (value formula t) file)))))
 
+(ert-deftest grid-table-formula-toolpak-functions-refuse-true-and-false ()
+  ;; DELTA, GESTEP, ERF and COMPLEX, of the Analysis ToolPak, and the
+  ;; newer error functions give #VALUE! for TRUE or FALSE, where ABS
+  ;; takes FALSE as 0.
+  (dolist (formula '("=DELTA(B1)" "=GESTEP(B1)" "=ERF(B1)" "=ERF(0,B1)"
+                     "=ERFC(B1)" "=ERF.PRECISE(B1)" "=ERFC.PRECISE(B1)"
+                     "=COMPLEX(1,B1)"))
+    (should (equal (grid-table-formula-test--eval formula "FALSE") "#VALUE!")))
+  (should (equal (grid-table-formula-test--eval "=ABS(B1)" "FALSE") 0))
+  (should (equal (grid-table-formula-test--eval "=DELTA(B1)" "0") 1)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

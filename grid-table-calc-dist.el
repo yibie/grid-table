@@ -310,15 +310,18 @@ SIGMA is the standard deviation, by default that of the sample."
 
 (grid-calc-define erf ((lower number) &optional (upper number))
   "The error function at LOWER, or between LOWER and UPPER."
+  :toolpak t
   (if upper (- (grid-calc--erf upper) (grid-calc--erf lower))
     (grid-calc--erf lower)))
 
 (grid-calc-define erf.precise ((x number))
   "The error function at X."
+  :toolpak t
   (grid-calc--erf x))
 
 (grid-calc-define erfc ((x number))
   "The complementary error function at X."
+  :toolpak t
   (grid-calc--erfc x))
 
 (grid-calc-alias erfc.precise erfc)

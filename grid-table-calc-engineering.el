@@ -123,10 +123,12 @@ Each pair is (NAME BASE), as (bin 2)."
 
 (grid-calc-define delta ((first number) &optional (second number 0))
   "1 when FIRST and SECOND are equal, else 0."
+  :toolpak t
   (if (= first second) 1 0))
 
 (grid-calc-define gestep ((number number) &optional (step number 0))
   "1 when NUMBER is at least STEP, else 0."
+  :toolpak t
   (if (>= number step) 1 0))
 
 (defun grid-calc--bit-operand (number)
@@ -249,6 +251,7 @@ exponent much sooner: 1e-16 is 0.0000000000000001, 1e-20 is 1E-20."
 
 (grid-calc-define complex ((real number) (imag number) &optional (suffix text "i"))
   "The complex number REAL + IMAG SUFFIX, SUFFIX being i or j."
+  :toolpak t
   (unless (member suffix '("i" "j" "")) (grid-calc-raise "#VALUE!"))
   (grid-calc--complex-text real imag (if (string-empty-p suffix) "i" suffix)))
 
