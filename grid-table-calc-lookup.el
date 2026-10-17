@@ -108,13 +108,17 @@ and TRUE and FALSE.  Blanks and error values compare with nothing."
 
 (defun grid-calc--matcher (wanted wildcards)
   "Return a function telling whether a value equals WANTED.
-With WILDCARDS, text WANTED is a pattern; see `grid-calc-wildcard-regexp'."
-  (if (and wildcards (stringp wanted) (grid-calc-wildcard-p wanted))
-      (let ((regexp (grid-calc-wildcard-regexp wanted)))
-        (lambda (value)
-          (and (stringp value)
-               (let ((case-fold-search t)) (string-match-p regexp value)))))
-    (lambda (value) (eql (grid-calc--lookup-order value wanted) 0))))
+With WILDCARDS, text WANTED is a pattern; see `grid-calc-wildcard-regexp'.
+A blank WANTED, which only XLOOKUP and XMATCH search for, is an empty
+cell."
+  (cond
+   ((grid-calc-blank-p wanted) #'grid-calc-blank-p)
+   ((and wildcards (stringp wanted) (grid-calc-wildcard-p wanted))
+    (let ((regexp (grid-calc-wildcard-regexp wanted)))
+      (lambda (value)
+        (and (stringp value)
+             (let ((case-fold-search t)) (string-match-p regexp value))))))
+   (t (lambda (value) (eql (grid-calc--lookup-order value wanted) 0)))))
 
 (defvar grid-calc--exact-indexes (make-hash-table :test 'eq :weakness 'key)
   "Where each value stands in a range or array searched more than once.

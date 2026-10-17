@@ -2368,6 +2368,14 @@ come from pycel's and IronCalc's TEXT test workbooks."
     (should (equal (grid-table-formula-test--eval (car case) "abc")
                    (cdr case)))))
 
+(ert-deftest grid-table-formula-xlookup-finds-an-empty-cell-for-a-blank ()
+  ;; XLOOKUP and XMATCH match a blank with an empty cell; MATCH does not.
+  (should (equal (grid-table-formula-test--values
+                  '(("=XLOOKUP(B1,C1:C3,D1:D3,\"none\")" "" "1" "a")
+                    ("=XMATCH(B1,C1:C3)" "" "" "b")
+                    ("=MATCH(B1,C1:C3,0)" "" "3" "c")))
+                 '(("b" "" "1" "a") (2 "" "" "b") ("#N/A" "" "3" "c")))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
