@@ -1809,6 +1809,14 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
   (should (equal (grid-table-formula-test--eval "=IFERROR(#N/A,7)") 7))
   (should (equal (grid-table-formula-test--eval "=IFERROR(Sheet2!#REF!,7)") 7))
   (should (equal (grid-table-formula-test--eval "=\"#REF!\"") "#REF!"))
+  ;; Text a formula gives that spells an error stays text in its cell.
+  (let ((values (grid-table-formula-test--values
+                 '(("=\"#N/A\"" "=ISERROR(A1)" "=ISTEXT(A1)" "'#DIV/0!" "=UPPER(D1)"
+                    "=ISERROR(E1)" "=NA()" "=ISERROR(G1)")))))
+    (should (equal (nth 1 (car values)) nil))
+    (should (equal (nth 2 (car values)) t))
+    (should (equal (nth 5 (car values)) nil))
+    (should (equal (nth 7 (car values)) t)))
   (should (equal (grid-table-formula-test--eval "=Rate+1") "#NAME?"))
   (let* ((model (grid-model-create 3 2 '(("1" "=A3+A2") ("2" "") ("3" ""))))
          (model (grid-model-delete-row model 1)))

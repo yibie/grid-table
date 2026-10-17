@@ -223,8 +223,7 @@ A formula that calls none gives (\"(operators)\")."
   "Return the computed VALUE in the form the module gives a cached one."
   (cond ((eq value t) :true)
         ((null value) :false)
-        ((and (stringp value) (member value grid-calc-error-values))
-         (list :error value))
+        ((grid-calc-error-text-p value) (list :error value))
         ((stringp value) (substring-no-properties value))
         (t value)))
 

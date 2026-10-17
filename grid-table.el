@@ -365,7 +365,7 @@ in what it gives are left out."
                          (let ((text (if (stringp item) item
                                        (grid-format-general item))))
                            (and (not (string-empty-p text))
-                                (not (member text grid-calc-error-values))
+                                (not (grid-calc-error-text-p text))
                                 text)))
                        (if (listp value) value (list value)))))))))
 
@@ -416,7 +416,7 @@ Each rule is (TOP LEFT BOTTOM RIGHT OP VALUE STYLE)."
                        (string-match-p (regexp-quote (downcase operand))
                                        (downcase (format "%s" (or value ""))))))
       ("empty" (member value '(nil "")))
-      ("error" (and (stringp value) (member value grid-calc-error-values))))))
+      ("error" (grid-calc-error-text-p value)))))
 
 (defun grid-table-effective-style (source row col &optional rules)
   "Return the style the cell at ROW and COL of SOURCE is shown with.

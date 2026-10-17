@@ -1196,6 +1196,13 @@ error value reads as itself."
     (grid-calc-err raw))
    (t raw)))
 
+(defun grid-calc-error-text-p (value)
+  "Return non-nil when VALUE, as a cell stores it, is an error value.
+Text that spells one, as =\"#N/A\" gives, is marked as text and is not."
+  (and (stringp value) (> (length value) 0) (eq (aref value 0) ?#)
+       (member value grid-calc-error-values)
+       (not (get-text-property 0 'grid-text value))))
+
 (defun grid-calc--from-result (value)
   "Return the value a formula's cell holds, from the stored VALUE.
 The stored form is the one `grid-calc--store' gives."
@@ -1204,10 +1211,7 @@ The stored form is the one `grid-calc--store' gives."
    ((eq value t) t)
    ((numberp value) value)
    ((stringp value)
-    (if (and (> (length value) 0) (eq (aref value 0) ?#)
-             (assoc value grid-calc--errors))
-        (grid-calc-err value)
-      value))
+    (if (grid-calc-error-text-p value) (grid-calc-err value) value))
    ;; A chart, or whatever an Elisp formula gave
    (t value)))
 
@@ -1240,7 +1244,12 @@ an array formula or under `grid-calc-legacy-arrays', else #VALUE!."
                                     (= value -1.0e+INF))))
         "#NUM!"
       (grid-calc--tidy-number value)))
-   ((stringp value) value)
+   ;; Text that spells an error value is marked, to stay text.
+   ((stringp value)
+    (if (and (member value grid-calc-error-values)
+             (not (get-text-property 0 'grid-text value)))
+        (propertize (copy-sequence value) 'grid-text t)
+      value))
    ((eq value t) t)
    ((eq value :false) nil)
    ((eq value :blank) 0)
@@ -2630,8 +2639,7 @@ take them: each as its cell stores it, text as typed for a constant and
                           (grid-calc--compute-cell model index))
                         (let ((stored (grid-cell-computed-value
                                        (aref (grid-data-model-cells model) index))))
-                          (when (and (stringp stored)
-                                     (member stored grid-calc-error-values))
+                          (when (grid-calc-error-text-p stored)
                             (grid-calc-raise stored))
                           (push (or stored "") values)))))
     (nreverse values)))
