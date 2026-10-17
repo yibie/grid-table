@@ -263,6 +263,9 @@
   (should (equal (grid-parser-parse "销售!E6*2")
                  '(BINARY-OP * (CELL-REF "E6" "销售") (NUMBER 2))))
   (should (equal (grid-parser-parse "'It''s'!$A$1") '(CELL-REF "$A$1" "It's")))
+  ;; LibreOffice quotes each end of a reference through sheets.
+  (should (equal (grid-parser-parse "'a b':'it''s'!A1")
+                 '(CELL-REF "A1" "a b:it's")))
   (let* ((a (grid-model-create 3 2 '(("x" "y") ("1" "=B!A1+1")
                                      ("=A2*2" "=VLOOKUP(\"k\",b!A3:B3,2,FALSE)"))))
          (b (grid-model-create 3 2 '(("10" "=A!A3") ("=SUM(A!A2:A3)" "=Nope!A1")
