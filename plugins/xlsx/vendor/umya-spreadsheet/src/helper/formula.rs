@@ -489,13 +489,15 @@ fn handle_special_characters(
         return true;
     }
 
-    // handle whitespace
-    if current_char == WHITESPACE {
+    // handle whitespace; a line break is whitespace as a space is, so
+    // the B1 of "B1\r\n+B2" is a reference a shared formula moves
+    let is_space = |c: char| c == WHITESPACE || c == '\r' || c == '\n';
+    if is_space(current_char) {
         handle_whitespace(value, tokens1);
         *index += 1;
         // skip consecutive spaces
         let len = formula.chars().count();
-        while *index < len && formula.chars().nth(*index).unwrap() == WHITESPACE {
+        while *index < len && is_space(formula.chars().nth(*index).unwrap()) {
             *index += 1;
         }
         return true;
@@ -1111,6 +1113,12 @@ mod tests {
             adjusted_formula("=VLOOKUP(G3,$A:$B,2,FALSE)", 1, 0),
             "VLOOKUP(H3,$A:$B,2,FALSE)"
         );
+    }
+
+    #[test]
+    fn shared_formula_adjustment_moves_references_before_a_line_break() {
+        assert_eq!(adjusted_formula("=B1\r\n+B2", 0, 1), "B2+B3");
+        assert_eq!(adjusted_formula("=SUM(\nA1,2\n)", 0, 1), "SUM(A2,2)");
     }
 
     #[test]
