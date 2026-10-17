@@ -541,54 +541,84 @@ other subtotals."
 ;;; Database functions
 ;;;----------------------------------------------------------------------
 
+(defun grid-calc--database-names (table)
+  "Return the names atop the columns of TABLE, as text; nil for an error."
+  (cl-loop for col below (cdr (grid-calc--table-size table))
+           for name = (grid-calc--table-at table 0 col)
+           collect (unless (grid-calc-err-p name) (grid-calc-text name))))
+
+(defun grid-calc--same-name-p (name other)
+  "Return non-nil when NAME and OTHER, column names or nil, are one."
+  (and name other (string-equal-ignore-case name other)))
+
+(defun grid-calc--database-criterion (criterion)
+  "Return a function telling whether a value meets CRITERION.
+Text with no operator before it is met by text that starts with it."
+  (grid-calc-criterion
+   (if (and (stringp criterion) (not (string-empty-p criterion))
+            (not (string-match-p "\\`[<>=]" criterion))
+            (not (grid-calc-text-number criterion)))
+       (concat criterion "*")
+     criterion)))
+
 (defun grid-calc--database-rows (database criteria)
   "Return the rows of DATABASE, from 1, that meet the CRITERIA table.
-Both are ranges or arrays whose first row names the columns.  A row of
-CRITERIA is met when each criterion in it is; any row will do."
-  (pcase-let ((`(,rows . ,cols) (grid-calc--table-size database))
+Both are ranges or arrays whose first row names the columns, without
+regard to case.  A row of CRITERIA is met when each criterion in it is,
+none under a name DATABASE lacks; any row will do.  A DATABASE of no
+more than its names is #VALUE!."
+  (pcase-let ((`(,rows . ,_) (grid-calc--table-size database))
               (`(,c-rows . ,c-cols) (grid-calc--table-size criteria)))
-    (let ((names (cl-loop for col below cols
-                          collect (grid-calc-text (grid-calc--table-at database 0 col))))
+    (when (< rows 2) (grid-calc-raise "#VALUE!"))
+    (let ((names (grid-calc--database-names database))
+          (c-names (grid-calc--database-names criteria))
           (tests '()))
       (cl-loop for c-row from 1 below c-rows
                do (push (cl-loop for c-col below c-cols
-                                 for name = (grid-calc-text
-                                             (grid-calc--table-at criteria 0 c-col))
                                  for criterion = (grid-calc--table-at criteria c-row c-col)
-                                 for col = (cl-position name names :test #'string-equal)
                                  unless (grid-calc-blank-p criterion)
-                                 collect (cons (or col (grid-calc-raise "#VALUE!"))
-                                               (grid-calc-criterion criterion)))
+                                 collect (cons (cl-position (nth c-col c-names) names
+                                                            :test #'grid-calc--same-name-p)
+                                               (grid-calc--database-criterion criterion)))
                         tests))
       (cl-loop for row from 1 below rows
                when (cl-some (lambda (all)
                                (cl-every (lambda (test)
-                                           (funcall (cdr test)
-                                                    (grid-calc--table-at database row
-                                                                         (car test))))
+                                           (and (car test)
+                                                (funcall (cdr test)
+                                                         (grid-calc--table-at database row
+                                                                              (car test)))))
                                          all))
                              tests)
                collect row))))
 
 (defun grid-calc--database-field (database field)
-  "Return the column of DATABASE that FIELD, a name or number from 1, is."
-  (if (numberp field)
-      (1- (truncate field))
-    (or (cl-loop for col below (cdr (grid-calc--table-size database))
-                 when (string-equal (grid-calc-text (grid-calc--table-at database 0 col))
-                                    field)
-                 return col)
-        (grid-calc-raise "#VALUE!"))))
+  "Return the column of DATABASE that FIELD, a name or number from 1, is.
+FIELD is a `values' argument; one left out is nil.  Several cells, a
+blank one, or a name or number DATABASE has no column for is #VALUE!."
+  (unless (eq field :blank)
+    (let ((value (grid-calc--deref field))
+          (cols (cdr (grid-calc--table-size database))))
+      (cond
+       ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+       ((or (grid-calc-array-p value) (grid-calc-blank-p value))
+        (grid-calc-raise "#VALUE!"))
+       ((stringp value)
+        (or (cl-position value (grid-calc--database-names database)
+                         :test #'grid-calc--same-name-p)
+            (grid-calc-raise "#VALUE!")))
+       (t (let ((col (1- (truncate (grid-calc-num value)))))
+            (if (< -1 col cols) col (grid-calc-raise "#VALUE!"))))))))
 
-(grid-calc-define dcount ((database values) (field any) (criteria values))
+(grid-calc-define dcount ((database values) (field values) (criteria values))
   "How many rows of DATABASE meeting CRITERIA hold a number in FIELD.
 Without FIELD every row meeting CRITERIA that holds a number counts."
-  (let ((rows (grid-calc--database-rows database criteria)))
-    (if (grid-calc-blank-p field)
-        (length rows)
-      (let ((col (grid-calc--database-field database field)))
+  (let ((rows (grid-calc--database-rows database criteria))
+        (col (grid-calc--database-field database field)))
+    (if col
         (cl-count-if (lambda (row) (numberp (grid-calc--table-at database row col)))
-                     rows)))))
+                     rows)
+      (length rows))))
 
 (provide 'grid-table-calc-stats)
 

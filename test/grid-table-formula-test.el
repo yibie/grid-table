@@ -2749,6 +2749,28 @@ The cases come from IronCalc's and the formulas package's workbooks."
                   ("=DEC2HEX(12)" . "C")))
     (should (equal (list (car case) (grid-table-formula-test--eval (car case) "" ""))
                    (cons (car case) (list (cdr case)))))))
+(ert-deftest grid-table-formula-database-criteria-as-excel-reads-them ()
+  "DCOUNT reads names without regard to case, text criteria as the start
+of the text, and gives #VALUE! for a field it cannot find.  The cases
+come from IronCalc's DCOUNT workbook."
+  (let ((rows '(("Region" "Units" "" "region" "Units" "Nope")
+                ("East" "120" "" "ea" ">100" "x")
+                ("West" "80" "" "" "" "")
+                ("Eastern" "200" "" "" "" ""))))
+    (dolist (case '(("=DCOUNT(A1:B4,\"units\",D1:D2)" 2)
+                    ("=DCOUNT(A1:B4,2,E1:E2)" 2)
+                    ("=DCOUNT(A1:B4,TRUE,D1:D2)" 0)
+                    ("=DCOUNT(A1:B4,,D1:D2)" 2)
+                    ("=DCOUNT(A1:B4,2,F1:F2)" 0)
+                    ("=DCOUNT(A1:B4,2,F1:F3)" 3)
+                    ("=DCOUNT(A1:B1,2,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,0,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,3,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,C1,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,A1:B1,D1:D2)" "#VALUE!")))
+      (let ((model (grid-model-create 5 6 (append rows (list (list (car case) "" "" "" "" ""))))))
+        (should (equal (list (car case) (grid-model-get-computed-value model 4 0))
+                       case))))))
 
 (provide 'grid-table-formula-test)
 
