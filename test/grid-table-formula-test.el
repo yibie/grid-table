@@ -2794,6 +2794,25 @@ the criteria; DCOUNTA and DGET read every value there."
                     (and (numberp value) (= value (cadr case)))
                   (equal (list (car case) value) case)))))))
 
+(ert-deftest grid-table-formula-statistics-excel-had-missing ()
+  "The statistics functions added from Excel's list give what Excel gives.
+The cases come from the formulas package's and pycel's workbooks."
+  (dolist (case '(("=SLOPE({0,0.1,0.2},{0.2,0.3,-0.1})" -0.34615384615384615)
+                  ("=SLOPE({1,2},{3,3})" "#DIV/0!") ("=SLOPE({1,2},{3,4,5})" "#N/A")
+                  ("=FORECAST.LINEAR(0.1,{1,7,3,0},{7,2,9,4})" 5.077586206896552)
+                  ("=STEYX({1,2},{3,4})" "#DIV/0!") ("=FISHER(1)" "#NUM!")
+                  ("=FISHER(0.1)" 0.10033534773107562) ("=FISHERINV(1)" 0.7615941559557649) ("=GEOMEAN(1,0)" "#NUM!")
+                  ("=HARMEAN(1,2,4)" 1.7142857142857142) ("=TRIMMEAN({1,2,3,4},1)" "#NUM!")
+                  ("=PROB({1,2,3,4,5},{0.1,0.2,0.3,0.3,0.1},2,3)" 0.5)
+                  ("=PROB({1,2},{0.5,0.6},1)" "#NUM!")
+                  ("=BETADIST(0.7,1,3,0.5,5)" 0.12749519890260627)
+                  ("=BETADIST(0,,,)" "#NUM!") ("=LOGNORMDIST(0,,)" "#NUM!")))
+    (let* ((model (grid-model-create 1 3 (list (list (car case) "" ""))))
+           (value (grid-model-get-computed-value model 0 0)))
+      (should (if (numberp (cadr case))
+                  (and (numberp value) (< (abs (- value (cadr case))) 1e-12))
+                (equal (list (car case) value) case))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

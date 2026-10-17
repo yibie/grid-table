@@ -266,6 +266,11 @@ HIGH is pushed up until CDF there passes P."
     (if cumulative (grid-calc--normal-cdf z)
       (/ (grid-calc--normal-pdf z) (* x sd)))))
 
+(grid-calc-define lognormdist ((x number) (mean number) (sd number))
+  "The log-normal distribution at X, whose log has MEAN and SD."
+  (grid-calc--require (> x 0) (> sd 0))
+  (grid-calc--normal-cdf (/ (- (log x) mean) (float sd))))
+
 (grid-calc-define lognorm.inv ((p number) (mean number) (sd number))
   "X where the log-normal distribution of MEAN and SD is P."
   (grid-calc--require (> sd 0))
@@ -442,6 +447,12 @@ its density."
                  (- (+ (grid-calc--log-gamma alpha) (grid-calc--log-gamma beta))
                     (grid-calc--log-gamma (+ alpha beta)))))
          (- high low)))))
+
+(grid-calc-define betadist ((x number) (alpha number) (beta number)
+                           &optional (low number 0) (high number 1))
+  "The beta distribution of ALPHA and BETA at X, between LOW and HIGH."
+  (grid-calc--require (> alpha 0) (> beta 0) (< low high) (<= low x high))
+  (grid-calc--beta-i (/ (- x low) (float (- high low))) alpha beta))
 
 (grid-calc-define beta.inv ((p number) (alpha number) (beta number)
                             &optional (low number 0) (high number 1))

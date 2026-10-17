@@ -210,8 +210,8 @@ HOW is passed on to `grid-calc-numbers'."
 
 (grid-calc-alias covar covariance.p)
 
-(grid-calc-define correl ((left array) (right array))
-  "The correlation of the pairs of LEFT and RIGHT."
+(defun grid-calc--correlation (left right)
+  "Return the correlation of the pairs of numbers of LEFT and RIGHT."
   (let* ((pairs (grid-calc--paired left right))
          (xs (mapcar #'car pairs)) (ys (mapcar #'cdr pairs)))
     (when (< (length pairs) 2) (grid-calc-raise "#DIV/0!"))
@@ -219,6 +219,150 @@ HOW is passed on to `grid-calc-numbers'."
       (when (or (zerop sx) (zerop sy)) (grid-calc-raise "#DIV/0!"))
       (/ (* (grid-calc--covariance left right nil) (length pairs))
          (sqrt (* sx sy))))))
+
+(grid-calc-define correl ((left array) (right array))
+  "The correlation of the pairs of LEFT and RIGHT."
+  (grid-calc--correlation left right))
+
+(grid-calc-alias pearson correl)
+
+(grid-calc-define rsq ((known-y array) (known-x array))
+  "The square of the correlation of KNOWN-Y with KNOWN-X."
+  (let ((r (grid-calc--correlation known-y known-x)))
+    (* r r)))
+
+(defun grid-calc--line (known-y known-x)
+  "Return the least-squares line of KNOWN-Y on KNOWN-X.
+It is a list of the slope, the intercept and the pairs (Y . X)."
+  (let* ((pairs (grid-calc--paired known-y known-x))
+         (ys (mapcar #'car pairs)) (xs (mapcar #'cdr pairs)))
+    (unless pairs (grid-calc-raise "#DIV/0!"))
+    (let ((sxx (grid-calc--squares xs)))
+      (when (zerop sxx) (grid-calc-raise "#DIV/0!"))
+      (let* ((n (length pairs))
+             (mean-x (/ (float (apply #'+ xs)) n))
+             (mean-y (/ (float (apply #'+ ys)) n))
+             (slope (/ (cl-loop for (y . x) in pairs
+                                sum (* (- x mean-x) (- y mean-y)))
+                       sxx)))
+        (list slope (- mean-y (* slope mean-x)) pairs)))))
+
+(grid-calc-define slope ((known-y array) (known-x array))
+  "The slope of the least-squares line of KNOWN-Y on KNOWN-X."
+  (grid-calc--tidy-number (car (grid-calc--line known-y known-x))))
+
+(grid-calc-define intercept ((known-y array) (known-x array))
+  "Where the least-squares line of KNOWN-Y on KNOWN-X meets the y axis."
+  (grid-calc--tidy-number (cadr (grid-calc--line known-y known-x))))
+
+(grid-calc-define forecast ((x number) (known-y array) (known-x array))
+  "The value at X of the least-squares line of KNOWN-Y on KNOWN-X."
+  (pcase-let ((`(,slope ,intercept ,_) (grid-calc--line known-y known-x)))
+    (grid-calc--tidy-number (+ intercept (* slope x)))))
+
+(grid-calc-alias forecast.linear forecast)
+
+(grid-calc-define steyx ((known-y array) (known-x array))
+  "The standard error of the Y predicted from each X by their line."
+  (pcase-let ((`(,slope ,intercept ,pairs) (grid-calc--line known-y known-x)))
+    (when (< (length pairs) 3) (grid-calc-raise "#DIV/0!"))
+    (sqrt (/ (cl-loop for (y . x) in pairs
+                      sum (expt (- y (+ intercept (* slope x))) 2))
+             (- (length pairs) 2)))))
+
+(defun grid-calc--moment (numbers power sample)
+  "Return the sum of the POWERth powers of NUMBERS in standard deviations
+from their mean, the deviation of a SAMPLE or of all there are."
+  (let* ((n (length numbers))
+         (mean (/ (float (apply #'+ numbers)) n))
+         (sd (sqrt (/ (grid-calc--squares numbers) (if sample (1- n) n)))))
+    (when (zerop sd) (grid-calc-raise "#DIV/0!"))
+    (cl-loop for x in numbers sum (expt (/ (- x mean) sd) power))))
+
+(grid-calc-define kurt (&rest (numbers values))
+  "The kurtosis of NUMBERS."
+  (let* ((numbers (grid-calc-numbers numbers)) (n (length numbers)))
+    (when (< n 4) (grid-calc-raise "#DIV/0!"))
+    (- (* (/ (* n (+ n 1.0)) (* (- n 1) (- n 2) (- n 3)))
+          (grid-calc--moment numbers 4 t))
+       (/ (* 3.0 (expt (- n 1) 2)) (* (- n 2) (- n 3))))))
+
+(grid-calc-define skew (&rest (numbers values))
+  "The skewness of NUMBERS, a sample."
+  (let* ((numbers (grid-calc-numbers numbers)) (n (length numbers)))
+    (when (< n 3) (grid-calc-raise "#DIV/0!"))
+    (* (/ n (* (- n 1.0) (- n 2))) (grid-calc--moment numbers 3 t))))
+
+(grid-calc-define skew.p (&rest (numbers values))
+  "The skewness of NUMBERS, all there are."
+  (let* ((numbers (grid-calc-numbers numbers)) (n (length numbers)))
+    (when (< n 1) (grid-calc-raise "#DIV/0!"))
+    (/ (grid-calc--moment numbers 3 nil) n)))
+
+(defun grid-calc--positive-numbers (values)
+  "Return the numbers of VALUES; #NUM! when there are none or one is not
+above 0."
+  (let ((numbers (grid-calc-numbers values)))
+    (unless (and numbers (cl-every (lambda (x) (> x 0)) numbers))
+      (grid-calc-raise "#NUM!"))
+    numbers))
+
+(grid-calc-define geomean (&rest (numbers values))
+  "The geometric mean of NUMBERS."
+  (let ((numbers (grid-calc--positive-numbers numbers)))
+    (grid-calc--tidy-number
+     (exp (/ (apply #'+ (mapcar #'log numbers)) (length numbers))))))
+
+(grid-calc-define harmean (&rest (numbers values))
+  "The harmonic mean of NUMBERS."
+  (let ((numbers (grid-calc--positive-numbers numbers)))
+    (grid-calc--tidy-number
+     (/ (length numbers) (apply #'+ (mapcar (lambda (x) (/ 1.0 x)) numbers))))))
+
+(grid-calc-define trimmean ((numbers values) (percent number))
+  "The mean of NUMBERS without the PERCENT of them at the two ends."
+  (let* ((sorted (sort (grid-calc-numbers (list numbers)) #'<))
+         (n (length sorted)))
+    (unless (and (> n 0) (<= 0 percent) (< percent 1)) (grid-calc-raise "#NUM!"))
+    (let ((cut (floor (* n percent) 2)))
+      (grid-calc--mean (cl-subseq sorted cut (- n cut))))))
+
+(grid-calc-define devsq (&rest (numbers values))
+  "The sum of the squares of NUMBERS from their mean."
+  (let ((numbers (grid-calc-numbers numbers)))
+    (unless numbers (grid-calc-raise "#NUM!"))
+    (grid-calc--tidy-number (grid-calc--squares numbers))))
+
+(grid-calc-define avedev (&rest (numbers values))
+  "The mean of the distances of NUMBERS from their mean."
+  (let ((numbers (grid-calc-numbers numbers)))
+    (unless numbers (grid-calc-raise "#NUM!"))
+    (let ((mean (/ (float (apply #'+ numbers)) (length numbers))))
+      (grid-calc--mean (mapcar (lambda (x) (abs (- x mean))) numbers)))))
+
+(grid-calc-define fisher ((x number))
+  "The Fisher transformation of X."
+  (grid-calc--require (< -1 x 1))
+  (* 0.5 (log (/ (+ 1.0 x) (- 1.0 x)))))
+
+(grid-calc-define fisherinv ((y number))
+  "The X whose Fisher transformation is Y."
+  (if (> (abs y) 300) (if (> y 0) 1.0 -1.0)
+    ;; As Excel works it out, which a Y near 0 shows
+    (let ((e (exp (* 2.0 y)))) (/ (- e 1) (+ e 1)))))
+
+(grid-calc-define prob ((xs array) (chances array) (low number) &optional (high number))
+  "The chance of a value of XS from LOW to HIGH, or of LOW, where each X
+comes with the chance beside it in CHANCES."
+  (let* ((pairs (grid-calc--paired xs chances))
+         (total (apply #'+ (mapcar #'cdr pairs))))
+    (unless (and (cl-every (lambda (p) (< 0 (cdr p) 1.0000001)) pairs)
+                 (< (abs (- total 1)) 1e-7))
+      (grid-calc-raise "#NUM!"))
+    (let ((high (or high low)))
+      (grid-calc--tidy-number
+       (cl-loop for (x . chance) in pairs
+                when (<= low x high) sum chance)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Largest, smallest and in between
