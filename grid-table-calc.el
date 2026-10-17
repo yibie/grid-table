@@ -2873,7 +2873,8 @@ name that reads as a cell, as A1 or R1C1 does, is quoted too."
 
 (defun grid-calc--same-sheet-p (left right)
   "Return non-nil when LEFT and RIGHT name the same sheet."
-  (and left right (string= (downcase left) (downcase right))))
+  (and left right
+       (eq t (compare-strings left nil nil right nil nil t))))
 
 (defun grid-calc--map-references (formula function &optional rename)
   "Return FORMULA with each reference replaced by what FUNCTION returns.

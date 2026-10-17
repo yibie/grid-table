@@ -352,9 +352,11 @@ so that undoing the change can put the formulas back.")
 
 (defun grid-workbook-sheet (workbook name)
   "Return the sheet of WORKBOOK called NAME, ignoring case, or nil."
-  (cl-find-if (lambda (source)
-                (grid-calc--same-sheet-p (grid-workbook-sheet-name source) name))
-              (grid-workbook-sheets workbook)))
+  (let ((sheets (grid-workbook-sheets workbook)))
+    (while (and sheets (not (grid-calc--same-sheet-p
+                             (grid-workbook-sheet-name (car sheets)) name)))
+      (setq sheets (cdr sheets)))
+    (car sheets)))
 
 (defun grid-workbook-name-problem (workbook name &optional except as-read)
   "Return why NAME cannot name a sheet of WORKBOOK, or nil when it can.
