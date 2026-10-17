@@ -312,7 +312,9 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
         (let ((char (aref section i)) (rest (substring section i)))
           (cond
            ((eq char ?\")
-            (let ((end (or (cl-position ?\" section :start (1+ i)) len)))
+            ;; A quote that is never closed is not a format code.
+            (let ((end (cl-position ?\" section :start (1+ i))))
+              (unless end (grid-calc-raise "#VALUE!"))
               (lit (substring section (1+ i) end))
               (setq i end)))
            ((eq char ?\\) (when (< (1+ i) len) (lit (string (aref section (1+ i)))))
@@ -515,11 +517,13 @@ between thousands, a space where the digit left of it is a space."
 
 (defun grid-calc--fill-fraction (digits placeholders)
   "Return DIGITS after the point put into PLACEHOLDERS, one string each."
-  (let ((out (cl-loop for i below (length placeholders)
-                      collect (string (aref digits i)))))
-    ;; Trailing zeros at # go, at ? become spaces.
-    (cl-loop for i downfrom (1- (length placeholders)) to 0
-             while (and (equal (nth i out) "0") (not (eq (aref placeholders i) ?0)))
+  (let* ((out (cl-loop for i below (length placeholders)
+                       collect (string (aref digits i))))
+         ;; A zero after the last digit that is not one shows what its own
+         ;; placeholder says, the 0 placeholders further on included.
+         (last (cl-loop for i downfrom (1- (length out)) to 0
+                        unless (equal (nth i out) "0") return i)))
+    (cl-loop for i from (1+ (or last -1)) below (length out)
              do (setf (nth i out) (grid-calc--pad (aref placeholders i))))
     out))
 
@@ -656,28 +660,39 @@ between, the whole part; without them the fraction is improper."
 
 (defun grid-calc--comma-roles (tokens)
   "Return what each comma among TOKENS does, a list as long as TOKENS.
-A comma before any placeholder is written as one; one between two
-placeholders of the whole part groups thousands; any other after a
-placeholder divides by a thousand, as #, or 0.0,, do."
+A comma right after a placeholder and right before another one groups
+thousands; one with a placeholder before it and one after it in the
+whole number, but not right after it, is not written; one at the end of
+the whole number divides by a thousand; any other is written as one."
   (let* ((point-at (cl-position 'point tokens :key #'car))
          (exp-at (cl-position 'exp tokens :key #'car))
-         (whole-end (or point-at exp-at (length tokens))))
+         (whole-end (or point-at exp-at (length tokens)))
+         (last-place (or (cl-position-if #'grid-calc--digit-p
+                                         (cl-subseq tokens 0 whole-end)
+                                         :from-end t)
+                         -1)))
     (cl-loop for tok in tokens
              for i from 0
              collect
              (when (eq (car tok) 'comma)
-               (let ((digit-before (cl-some #'grid-calc--digit-p (cl-subseq tokens 0 i)))
+               (let ((before (and (> i 0) (nth (1- i) tokens)))
+                     (after (nth (1+ i) tokens))
                      (digit-after-in-part
                       (cl-some #'grid-calc--digit-p
                                (cl-subseq tokens (1+ i)
                                           (cond ((< i whole-end) whole-end)
                                                 ((and exp-at (< i exp-at)) exp-at)
                                                 (t (length tokens)))))))
-                 (cond ((not digit-before) 'literal)
-                       ((and exp-at (> i exp-at)) 'ignore)
-                       ((and (< i whole-end) digit-after-in-part) 'group)
-                       (digit-after-in-part 'ignore)
-                       (t 'scale)))))))
+                 (cond
+                  ;; Commas after the last whole placeholder divide by a
+                  ;; thousand, one after another too, as #,##0,, does.
+                  ((and (< i whole-end) (> i last-place)
+                        (cl-some #'grid-calc--digit-p (cl-subseq tokens 0 i)))
+                   'scale)
+                  ((not (and before (grid-calc--digit-p before))) 'literal)
+                  ((and (< i whole-end) (grid-calc--digit-p after)) 'group)
+                  ((and (>= i whole-end) (not digit-after-in-part)) 'scale)
+                  (t 'ignore)))))))
 
 (defun grid-calc--format-number (number tokens negative-shown)
   "Return NUMBER written after TOKENS, a number code's.
@@ -739,6 +754,10 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
                                      (if (string= last "") "0"
                                        (concat (substring last 0 -1) "0")))))))
              (sign (if (and negative-shown (< number 0) (string-match-p "[1-9]" text)) "-" ""))
+             ;; A whole number with no placeholder to sit in is written whole.
+             (whole-text (if (and (null exp-at) (string-empty-p int-places)
+                                  (not (equal whole "0")))
+                             whole ""))
              (exp-sign (and exp-at
                             (cond ((< exponent 0) "-")
                                   ((equal (nth 1 (nth exp-at tokens)) "+") "+")
@@ -760,12 +779,18 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
               ('point (push "." out))
               ('exp (push (nth 2 tok) out))
               ('general (push (grid-calc--general-text (abs number)) out))))
-        (concat sign (apply #'concat (nreverse out)))))))
+        (concat sign whole-text (apply #'concat (nreverse out)))))))
 
 (defun grid-calc--general-text (number)
   "Return NUMBER as the General format writes it, in 11 characters."
   (let ((text (grid-calc-number-text number)))
-    (if (<= (length text) 11) text
+    (cond
+     ((<= (length text) 11) text)
+     ;; A very small number takes an exponent rather than lose its digits.
+     ((and (/= number 0) (< (abs number) 1e-4))
+      (replace-regexp-in-string
+       "\\.?0*E" "E" (upcase (format "%.5e" number))))
+     (t
       (let ((precision 10) result)
         (while (and (> precision 0)
                     (> (length (setq result (grid-calc-number-text
@@ -775,7 +800,7 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
           (setq precision (1- precision)))
         (if (<= (length result) 11) result
           (let ((sci (upcase (format "%.5e" number))))
-            (replace-regexp-in-string "\\.?0*E" "E" sci)))))))
+            (replace-regexp-in-string "\\.?0*E" "E" sci))))))))
 
 (defun grid-calc--section-matches (tokens number)
   "Return non-nil when TOKENS have no condition or NUMBER meets it."
@@ -787,38 +812,62 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
             (">" (> number bound)) (">=" (>= number bound))
             ("=" (= number bound)) ("<>" (/= number bound)))))))
 
+(defun grid-calc--number-sections (sections)
+  "Return SECTIONS without the one that writes a text value."
+  (let ((count (length sections)))
+    (cond ((= count 4) (butlast sections))
+          ((and (> count 1) (assq 'at (car (last sections)))) (butlast sections))
+          (t sections))))
+
 (defun grid-calc-format-code (value code)
   "Return VALUE written after the Excel format CODE, as TEXT does."
   (let* ((sections (mapcar #'grid-calc--code-tokens (grid-calc--code-sections code)))
-         (count (length sections)))
+         ;; The fourth section writes text; without one, so does a section
+         ;; that has @ in it.
+         (text-section (or (nth 3 sections)
+                           (cl-find-if (lambda (tokens) (assq 'at tokens)) sections))))
     (if (stringp value)
-        (let ((text-section (or (nth 3 sections)
-                                (cl-find-if (lambda (tokens) (assq 'at tokens)) sections))))
-          (if text-section
-              (mapconcat (lambda (tok)
-                           (pcase (car tok)
-                             ('lit (cadr tok)) ('at value) (_ "")))
-                         text-section "")
-            value))
-      (let* ((conditional (cl-some (lambda (tokens) (assq 'cond tokens)) sections))
+        (cond
+         ((not text-section) value)
+         ;; @ belongs in the text section only.
+         ((and (nth 3 sections)
+               (cl-some (lambda (tokens) (assq 'at tokens)) (butlast sections 1)))
+          (grid-calc-raise "#VALUE!"))
+         (t (mapconcat (lambda (tok)
+                         (pcase (car tok)
+                           ('lit (cadr tok)) ('at value) (_ "")))
+                       text-section "")))
+      (let* ((number-sections (grid-calc--number-sections sections))
+             (number-count (length number-sections))
+             (conditional (cl-some (lambda (tokens) (assq 'cond tokens)) number-sections))
              (section-index
               (cond (conditional
                      (or (cl-position-if (lambda (tokens)
                                            (and (assq 'cond tokens)
                                                 (grid-calc--section-matches tokens value)))
-                                         sections)
+                                         number-sections)
                          (cl-position-if-not (lambda (tokens) (assq 'cond tokens))
-                                             sections)))
-                    ((and (< value 0) (>= count 2)) 1)
-                    ((and (= value 0) (>= count 3)) 2)
+                                             number-sections)))
+                    ((and (< value 0) (>= number-count 2)) 1)
+                    ((and (= value 0) (>= number-count 3)) 2)
                     (t 0)))
              ;; A value no section takes is written as General writes it.
-             (tokens (if section-index (nth section-index sections) '((general))))
+             (tokens (if section-index (nth section-index number-sections)
+                       '((general))))
              ;; Only the first section, and conditional ones, write the
              ;; minus sign; the others are written as a negative's own.
-             (negative-shown (or (eql section-index 0) conditional)))
+             (negative-shown (or (eql section-index 0) conditional))
+             (exp-at (cl-position 'exp tokens :key #'car)))
         (cond
          ((assq 'at tokens) (grid-calc-raise "#VALUE!"))
+         ;; A point after an exponent is not a number code.
+         ((and exp-at (cl-position 'point tokens :key #'car :start (1+ exp-at)))
+          (grid-calc-raise "#VALUE!"))
+         ;; A date code and a digit placeholder do not go together.
+         ((and (cl-some (lambda (tok) (memq (car tok) '(date elapsed ampm))) tokens)
+               (cl-some (lambda (tok) (and (eq (car tok) 'digit) (not (eq (cadr tok) ?0))))
+                        tokens))
+          (grid-calc-raise "#VALUE!"))
          ((grid-calc--date-code-p tokens)
           (unless (if (assq 'elapsed tokens) (<= (abs value) grid-calc--last-serial*)
                     (<= 0 value grid-calc--last-serial*))
@@ -834,7 +883,7 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
                                  (_ "")))
                              tokens "")))
          ((not (cl-some (lambda (tok) (eq (car tok) 'digit)) tokens))
-          (concat (if (and negative-shown (< value 0) (= count 1)) "-" "")
+          (concat (if (and negative-shown (< value 0) (= number-count 1)) "-" "")
                   (mapconcat (lambda (tok) (if (eq (car tok) 'lit) (cadr tok) ""))
                              tokens "")))
          (t (grid-calc--format-number value tokens negative-shown)))))))

@@ -1802,6 +1802,40 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
                      "│3  │ wide                  │"
                      "└───┴───────────────────────┘")))))
 
+(ert-deftest grid-table-text-writes-every-digit-and-literal-comma ()
+  "TEXT writes a whole number with no placeholder of its own, keeps a
+comma that is not a thousands separator, and takes a date code mixed
+with digits, or a quote that is never closed, for a mistake.  The cases
+come from pycel's and IronCalc's TEXT test workbooks."
+  (dolist (case
+           '(("1234.56" ".#" "1234.6")
+             ("1234.56" ".##0" "1234.560")
+             ("890123.456789" "#.#####00#0" "890123.45678900")
+             ("890123.456789" "0,x#.00.0" "89012x3.45.7")
+             ("890123.456789" "#x,0x#.00.0" "8901x,2x3.45.7")
+             ("890123.456789" "#x,0,#.00.0" "890,1x,23.45.7")
+             ("890123.456789" "#.###x,##" "890123.456x,79")
+             ("890123.456789" "#.###,x##" "890123.456x79")
+             ("890123.456789" "#,#.##.##,#" "890,123.45.679")
+             ("1234567890" "0,## ## ,##" "1,234,56 7,8 ,90")
+             ("1000000.555" "0 .  # ,0.00.0,00" "1000000 .  5 ,5.50.000")
+             ;; Letters that are no code of Excel's are written as they are.
+             ("0" "w;x;z@" "w")
+             ("-1" "w;x@" "-w")
+             ("X" "##.00;-  ##.0;\"ZERO\";->@<-@" "->X<-X")
+             ;; @ in a section that writes numbers is a mistake.
+             ("X" ";-  ##.0;\"ZERO\"@;\"X\"" "#VALUE!")
+             ;; So is a date code among digit placeholders, and a quote
+             ;; that is never closed.
+             ("41181" "mm###" "#VALUE!")
+             ("1.23" "#\"°F\"\"" "#VALUE!")
+             ;; A very small number takes an exponent.
+             ("-0.0000000025" "General" "-2.5E-09")))
+    (pcase-let ((`(,value ,code ,expected) case))
+      (let ((model (grid-model-create 1 3 (list (list value code "=TEXT(A1,B1)")))))
+        (should (equal (list value code (grid-model-get-computed-value model 0 2))
+                       (list value code expected)))))))
+
 (ert-deftest grid-table-dates-written-month-first ()
   (should (= (grid-format-parse-date "10/13/2026") 46308))
   (should (= (grid-format-parse-date "3/4/2026")
