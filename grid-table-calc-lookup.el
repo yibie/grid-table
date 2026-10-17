@@ -318,9 +318,11 @@ MODE and SEARCH are their match_mode and search_mode; SOURCE is as
 `grid-calc--find-exact' takes it."
   (unless (memq mode '(0 -1 1 2)) (grid-calc-raise "#VALUE!"))
   (unless (memq search '(1 -1 2 -2)) (grid-calc-raise "#VALUE!"))
+  ;; Wildcards cannot be searched for by halves.
+  (when (and (= mode 2) (memq search '(2 -2))) (grid-calc-raise "#VALUE!"))
   (let ((from-end (memq search '(-1 -2))))
     (pcase mode
-      ((guard (and (memq search '(2 -2)) (/= mode 2)))
+      ((guard (memq search '(2 -2)))
        (grid-calc--find-bisecting wanted length getter mode (= search -2)))
       (0 (grid-calc--find-exact wanted length getter from-end nil source))
       (2 (grid-calc--find-exact wanted length getter from-end t source))

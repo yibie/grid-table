@@ -2402,6 +2402,12 @@ come from pycel's and IronCalc's TEXT test workbooks."
                   ("=XMATCH(0,{1,5,9},-1,2)" . "#N/A")))
     (should (equal (grid-table-formula-test--eval (car case)) (cdr case)))))
 
+(ert-deftest grid-table-formula-xlookup-takes-no-wildcards-by-halves ()
+  (should (equal (grid-table-formula-test--eval "=XMATCH(\"b\",{\"a\",\"b\"},2,2)")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=XMATCH(\"b*\",{\"a\",\"bc\"},2)")
+                 2)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
