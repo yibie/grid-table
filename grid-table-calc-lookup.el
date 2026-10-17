@@ -510,7 +510,8 @@ own row or column, as from any range."
         (grid-calc-err "#REF!")
       (let* ((value (let ((grid-calc--here (list model row col))
                           (grid-calc--array-context t)
-                          (grid-calc--locals nil))
+                          (grid-calc--locals nil)
+                          (grid-calc--names-open nil))
                       (grid-calc--deref
                        (grid-calc--eval model (grid-parser-parse (substring raw 1))))))
              (rows (if (grid-calc-array-p value) (grid-calc-array-rows value) 1))

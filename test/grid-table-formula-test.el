@@ -1579,6 +1579,16 @@
     (grid-set-raw-value-at one 0 0 "5")
     (should (equal (grid-get-computed-value-at one 1 2) 5))))
 
+;; A name read while another cell computes the same name is not read by
+;; way of itself: each cell reads it afresh.
+(ert-deftest grid-table-formula-name-read-down-a-chain ()
+  (let* ((one (make-default-data-source
+               '("") '(("=Next") ("=Next") ("=Next") ("1"))))
+         (workbook (grid-workbook-create (list (cons "One" one)))))
+    (grid-workbook-set-names workbook '(("Next" . "=One!$A2+1")))
+    (grid-workbook-recalculate workbook t)
+    (should (equal (grid-get-computed-value-at one 0 0) 4))))
+
 (ert-deftest grid-table-formula-names-on-a-lone-sheet-are-saved ()
   (let* ((source (make-default-data-source
                   '("" "") '(("x" "4") ("y" "=Four*2"))))

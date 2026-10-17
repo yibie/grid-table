@@ -292,6 +292,7 @@ PASS is MODEL's state in the recalculation in progress."
               (condition-case err
                   (let* ((grid-calc--depth (1+ grid-calc--depth))
                          (grid-calc--locals nil)
+                         (grid-calc--names-open nil)
                          (cols (grid-data-model-cols model))
                          (row (/ index cols))
                          (col (% index cols))
@@ -422,7 +423,8 @@ counts, and any whose value the old reading changes."
                               (grid-calc-legacy-arrays t)
                               (grid-calc--array-formula nil)
                               (grid-calc--depth (1+ grid-calc--depth))
-                              (grid-calc--locals nil))
+                              (grid-calc--locals nil)
+                              (grid-calc--names-open nil))
                           (grid-calc--eval-formula model ast row col))
                       (error (grid-calc--error-value err))))))))
 
