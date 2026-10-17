@@ -442,8 +442,10 @@ array is one value, as Excel takes them then."
         (t text)))
 
 (defun grid-calc--range-shape (value)
-  "Return (ROWS . COLS) of VALUE, a range or array, counted whole."
-  (grid-calc--table-full-size value))
+  "Return (ROWS . COLS) of VALUE, a range or array, counted whole.
+A whole column counts every row of the sheet, and a whole row every
+column."
+  (grid-calc--count-size value))
 
 (defun grid-calc--criteria-tests (pairs)
   "Return PAIRS, (RANGE . CRITERION), as (RANGE . TEST) and their shape.
@@ -456,25 +458,25 @@ The ranges must be one size."
                   pairs)
           shape)))
 
-(defun grid-calc--criteria-rows (tests shape &optional target)
-  "Return how many rows of SHAPE the ranges of TESTS have on their sheets.
+(defun grid-calc--criteria-extent (tests shape &optional target)
+  "Return (ROWS . COLS) of SHAPE the ranges of TESTS have on their sheets.
 TARGET, a range the matching cells are read from, counts too."
-  (min (car shape)
-       (apply #'max (mapcar (lambda (range) (car (grid-calc--table-size range)))
-                            (cons (or target (caar tests))
-                                  (mapcar #'car tests))))))
+  (let ((sizes (mapcar #'grid-calc--table-size
+                       (cons (or target (caar tests)) (mapcar #'car tests)))))
+    (cons (min (car shape) (apply #'max (mapcar #'car sizes)))
+          (min (cdr shape) (apply #'max (mapcar #'cdr sizes))))))
 
 (defun grid-calc--matching-cells (pairs &optional target)
   "Return the positions, (ROW . COL), meeting every criterion of PAIRS.
 PAIRS is a list of (RANGE . CRITERION); the ranges must be one size.
-Only rows a sheet of theirs or of TARGET, the range the positions are
+Only cells a sheet of theirs or of TARGET, the range the positions are
 read from, has are looked at; past them every cell is blank, which
 `grid-calc--matching-count' counts."
   (pcase-let* ((`(,tests . ,shape) (grid-calc--criteria-tests pairs))
-               (rows (grid-calc--criteria-rows tests shape target))
+               (`(,rows . ,cols) (grid-calc--criteria-extent tests shape target))
                (found nil))
     (dotimes (row rows)
-      (dotimes (col (cdr shape))
+      (dotimes (col cols)
         (when (cl-every (lambda (test)
                           (funcall (cdr test)
                                    (grid-calc--table-at (car test) row col)))
@@ -484,14 +486,15 @@ read from, has are looked at; past them every cell is blank, which
 
 (defun grid-calc--matching-count (pairs)
   "Return how many cells meet every criterion of PAIRS, as COUNTIFS counts.
-The rows past every range's sheet are blank, and count when every
+The cells past every range's sheet are blank, and count when every
 criterion takes a blank cell."
   (pcase-let* ((`(,tests . ,shape) (grid-calc--criteria-tests pairs))
-               (rows (grid-calc--criteria-rows tests shape)))
+               (`(,rows . ,cols) (grid-calc--criteria-extent tests shape))
+               (past (- (* (car shape) (cdr shape)) (* rows cols))))
     (+ (length (grid-calc--matching-cells pairs))
-       (if (and (< rows (car shape))
+       (if (and (> past 0)
                 (cl-every (lambda (test) (funcall (cdr test) :blank)) tests))
-           (* (- (car shape) rows) (cdr shape))
+           past
          0))))
 
 (defun grid-calc--each-criteria (arguments function)
@@ -519,13 +522,15 @@ array, FUNCTION of the pairs with each of them in turn."
            when (numberp value) collect value))
 
 (defun grid-calc--target (range target)
-  "Return TARGET, a range, made as large as RANGE, as SUMIF reads it."
+  "Return TARGET, a range, made as large as RANGE, as SUMIF reads it.
+It takes whole columns or rows where RANGE does."
   (if (and (grid-calc-ref-p target) (grid-calc-ref-p range))
-      (pcase-let ((`(,rows . ,cols) (grid-calc--range-shape range)))
+      (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size range)))
         (grid-calc-ref--make (grid-calc-ref-model target)
                              (grid-calc-ref-top target) (grid-calc-ref-left target)
                              (+ (grid-calc-ref-top target) rows -1)
-                             (+ (grid-calc-ref-left target) cols -1)))
+                             (+ (grid-calc-ref-left target) cols -1)
+                             (grid-calc-ref-whole range)))
     target))
 
 (grid-calc-define sumif ((range values) (criterion values) &optional (sum-range values))

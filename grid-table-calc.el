@@ -1095,10 +1095,13 @@ the value is #N/A."
                                  (grid-calc-array-data array))))
 
 (cl-defstruct (grid-calc-ref (:constructor grid-calc-ref--make
-                                            (model top left bottom right)))
+                                            (model top left bottom right
+                                                   &optional whole)))
   "The cells from TOP and LEFT to BOTTOM and RIGHT of MODEL, inclusive.
-They may reach past the cells MODEL has; those are blank."
-  model top left bottom right)
+They may reach past the cells MODEL has; those are blank.  WHOLE is
+`column' for whole columns, as A:B, and `row' for whole rows, as 2:3:
+they stop at the sheet's cells, but count as reaching its edges."
+  model top left bottom right whole)
 
 (defun grid-calc-ref-rows (ref)
   "Return how many rows REF takes in."
@@ -1777,12 +1780,20 @@ AST names one sheet at most."
            (grid-calc-err "#REF!")))))
     (`(RANGE ,start ,end)
      (pcase-let ((`(,target ,top ,bottom ,left ,right)
-                  (grid-calc--range-bounds model start end)))
+                  (grid-calc--range-bounds model start end))
+                 (whole (grid-calc--range-whole start end)))
        (if (and (<= top bottom) (<= left right))
-           (grid-calc-ref--make target top left bottom right)
+           (grid-calc-ref--make target top left bottom right whole)
          ;; A whole column of a sheet without rows
          (grid-calc-ref--make target top left (max top bottom)
-                              (max left right)))))))
+                              (max left right) whole))))))
+
+(defun grid-calc--range-whole (start-cell-ref-ast end-cell-ref-ast)
+  "Return `column' when a range takes whole columns, `row' for whole rows."
+  (let ((start (grid-calc--reference-coords (cadr start-cell-ref-ast)))
+        (end (grid-calc--reference-coords (cadr end-cell-ref-ast))))
+    (cond ((and start end (null (car start)) (null (car end))) 'column)
+          ((and start end (null (cdr start)) (null (cdr end))) 'row))))
 
 ;;; Structured references, as Table1[[#Headers],[Qty]:[Price]]
 

@@ -43,7 +43,7 @@ count too."
 (grid-calc-define countblank ((range values))
   "How many cells of RANGE are empty or hold empty text."
   :errors t
-  (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size range)))
+  (pcase-let ((`(,rows . ,cols) (grid-calc--count-size range)))
     (let ((filled 0))
       (grid-calc-each-value range
                             (lambda (value _)
@@ -58,19 +58,22 @@ count too."
         ;; Read RANGE once, and count each criterion once, rather than
         ;; for every cell of an array as COUNTIF(B:B,B:B&"") has.
         (pcase-let* ((`(,rows . ,cols) (grid-calc--range-shape range))
-                     (filled (min rows (car (grid-calc--table-size range))))
+                     (`(,on-rows . ,on-cols) (grid-calc--table-size range))
+                     (filled (min rows on-rows))
+                     (filled-cols (min cols on-cols))
+                     (past (- (* rows cols) (* filled filled-cols)))
                      (values (if (grid-calc-ref-p range)
                                  (grid-calc-ref-to-array
-                                  (grid-calc--part range 0 0 filled cols))
+                                  (grid-calc--part range 0 0 filled filled-cols))
                                range))
                      (counts (make-hash-table :test #'equal)))
           (grid-calc-array-map
            (lambda (one)
              (with-memoization (gethash one counts)
                (+ (length (grid-calc--matching-cells (list (cons values one))))
-                  (if (and (< filled rows)
+                  (if (and (> past 0)
                            (funcall (grid-calc-criterion one) :blank))
-                      (* (- rows filled) cols)
+                      past
                     0))))
            criterion))
       (grid-calc--matching-count (list (cons range criterion))))))

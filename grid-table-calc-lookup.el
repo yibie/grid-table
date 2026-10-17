@@ -423,6 +423,16 @@ whole column and COLUMN 0 the whole row.  A range gives a reference."
 (defconst grid-calc--max-rows 1048576 "Rows a sheet may have.")
 (defconst grid-calc--max-cols 16384 "Columns a sheet may have.")
 
+(defun grid-calc--count-size (value)
+  "Return (ROWS . COLS) of VALUE as a function counting its cells sees it.
+Whole columns reach the sheet's last row and whole rows its last column,
+as A:A has 1048576 cells, though the range stops at the sheet's cells."
+  (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size value)))
+    (pcase (and (grid-calc-ref-p value) (grid-calc-ref-whole value))
+      ('column (cons (- grid-calc--max-rows (grid-calc-ref-top value)) cols))
+      ('row (cons rows (- grid-calc--max-cols (grid-calc-ref-left value))))
+      (_ (cons rows cols)))))
+
 (defun grid-calc--checked-ref (model top left bottom right)
   "Return the reference from TOP LEFT to BOTTOM RIGHT of MODEL.
 #REF! when it reaches past a sheet's edges."
@@ -554,12 +564,12 @@ A range of several columns gives each of their numbers."
 (grid-calc-define rows ((value values))
   "How many rows VALUE has.  An error given for VALUE is the answer."
   (if (grid-calc-err-p value) value
-    (car (grid-calc--table-full-size value))))
+    (car (grid-calc--count-size value))))
 
 (grid-calc-define columns ((value values))
   "How many columns VALUE has.  An error given for VALUE is the answer."
   (if (grid-calc-err-p value) value
-    (cdr (grid-calc--table-full-size value))))
+    (cdr (grid-calc--count-size value))))
 
 (grid-calc-define areas ((reference ref))
   "How many areas REFERENCE has, as (A1:B2,D4) has 2."

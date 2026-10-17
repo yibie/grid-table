@@ -1832,6 +1832,19 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
   ;; "=23" takes the text "23" too, but "<>23" leaves out only the number.
   (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"=23\")" "23" "'23") 2))
   (should (= (grid-table-formula-test--eval "=COUNTIF(B1:C1,\"<>23\")" "23" "'23") 1))
+  ;; A whole column has every row of the sheet, and a whole row every
+  ;; column, though the sheet has fewer.
+  (cl-flet ((eval (formula) (grid-table-formula-test--eval formula "x" "1" "")))
+    (should (= (eval "=ROWS(B:B)") 1048576))
+    (should (= (eval "=COLUMNS(1:1)") 16384))
+    (should (= (eval "=COUNTIF(B:B,\"<>x\")") 1048575))
+    (should (= (caar (grid-table-formula-test--values
+                      '(("=COUNTIF(2:2,\"<>x\")") ("x" "1"))))
+               16383))
+    (should (= (eval "=COUNTIFS(B:B,\"\",C:C,\"\")") 1048575))
+    (should (= (eval "=COUNTBLANK(B:B)") 1048575))
+    (should (= (eval "=SUMIF(B:B,\"x\",C:C)") 1))
+    (should (= (eval "=INDEX(COUNTIF(B:B,{\"x\";\"<>x\"}),2)") 1048575)))
   ;; A comparison with nothing to compare with meets no cell.
   (dolist (op '(">" ">=" "<" "<="))
     (should (= (grid-table-formula-test--eval (format "=COUNTIF(B1:D1,\"%s\")" op)
@@ -1846,7 +1859,8 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
     (should (equal (first-value "=SUMPRODUCT((B1:B4<>\"\")/COUNTIF(B1:B4,B1:B4&\"\"))")
                    2))
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),1)") 2))
-    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),2)") 1))
+    ;; B:B reaches the sheet's last row, whose cells are empty.
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),2)") 1048573))
     (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),3)") 0))
     ;; So does each of COUNTIFS's and SUMIFS's.
     (should (equal (first-value "=SUM(COUNTIFS(B1:B4,{\"x\",\"y\"}))") 3))
