@@ -851,6 +851,19 @@ grid is not tied to the file: `grid-table-xlsx-export' writes it back."
   "Return TEXT without the characters that separate records and fields."
   (replace-regexp-in-string "[\x1d\x1e\x1f]" "" text))
 
+(defun grid-table-xlsx--escape-x (text)
+  "Return TEXT as a file keeps it.
+A control character XML can't hold, or a carriage return it would take
+for a line break, is written _xHHHH_, and the _ of text that reads as
+such an escape _x005F_."
+  (replace-regexp-in-string
+   "_\\(x[[:xdigit:]]\\{4\\}_\\)\\|[\x00-\x08\x0b-\x1f\ufffe\uffff]"
+   (lambda (match)
+     (if (> (length match) 1)
+         (concat "_x005F_" (substring match 1))
+       (format "_x%04X_" (aref match 0))))
+   text t t))
+
 (defun grid-table-xlsx--rgb (color)
   "Return COLOR, a name or #RRGGBB, as RRGGBB, or \"\" when unknown."
   (cond
@@ -895,7 +908,7 @@ plain formula."
 RAW is its raw input and STYLE its style.  ARRAY, for an array formula,
 is its record kind, as `grid-table-xlsx--array-kind' gives it."
   (let* ((case-fold-search t)
-         (text (grid-table-xlsx--clean (format "%s" (or raw ""))))
+         (text (format "%s" (or raw "")))
          (kind (cond
                 ;; Text by its apostrophe; a number keeps its kind under
                 ;; the text format, as it does in a spreadsheet.
@@ -913,6 +926,11 @@ is its record kind, as `grid-table-xlsx--array-kind' gives it."
                 ((member text '("TRUE" "FALSE")) "b")
                 ((member text grid-calc-error-values) "e")
                 (t "s"))))
+    ;; Text keeps the characters XML can't hold, and those that separate
+    ;; records and fields here, escaped; the rest loses them.
+    (setq text (if (equal kind "s")
+                   (grid-table-xlsx--escape-x text)
+                 (grid-table-xlsx--clean text)))
     (unless (and (string-empty-p text) (null style) (not (equal kind "t")))
       (mapconcat #'identity
                  (append (list "C" (number-to-string row)

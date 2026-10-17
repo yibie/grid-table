@@ -216,7 +216,8 @@
                     (append (mapcar (lambda (text) (list (concat "'" text) ""))
                                     texts)
                             '(("3" "=SUM(A7:A7)") ("'#N/A" "") ("#N/A" "") ("#SPILL!" "")
-                              ("=\"#N/A\"" "=ISTEXT(A11)") ("=NA()" "=ISERROR(A12)"))))))
+                              ("=\"#N/A\"" "=ISTEXT(A11)") ("=NA()" "=ISERROR(A12)")
+                              ("a\^Ab\rc\x1d" "") ("_x0041_" ""))))))
       (grid-set-style-at source 6 0 '(:format (text)))
       (grid-table-xlsx-write-data-source source file "Texts")
       (let ((back (grid-table-xlsx-create-data-source file "Texts")))
@@ -237,7 +238,11 @@
         (should (equal (grid-get-raw-value-at back 9 0) "#SPILL!"))
         ;; So with what a formula gives.
         (should (equal (grid-get-computed-value-at back 10 1) t))
-        (should (equal (grid-get-computed-value-at back 11 1) t))))))
+        (should (equal (grid-get-computed-value-at back 11 1) t))
+        ;; A control character, which a file keeps escaped, and text
+        ;; that reads as such an escape
+        (should (equal (grid-get-raw-value-at back 12 0) "a\^Ab\rc\x1d"))
+        (should (equal (grid-get-raw-value-at back 13 0) "_x0041_"))))))
 
 (ert-deftest grid-table-xlsx-test-empty-text-is-no-blank ()
   (skip-unless grid-table-xlsx-test--available)

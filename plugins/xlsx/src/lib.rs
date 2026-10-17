@@ -177,16 +177,18 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
                     out.push(')');
                 }
                 CellRawValue::String(_) | CellRawValue::RichText(_) => {
-                    keyword(out, ":cached", &cell.value());
+                    keyword(out, ":cached", &unescape_x(&cell.value()));
                 }
                 _ => {}
             }
         } else {
+            // Text keeps a control character as _xHHHH_.
+            let text = matches!(cell.data_type(), "s" | "str" | "inlineStr");
             let value = cell.value();
-            quote(out, &value);
+            quote(out, &if text { unescape_x(&value) } else { value.to_string() });
             // Text that reads as something else, such as 007 or =A1,
             // must stay text; grid-table decides which text that is.
-            if matches!(cell.data_type(), "s" | "str" | "inlineStr") {
+            if text {
                 keyword(out, ":text", "1");
             }
         }
@@ -772,6 +774,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                             cell.set_error(text);
                         }
                         _ => {
+                            // grid-table gives text with _xHHHH_ escapes already.
                             cell.set_value_string(text);
                         }
                     }
