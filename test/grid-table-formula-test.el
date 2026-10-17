@@ -2154,6 +2154,115 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
                          '(pie))))
       (delete-file file))))
 
+;;;----------------------------------------------------------------------
+;;; ARRAYTOTEXT, VALUETOTEXT and BAHTTEXT
+;;;----------------------------------------------------------------------
+
+(defun grid-table-formula-test--text-row (empty-text)
+  "Return the C..Q values of a row of the text sample; EMPTY-TEXT is I."
+  (list "" "" "0" "1.9" "2.3" "10" "-1" "" empty-text "TRUE"
+        "=#VALUE!" "=#N/A" "=#DIV/0!" "=#NAME?" "=#NULL!" "=#NUM!"
+        "=#REF!"))
+
+(defun grid-table-formula-test--text-model ()
+  "Return a model with the C..Q sample values in rows 3 and 4."
+  (grid-model-create
+   4 17
+   (list (make-list 17 "")
+         (make-list 17 "")
+         (grid-table-formula-test--text-row "1987-08-26")
+         (grid-table-formula-test--text-row "=\"\""))))
+
+(defun grid-table-formula-test--text-call (formula)
+  "Return FORMULA's value in A1 of the C..Q sample model."
+  (let ((model (grid-table-formula-test--text-model)))
+    (grid-model-set-raw-value model 0 0 formula)
+    (grid-model-get-computed-value model 0 0)))
+
+(ert-deftest grid-table-arraytotext-writes-values-as-text ()
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(C3:D4,0)")
+                 "0, 1.9, 0, 1.9"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(G3,0)")
+                 "-1"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(H3:H4,0)")
+                 ", "))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(J3:K3,0)")
+                 "TRUE, #VALUE!"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(C4:D4,2)")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(D3:E4,1)")
+                 "{1.9,2.3;1.9,2.3}"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(E3:E4,1)")
+                 "{2.3;2.3}"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(I4:J4,1)")
+                 "{\"\",TRUE}"))
+  ;; A single blank cell is not an array constant.
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(H4,1)")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(K4:L4,0.9)")
+                 "#VALUE!, #N/A"))
+  (should (equal (grid-table-formula-test--text-call "=ARRAYTOTEXT(C4:Q4,1)")
+                 (concat "{0,1.9,2.3,10,-1,,\"\",TRUE,#VALUE!,#N/A,"
+                         "#DIV/0!,#NAME?,#NULL!,#NUM!,#REF!}")))
+  ;; A range as the format takes its first value, 0 here.
+  (should (equal (grid-table-formula-test--text-call
+                  "=ARRAYTOTEXT(C3:J3,C3:Q3)")
+                 "0, 1.9, 2.3, 10, -1, , 1987-08-26, TRUE")))
+
+(ert-deftest grid-table-valuetotext-writes-one-value-as-text ()
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(1.9,\"0\")")
+                 "1.9"))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(-1,FALSE)")
+                 "-1"))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(\"ciao3\",H3)")
+                 "ciao3"))
+  (should (equal (grid-table-formula-test--text-call
+                  "=VALUETOTEXT(\"1987-08-26\",1)")
+                 "\"1987-08-26\""))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(TRUE,1)")
+                 "TRUE"))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(#N/A,0)")
+                 "#N/A"))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(1,-1)")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(1,\"a\")")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--text-call "=VALUETOTEXT(1,2)")
+                 "#VALUE!")))
+
+(ert-deftest grid-table-bahttext-writes-thai-amounts ()
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(0)")
+                 "ศูนย์บาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(157)")
+                 "หนึ่งร้อยห้าสิบเจ็ดบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(65)")
+                 "หกสิบห้าบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(65.8)")
+                 "หกสิบห้าบาทแปดสิบสตางค์"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(-1)")
+                 "ลบหนึ่งบาทถ้วน"))
+  ;; Tens and units follow the usual Thai rules.
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(11)")
+                 "สิบเอ็ดบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(21)")
+                 "ยี่สิบเอ็ดบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(101)")
+                 "หนึ่งร้อยหนึ่งบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(1000000)")
+                 "หนึ่งล้านบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(1000001)")
+                 "หนึ่งล้านหนึ่งบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(H3)")
+                 "ศูนย์บาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(TRUE)")
+                 "หนึ่งบาทถ้วน"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(\"abc\")")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(#N/A)")
+                 "#N/A"))
+  (should (equal (grid-table-formula-test--text-call "=BAHTTEXT(C3:D4)")
+                 "ศูนย์บาทถ้วน")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

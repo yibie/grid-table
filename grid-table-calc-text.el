@@ -863,6 +863,123 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
          (places (if (> decimals 0) (concat "." (make-string decimals ?0)) "")))
     (grid-calc-format-code rounded (concat (if no-commas "0" "#,##0") places))))
 
+;;;----------------------------------------------------------------------
+;;; Values as text, and Thai amounts
+;;;----------------------------------------------------------------------
+
+(defun grid-calc--optional-ast (ast)
+  "Return AST, or nil when the argument was left out or left empty."
+  (and ast (not (equal ast '(MISSING))) ast))
+
+(defun grid-calc--argument-value (ast)
+  "Return the value AST gives, a range read whole, errors left as values."
+  (let ((value (grid-calc-arg ast 'values)))
+    (if (grid-calc-ref-p value) (grid-calc--deref value) value)))
+
+(defun grid-calc--as-array (value)
+  "Return VALUE as an array, one value being an array of one."
+  (if (grid-calc-array-p value) value
+    (grid-calc-array--make 1 1 (vector value))))
+
+(defun grid-calc--text-format (ast)
+  "Return 0 or 1, the format ARRAYTOTEXT and VALUETOTEXT take from AST."
+  (let ((value (if (grid-calc--optional-ast ast)
+                   (grid-calc--first-of (grid-calc--argument-value ast))
+                 0)))
+    (let ((number (truncate (grid-calc-num value))))
+      (if (memq number '(0 1)) number (grid-calc-raise "#VALUE!")))))
+
+(defun grid-calc--text-value (value strict)
+  "Return VALUE as ARRAYTOTEXT writes it; STRICT quotes text."
+  (cond
+   ((eq value :blank) "")
+   ((grid-calc-err-p value) (grid-calc-err-code value))
+   ((eq value t) "TRUE")
+   ((eq value :false) "FALSE")
+   ((numberp value) (grid-calc-number-text value))
+   ((stringp value)
+    (if strict
+        (concat "\"" (string-replace "\"" "\"\"" value) "\"")
+      value))
+   (t (grid-calc-text value))))
+
+(grid-calc-define arraytotext ((value lazy) &optional (format lazy))
+  "The values of VALUE as text, joined or, with FORMAT 1, as an array constant."
+  (let ((array (grid-calc--as-array (grid-calc--argument-value value)))
+        (strict (eql (grid-calc--text-format format) 1)))
+    (let ((rows (grid-calc-array-rows array))
+          (cols (grid-calc-array-cols array))
+          (data (grid-calc-array-data array)))
+      (when (and strict (= rows 1) (= cols 1) (eq (aref data 0) :blank))
+        (grid-calc-raise "#VALUE!"))
+      (if strict
+          (concat "{"
+                  (mapconcat
+                   (lambda (row)
+                     (mapconcat
+                      (lambda (col)
+                        (grid-calc--text-value
+                         (aref data (+ (* row cols) col)) t))
+                      (number-sequence 0 (1- cols)) ","))
+                   (number-sequence 0 (1- rows)) ";")
+                  "}")
+        (mapconcat (lambda (item) (grid-calc--text-value item nil))
+                   (append data nil) ", ")))))
+
+(grid-calc-define valuetotext ((value lazy) &optional (format lazy))
+  "VALUE as text: numbers generally, text as it is, quoted with FORMAT 1."
+  (let ((value (grid-calc--first-of (grid-calc--argument-value value)))
+        (strict (eql (grid-calc--text-format format) 1)))
+    (grid-calc--text-value value strict)))
+
+(defconst grid-calc--thai-digits
+  ["ศูนย์" "หนึ่ง" "สอง" "สาม" "สี่" "ห้า" "หก" "เจ็ด" "แปด" "เก้า"]
+  "The Thai words for the digits 0 to 9.")
+
+(defun grid-calc--thai-number (number)
+  "Return NUMBER, a whole number from zero, in Thai words."
+  (if (zerop number)
+      (aref grid-calc--thai-digits 0)
+    (let ((text "") (left number))
+      (when (>= left 1000000)
+        (setq text (concat text
+                           (grid-calc--thai-number (/ left 1000000))
+                           "ล้าน")
+              left (% left 1000000)))
+      (dolist (place '((100000 . "แสน") (10000 . "หมื่น")
+                       (1000 . "พัน") (100 . "ร้อย")))
+        (let ((digit (/ left (car place))))
+          (when (> digit 0)
+            (setq text (concat text (aref grid-calc--thai-digits digit)
+                               (cdr place))))
+          (setq left (% left (car place)))))
+      (let ((tens (/ left 10)) (unit (% left 10)))
+        (cond ((= tens 1) (setq text (concat text "สิบ")))
+              ((= tens 2) (setq text (concat text "ยี่สิบ")))
+              ((> tens 2)
+               (setq text (concat text (aref grid-calc--thai-digits tens)
+                                  "สิบ"))))
+        (cond ((= unit 1)
+               (setq text (concat text (if (> tens 0) "เอ็ด" "หนึ่ง"))))
+              ((> unit 1)
+               (setq text (concat text (aref grid-calc--thai-digits unit))))))
+      text)))
+
+(grid-calc-define bahttext ((value lazy))
+  "VALUE as an amount of baht, in Thai words."
+  (let* ((value (grid-calc--first-of (grid-calc--argument-value value)))
+         (number (grid-calc-num value))
+         (negative (< number 0))
+         (satang (round (* (abs number) 100)))
+         (baht (/ satang 100))
+         (rest (% satang 100)))
+    (concat (if negative "ลบ" "")
+            (grid-calc--thai-number baht)
+            "บาท"
+            (if (zerop rest)
+                "ถ้วน"
+              (concat (grid-calc--thai-number rest) "สตางค์")))))
+
 (provide 'grid-table-calc-text)
 
 ;;; grid-table-calc-text.el ends here
