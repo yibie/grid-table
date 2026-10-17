@@ -282,7 +282,7 @@ DOMAIN, a function of the number, makes it #NUM! when it does not hold."
 
 (defun grid-calc--add (numbers)
   "Return the sum of NUMBERS, kept to Excel's 15 digits."
-  (grid-calc--tidy-number (grid-calc--snap (apply #'+ 0 numbers))))
+  (grid-calc--tidy-number (apply #'+ 0 numbers)))
 
 (grid-calc-define sum (&rest (numbers values))
   "The sum of NUMBERS."

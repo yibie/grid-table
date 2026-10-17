@@ -105,8 +105,7 @@ bound; one more holds those above the last."
 (defun grid-calc--mean (numbers)
   "Return the mean of NUMBERS; #DIV/0! when there are none."
   (unless numbers (grid-calc-raise "#DIV/0!"))
-  (grid-calc--tidy-number (grid-calc--snap (/ (float (apply #'+ numbers))
-                                              (length numbers)))))
+  (grid-calc--tidy-number (/ (float (apply #'+ numbers)) (length numbers))))
 
 (defun grid-calc--squares (numbers)
   "Return the sum of the squares of NUMBERS from their mean."

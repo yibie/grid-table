@@ -27,6 +27,14 @@
     (should (equal (grid-table-formula-test--eval (car case) "1" "2" "4")
                    (cdr case)))))
 
+(ert-deftest grid-table-formula-sums-and-means-keep-every-digit ()
+  ;; Excel keeps a whole double, only showing 15 digits: a formula
+  ;; that reads the sum or the mean sees all of it.
+  (should (equal (grid-table-formula-test--eval "=SUM(0.1,0.2)") 0.30000000000000004))
+  (should (equal (grid-table-formula-test--eval "=AVERAGE(1,2,2)*3") 5))
+  (should (eq (grid-table-formula-test--eval "=SUM(0.1,0.2)=0.3") t))
+  (should (equal (grid-table-formula-test--eval "=SUM(0.1,0.2)&\"\"") "0.3")))
+
 (ert-deftest grid-table-formula-unions-hold-every-area ()
   ;; A union in a union adds its areas, duplicates and all; the range
   ;; and intersection operators take in each area of a union.
