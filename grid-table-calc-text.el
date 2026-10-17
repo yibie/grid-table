@@ -83,19 +83,43 @@
   "The characters of codes 128 to 159 in Windows-1252, as Excel on
 Windows has them; nil where it has none, and the code stands for itself.")
 
+(defcustom grid-calc-character-set 'windows-1252
+  "The character set CHAR and CODE number characters by.
+As Excel on the system it runs on: `windows-1252' as on Windows, and
+`mac-roman' as on a Mac, where CHAR(128) is Ä rather than €."
+  :type '(choice (const windows-1252) (const mac-roman))
+  :group 'grid-table)
+
+(defconst grid-calc--mac-roman-apple '((#x0394 . #x2206) (#xE01E . #xF8FF))
+  "Where Excel on a Mac has Apple's character for a Mac Roman code
+rather than Emacs's: the increment sign, and the Apple logo.")
+
 (grid-calc-define char ((code integer))
   "The character whose code is CODE, 1 to 255."
   (unless (<= 1 code 255) (grid-calc-raise "#VALUE!"))
-  (string (or (and (<= 128 code 159)
-                   (aref grid-calc--windows-1252 (- code 128)))
-              code)))
+  (cond ((< code 128) (string code))
+        ((eq grid-calc-character-set 'mac-roman)
+         (let ((char (aref (decode-coding-string (unibyte-string code)
+                                                 'mac-roman)
+                           0)))
+           (string (or (cdr (assq char grid-calc--mac-roman-apple)) char))))
+        (t (string (or (and (<= code 159)
+                            (aref grid-calc--windows-1252 (- code 128)))
+                       code)))))
 
 (grid-calc-define code ((text text))
   "The code of the first character of TEXT, as CHAR has it."
   (when (string-empty-p text) (grid-calc-raise "#VALUE!"))
-  (let* ((char (aref text 0))
-         (at (seq-position grid-calc--windows-1252 char)))
-    (if at (+ 128 at) char)))
+  (let ((char (aref text 0)))
+    (if (eq grid-calc-character-set 'mac-roman)
+        (let* ((char (or (car (rassq char grid-calc--mac-roman-apple)) char))
+               (bytes (and (>= char 128)
+                           (encode-coding-string (string char) 'mac-roman))))
+          (if (and bytes (= (length bytes) 1) (>= (aref bytes 0) 128))
+              (aref bytes 0)
+            char))
+      (let ((at (seq-position grid-calc--windows-1252 char)))
+        (if at (+ 128 at) char)))))
 
 (grid-calc-define unichar ((code integer))
   "The character whose Unicode code point is CODE."

@@ -3163,6 +3163,18 @@ Excel's values for."
   (should (equal (grid-table-formula-test--eval "=ABS(B1)" "FALSE") 0))
   (should (equal (grid-table-formula-test--eval "=DELTA(B1)" "0") 1)))
 
+(ert-deftest grid-table-formula-char-numbers-as-the-system-does ()
+  ;; CHAR and CODE follow Windows-1252, or Mac Roman as Excel on a Mac.
+  (dolist (case '(("=CHAR(128)" . "€") ("=CODE(\"€\")" . 128)
+                  ("=CHAR(65)" . "A")))
+    (grid-table-formula-test--should-be case))
+  (let ((grid-calc-character-set 'mac-roman))
+    (dolist (case '(("=CHAR(128)" . "Ä") ("=CHAR(160)" . "†")
+                    ("=CHAR(198)" . "∆") ("=UNICODE(CHAR(240))" . #xF8FF)
+                    ("=CODE(\"Ä\")" . 128) ("=CODE(\"∆\")" . 198)
+                    ("=CODE(\"€\")" . 219) ("=CHAR(65)" . "A")))
+      (grid-table-formula-test--should-be case))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

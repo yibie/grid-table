@@ -7,7 +7,9 @@
 # is skipped unless FRESH=1, which empties RESULTS-DIR first.  A workbook
 # whose Emacs crashed or ran out of time still gets a record.  A workbook
 # whose name matches the regexp CORPUS_DAY_FIRST, by default those of the
-# formulas project, reads text dates with the day before the month.
+# formulas project, reads text dates with the day before the month, and
+# one matching CORPUS_MAC, by default those too, numbers characters as
+# Excel on a Mac does.
 #
 # run.sh --one RESULTS-DIR WORKBOOK runs a single workbook.
 #
@@ -21,8 +23,8 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 : "${EMACS:=emacs}" "${JOBS:=8}" "${LIMIT:=120}" "${FRESH:=0}"
-: "${CORPUS_DAY_FIRST=/formulas/}"
-export EMACS JOBS LIMIT CORPUS_DAY_FIRST
+: "${CORPUS_DAY_FIRST=/formulas/}" "${CORPUS_MAC=/formulas/}"
+export EMACS JOBS LIMIT CORPUS_DAY_FIRST CORPUS_MAC
 
 limit() {
   if command -v timeout >/dev/null; then timeout -k 5 "$LIMIT" "$@"

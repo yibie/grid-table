@@ -24,6 +24,7 @@
 (require 'grid-table-xlsx)
 
 (defvar grid-calc-date-order)
+(defvar grid-calc-character-set)
 
 (defconst grid-table-corpus-features
   '(values styles merges conditionals charts widths frozen hidden validations)
@@ -450,18 +451,26 @@ RECORD is a JSON file of what was found."
       (with-temp-file record
         (insert (json-encode grid-table-corpus--record))))))
 
+(defun grid-table-corpus--matches (variable file)
+  "Return non-nil when FILE matches the regexp in the environment VARIABLE."
+  (let ((regexp (getenv variable)))
+    (and regexp (not (string-empty-p regexp)) (string-match-p regexp file))))
+
 (defun grid-table-corpus-run-file ()
   "Run `grid-table-corpus-run' on the workbook and record named on the command line.
 A workbook whose name matches the regexp in CORPUS_DAY_FIRST was
-calculated where text dates name the day before the month."
+calculated where text dates name the day before the month, and one
+matching CORPUS_MAC by Excel on a Mac, whose CHAR is Mac Roman."
   (let* ((file (pop command-line-args-left))
          (record (pop command-line-args-left))
-         (day-first (getenv "CORPUS_DAY_FIRST"))
          (grid-calc-date-order
-          (if (and day-first (not (string-empty-p day-first))
-                   (string-match-p day-first file))
+          (if (grid-table-corpus--matches "CORPUS_DAY_FIRST" file)
               'day-month-year
-            grid-calc-date-order)))
+            grid-calc-date-order))
+         (grid-calc-character-set
+          (if (grid-table-corpus--matches "CORPUS_MAC" file)
+              'mac-roman
+            grid-calc-character-set)))
     (grid-table-corpus-run file record)))
 
 ;;;----------------------------------------------------------------------
