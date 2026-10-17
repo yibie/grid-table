@@ -2536,41 +2536,48 @@ Several values for one value make the result several values too."
                                            (not (and errors
                                                      (string-suffix-p
                                                       "X" class)))))))))))
-    (cl-flet ((run (values)
-                (or (cl-loop for value in values
-                             for stop in stops
-                             thereis (and stop (grid-calc-err-p value) value))
-                    (grid-calc--catching
-                      (let ((grid-calc--model model)
-                            (grid-calc--lazy-model model))
-                        (apply (grid-calc-function-body function)
-                               (cl-mapcar
-                                (lambda (value kind one)
-                                  (cond
-                                   ((eq value 'grid-calc--omitted) nil)
-                                   ((and one (not (grid-calc-err-p value)))
-                                    (grid-calc--coerce value kind))
-                                   ((and (eq kind 'ref) (grid-calc-err-p value)
-                                         (not errors))
-                                    (grid-calc-raise (grid-calc-err-code value)))
-                                   (t value)))
-                                values kinds scalar)))))))
-      (if (cl-loop for value in values
-                   for one in scalar
-                   thereis (and one (grid-calc-array-p value)))
-          ;; Several values where the function takes one
-          (let ((positions (cl-loop for value in values
-                                    for one in scalar
-                                    collect (and one (grid-calc-array-p value)))))
-            (grid-calc--broadcast
-             (lambda (&rest elements)
-               (run (cl-loop for value in values
-                             for lifted in positions
-                             collect (if lifted (pop elements) value))))
-             (cl-loop for value in values
-                      for lifted in positions
-                      when lifted collect value)))
-        (run values)))))
+    (if (cl-loop for value in values
+                 for one in scalar
+                 thereis (and one (grid-calc-array-p value)))
+        ;; Several values where the function takes one
+        (let ((positions (cl-loop for value in values
+                                  for one in scalar
+                                  collect (and one (grid-calc-array-p value)))))
+          (grid-calc--broadcast
+           (lambda (&rest elements)
+             (grid-calc--apply-once
+              function model kinds scalar stops errors
+              (cl-loop for value in values
+                       for lifted in positions
+                       collect (if lifted (pop elements) value))))
+           (cl-loop for value in values
+                    for lifted in positions
+                    when lifted collect value)))
+      (grid-calc--apply-once function model kinds scalar stops errors
+                             values))))
+
+(defun grid-calc--apply-once (function model kinds scalar stops errors values)
+  "Run FUNCTION once on VALUES, for `grid-calc--apply'.
+KINDS, SCALAR, STOPS and ERRORS are as that function works them out."
+  (or (cl-loop for value in values
+               for stop in stops
+               thereis (and stop (grid-calc-err-p value) value))
+      (grid-calc--catching
+        (let ((grid-calc--model model)
+              (grid-calc--lazy-model model))
+          (apply (grid-calc-function-body function)
+                 (cl-loop for value in values
+                          for kind in kinds
+                          for one in scalar
+                          collect
+                          (cond
+                           ((eq value 'grid-calc--omitted) nil)
+                           ((and one (not (grid-calc-err-p value)))
+                            (grid-calc--coerce value kind))
+                           ((and (eq kind 'ref) (grid-calc-err-p value)
+                                 (not errors))
+                            (grid-calc-raise (grid-calc-err-code value)))
+                           (t value))))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Functions defined the earlier way
