@@ -251,6 +251,22 @@
     (should (equal (grid-model-get-computed-value a 0 0) "#CYCLE!"))
     (should (equal (grid-model-get-computed-value b 0 0) "#CYCLE!"))))
 
+(ert-deftest grid-table-formula-cell-names-the-file-and-sheet ()
+  ;; CELL("filename") names a workbook's file and sheet once it has a
+  ;; file, as Excel does once a workbook is saved; !A1 is A1 on the
+  ;; sheet the formula is worked out on, as a name may say.
+  (should (equal (grid-parser-parse "CELL(\"filename\",!A1)")
+                 '(FUNCTION-CALL "CELL" ((STRING "filename") (CELL-REF "A1")))))
+  (let* ((one (make-default-data-source '("") '(("=CELL(\"filename\",A1)"))))
+         (two (make-default-data-source
+               '("") '(("=MID(CELL(\"filename\"),FIND(\"]\",CELL(\"filename\"))+1,99)"))))
+         (workbook (grid-workbook-create (list (cons "One" one) (cons "Two" two)))))
+    (should (equal (grid-get-computed-value-at one 0 0) ""))
+    (setf (grid-workbook-file workbook) "/data/Book.xlsx")
+    (grid-workbook-recalculate workbook t)
+    (should (equal (grid-get-computed-value-at one 0 0) "/data/[Book.xlsx]One"))
+    (should (equal (grid-get-computed-value-at two 0 0) "Two"))))
+
 (ert-deftest grid-table-formula-rewrites-respect-sheets ()
   (should (equal (grid-calc-shift-formula
                   "=Sheet2!A1+'My Sheet'!$B$2+销售!C3:D4" 1 1)

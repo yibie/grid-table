@@ -224,8 +224,9 @@ the sheet as SHEET!NAME, finds such a name before one of the workbook.
 TABLES holds the tables a workbook file has, for references such as
 Table1[Qty]: each is (NAME SHEET TOP LEFT BOTTOM RIGHT HEADERS TOTALS
 COLUMNS), as `grid-calc-tables' describes.  DATE-SYSTEM is 1904 when
-its dates count from 1904, as `grid-format-date-system' says."
-  sheets names local-names tables date-system)
+its dates count from 1904, as `grid-format-date-system' says.  FILE is
+the file it was read from, or nil, for CELL(\"filename\")."
+  sheets names local-names tables date-system file)
 
 (defvar grid-workbook--parsed-names (make-hash-table :test 'equal)
   "Definitions of names already parsed, from their text.")
@@ -389,6 +390,16 @@ Called with :names, it returns the names of the sheets in order."
       (when-let* ((source (grid-workbook-sheet workbook name)))
         (gethash :model source)))))
 
+(defun grid-workbook--file-name-resolver (workbook)
+  "Return the function that names the file and sheet of a model of WORKBOOK.
+See `grid-calc-file-name'."
+  (lambda (model)
+    (when-let* ((file (grid-workbook-file workbook))
+                (source (cl-find model (grid-workbook-sheets workbook)
+                                 :key (lambda (source) (gethash :model source)))))
+      (concat (file-name-directory file) "[" (file-name-nondirectory file) "]"
+              (grid-workbook-sheet-name source)))))
+
 (defvar grid-workbook-holding nil
   "Non-nil while a run of changes holds back recalculation.
 `grid-workbook-recalculate' then only notes that it was asked, and
@@ -439,6 +450,7 @@ non-nil, as it has to be when the sheets themselves changed."
   (let ((grid-calc-sheets (grid-workbook--resolver workbook))
         (grid-calc-names (grid-workbook--names-resolver workbook))
         (grid-calc-tables (grid-workbook--tables-resolver workbook))
+        (grid-calc-file-name (grid-workbook--file-name-resolver workbook))
         (grid-format-date-system (grid-workbook-date-system-of workbook))
         (grid-calc-defer nil))
     (grid-table-calc-evaluate-models (grid-workbook--models workbook)

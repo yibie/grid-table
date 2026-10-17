@@ -538,7 +538,10 @@ v anything else) or \"filename\"."
       ("type" (let ((value (grid-calc-ref-cell reference 0 0)))
                 (cond ((grid-calc-blank-p value) "b") ((stringp value) "l")
                       (t "v"))))
-      ("filename" "")
+      ("filename" (or (and grid-calc-file-name
+                           (funcall grid-calc-file-name
+                                    (grid-calc-ref-model reference)))
+                      ""))
       (_ (grid-calc-err "#VALUE!")))))
 
 (grid-calc-define hyperlink ((link any) &optional (label any))

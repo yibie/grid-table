@@ -253,6 +253,16 @@ token; elsewhere it separates tokens and is dropped."
                   (push (list 'NAME-REF (upcase (cdr word)) (cdr prefix)) tokens)
                   (setq pos (car word))))))))
 
+         ;; !A1 is A1 on the sheet the formula is worked out on, as a
+         ;; name may say: CELL("filename",!A1)
+         ((and (eq char ?!) (< (1+ pos) len)
+               (when-let* ((reference (grid-parser--reference-end
+                                       formula-str (1+ pos))))
+                 (push (grid-parser-make-token grid-parser-token-type-cell-ref
+                                               (cdr reference))
+                       tokens)
+                 (setq pos (car reference)))))
+
          ;; A reference: A1, $A$1, A1:B5, A:C or 2:5
          ((and (or (grid-parser--name-start-p char) (and (>= char ?0) (<= char ?9)))
                (when-let* ((reference (grid-parser--reference-end formula-str pos)))

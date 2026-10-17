@@ -65,6 +65,13 @@ A definition is a formula, most often a cell or range reference such as
 Sheet1!$B$2:$B$9.  Bound by whoever keeps the names; without it every
 name is #NAME?.")
 
+(defvar grid-calc-file-name nil
+  "Function that returns where the sheet of a MODEL is, or nil.
+It names the workbook's file and the sheet as Excel's CELL(\"filename\")
+does: /dir/[Book.xlsx]Sheet1.  Bound by whoever keeps the sheets of a
+workbook read from a file; without it CELL(\"filename\") is empty text,
+as in a workbook never saved.")
+
 (defvar grid-calc-tables nil
   "Function that finds a table, as a reference such as Table1[Qty] names.
 Called with a table NAME, or with nil and the MODEL, ROW and COL of a

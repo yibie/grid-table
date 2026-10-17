@@ -508,7 +508,9 @@ belong to one sheet, and names grid-table cannot take, are left out."
   "Give WORKBOOK the names defined in the xlsx FILE it was read from.
 A name that belongs to one sheet is kept with that sheet, and the tables
 of its sheets are kept for the formulas that name them; both are read,
-not written, as the file keeps them."
+not written, as the file keeps them.  WORKBOOK keeps FILE too, which
+CELL(\"filename\") names."
+  (setf (grid-workbook-file workbook) (expand-file-name file))
   (let (global local tables)
     (pcase-dolist (`(,name ,definition ,sheet) (grid-table-xlsx--all-names file))
       (if sheet
