@@ -373,12 +373,41 @@ A sheet that does not open is recorded."
       (grid-table-corpus--note :sheet-errors (vconcat (nreverse failed))))
     (nreverse opened)))
 
+(defun grid-table-corpus--zip-entry (file entry)
+  "Return the text of ENTRY in the zip FILE, or nil when it has none."
+  (with-temp-buffer
+    (and (eql 0 (ignore-errors
+                  (call-process "unzip" nil t nil "-p" file entry)))
+         (> (buffer-size) 0)
+         (buffer-string))))
+
+(defun grid-table-corpus--writer (file)
+  "Return what last saved the workbook FILE: \"Excel\", or the application
+it names.  Only Excel writes a calculation chain, and a file that asks
+for every formula to be computed when opened, as libraries writing
+Excel's name in it do, has values no one computed."
+  (let ((app (or (when-let* ((text (grid-table-corpus--zip-entry
+                                    file "docProps/app.xml")))
+                   (and (string-match "<Application>\\([^<]*\\)</Application>"
+                                      text)
+                        (match-string 1 text)))
+                 "unknown")))
+    (if (and (string-match-p "\\`Microsoft.*Excel" app)
+             (grid-table-corpus--zip-entry file "xl/calcChain.xml")
+             (not (string-match-p "fullCalcOnLoad=\"\\(?:1\\|true\\)\""
+                                  (or (grid-table-corpus--zip-entry
+                                       file "xl/workbook.xml")
+                                      ""))))
+        "Excel"
+      app)))
+
 (defun grid-table-corpus-run (file record)
   "Open the workbook FILE, write it, open it again, and write RECORD.
 RECORD is a JSON file of what was found."
   (setq file (expand-file-name file)
         grid-table-corpus--record nil)
   (grid-table-corpus--note :file file)
+  (grid-table-corpus--note :writer (grid-table-corpus--writer file))
   (let ((copy (make-temp-file "grid-table-corpus-" nil ".xlsx")))
     (delete-file copy)
     (unwind-protect
@@ -472,9 +501,9 @@ RECORD is a JSON file of what was found."
     (maphash (lambda (key count) (push (cons key count) items)) table)
     (sort items (lambda (a b) (> (cdr a) (cdr b))))))
 
-(defun grid-table-corpus--formula-report (records corpus)
+(defun grid-table-corpus--formula-report (records corpus title)
   "Return the part of the report on how the formulas of RECORDS came out.
-CORPUS is the directory the workbooks are in."
+CORPUS is the directory the workbooks are in; TITLE heads the part."
   (let ((functions (make-hash-table :test 'equal))
         (files (make-hash-table :test 'equal))
         (samples (make-hash-table :test 'equal))
@@ -509,7 +538,8 @@ CORPUS is the directory the workbooks are in."
         (cl-incf agree (aref counts 0))
         (cl-incf checked (cl-reduce #'+ counts)))
       (with-temp-buffer
-        (insert (format "\n== Formulas against the values their workbooks hold ==\n%d formulas: %d without a value, %d that change by themselves\n"
+        (insert (format "\n== %s ==\n%d workbooks, %d formulas: %d without a value, %d that change by themselves\n"
+                        title (length records)
                         (aref totals 0) (aref totals 1) (aref totals 2)))
         (insert (format "calls checked %d, agreeing %d (%.1f%%)\n"
                         checked agree (if (> checked 0) (/ (* 100.0 agree) checked) 0)))
@@ -595,7 +625,15 @@ CORPUS is the directory the workbooks are in."
                           (truncate-string-to-width
                            (mapconcat (lambda (x) (format "%S" x)) (cdr sample) " ")
                            200)))))
-      (insert (grid-table-corpus--formula-report records corpus))
+      (insert (grid-table-corpus--formula-report
+               records corpus "Formulas against the values their workbooks hold"))
+      ;; Values Excel computed are its answers; those of other writers
+      ;; may be their own, or none.
+      (insert (grid-table-corpus--formula-report
+               (cl-remove-if-not (lambda (record)
+                                   (equal (alist-get 'writer record) "Excel"))
+                                 records)
+               corpus "The same, in the workbooks Excel saved"))
       (insert "\n== Slowest ==\n")
       (dolist (entry (last (sort (delq nil
                                        (mapcar
