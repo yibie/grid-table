@@ -2408,6 +2408,12 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval "=XMATCH(\"b*\",{\"a\",\"bc\"},2)")
                  2)))
 
+(ert-deftest grid-table-formula-xmatch-wants-one-row-or-column ()
+  (should (equal (grid-table-formula-test--eval "=XMATCH(2,{1,2;3,4})") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=XLOOKUP(2,{1,2;3,4},{1,2;3,4})")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=MATCH(2,{1,2;3,4},0)") "#N/A")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -328,6 +328,13 @@ MODE and SEARCH are their match_mode and search_mode; SOURCE is as
       (2 (grid-calc--find-exact wanted length getter from-end t source))
       (_ (grid-calc--find-nearest wanted length getter mode from-end)))))
 
+(defun grid-calc--x-line-of (value)
+  "Return (LENGTH . GETTER) for VALUE as XMATCH and XLOOKUP read it.
+As `grid-calc--line-of', but several rows and columns are #VALUE!."
+  (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size value)))
+    (when (and (> rows 1) (> cols 1)) (grid-calc-raise "#VALUE!")))
+  (grid-calc--line-of value))
+
 (grid-calc-define xmatch ((wanted any) (values values)
                           &optional (mode integer 0) (search integer 1))
   "The position of WANTED in VALUES, counted from 1; #N/A when not found.
@@ -335,7 +342,7 @@ MODE 0 matches exactly, -1 takes the next smaller value too, 1 the next
 larger, 2 matches text with wildcards.  SEARCH 1 starts at the first
 value, -1 at the last."
   :empty t
-  (pcase-let ((`(,length . ,getter) (grid-calc--line-of values)))
+  (pcase-let ((`(,length . ,getter) (grid-calc--x-line-of values)))
     (let ((found (grid-calc--xfind wanted length getter mode search
                                    (cons values 'line))))
       (if found (1+ found) (grid-calc-err "#N/A")))))
@@ -403,7 +410,7 @@ VALUES is one row or column; RESULTS as tall gives that row of it, as
 wide that column.  MISSING is given when nothing matches, else #N/A.
 MODE and SEARCH are as XMATCH's."
   :empty t
-  (pcase-let ((`(,length . ,getter) (grid-calc--line-of values))
+  (pcase-let ((`(,length . ,getter) (grid-calc--x-line-of values))
               (`(,r-rows . ,r-cols) (grid-calc--table-full-size results))
               (`(,v-rows . ,_) (grid-calc--table-full-size values)))
     (let ((down (> v-rows 1))
