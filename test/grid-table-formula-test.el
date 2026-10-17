@@ -773,6 +773,15 @@
     (should (equal (funcall value "=\" 2024-01-10 \"+1") "#VALUE!"))
     (should (equal (funcall value "=\"2024-01-10\"+1") 45302))
     (should (equal (funcall value "=DATEVALUE(\" 2024-01-10 \")") 45301))
+    ;; Text such as 1/2/2024 names the month first, or the day first
+    ;; where the region writes it so.
+    (should (equal (funcall value "=DATEVALUE(\"1/2/2024\")") 45293))
+    (should (equal (funcall value "=DATEVALUE(\"15/1/2024\")") "#VALUE!"))
+    (let ((grid-calc-date-order 'day-month-year))
+      (should (equal (funcall value "=DATEVALUE(\"1/2/2024\")") 45323))
+      (should (equal (funcall value "=DATEVALUE(\"15/1/2024\")") 45306))
+      (should (equal (funcall value "=DATEVALUE(\"29/02/1900\")") 60))
+      (should (equal (funcall value "=DATEVALUE(\"2024-01-15\")") 45306)))
     ;; CHAR reads codes past 127 as Windows-1252 does.
     (should (equal (funcall value "=CHAR(65)") "A"))
     (should (equal (funcall value "=CHAR(128)") "€"))

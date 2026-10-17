@@ -1414,6 +1414,14 @@ As 13:30, 1:30 PM, 13:30:15.5 or 1 PM."
           (when (and (< hour 24) (< minute 60) (< second 60))
             (/ (+ (* hour 3600) (* minute 60) second) 86400.0)))))))
 
+(defcustom grid-calc-date-order 'month-day-year
+  "The order text such as 1/2/2024 names the day and the month in.
+As Excel follows the region it runs in: `month-day-year' reads it as
+2 January, the way the United States writes it, and `day-month-year'
+as 1 February, the way most of the rest of the world does."
+  :type '(choice (const month-day-year) (const day-month-year))
+  :group 'grid-table)
+
 (defun grid-calc--year (text)
   "Return the year written as TEXT, two digits being 1930 to 2029."
   (let ((year (string-to-number text)))
@@ -1424,9 +1432,10 @@ As 13:30, 1:30 PM, 13:30:15.5 or 1 PM."
 (defun grid-calc--parse-day (text)
   "Return the serial number of the date TEXT names, or nil.
 As 2024-03-15, 2024/3/15, 3/15/2024, 15-Mar-2024, Mar 15, 2024 or
-March 2024."
+March 2024; `grid-calc-date-order' says which of 3/15 is the month."
   (let ((case-fold-search t)
-        (month-regexp "\\([a-z]\\{3\\}\\)[a-z]*\\.?"))
+        (month-regexp "\\([a-z]\\{3\\}\\)[a-z]*\\.?")
+        (month-first (if (eq grid-calc-date-order 'day-month-year) 2 1)))
     (cl-flet ((date (year month day)
                 (when (and (<= 1 month 12) (<= 1 day 31) (<= 1900 year 9999)
                            (<= day (nth 2 (grid-calc-serial-date
@@ -1441,12 +1450,12 @@ March 2024."
               (string-to-number (match-string 3 text))))
        ((string-match "\\`\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{2\\}\\|[0-9]\\{4\\}\\)\\'" text)
         (date (grid-calc--year (match-string 3 text))
-              (string-to-number (match-string 1 text))
-              (string-to-number (match-string 2 text))))
+              (string-to-number (match-string month-first text))
+              (string-to-number (match-string (- 3 month-first) text))))
        ((string-match "\\`\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{1,2\\}\\)\\'" text)
         (date (nth 5 (decode-time))
-              (string-to-number (match-string 1 text))
-              (string-to-number (match-string 2 text))))
+              (string-to-number (match-string month-first text))
+              (string-to-number (match-string (- 3 month-first) text))))
        ((string-match (concat "\\`\\([0-9]\\{1,2\\}\\)[- ]" month-regexp
                               "\\(?:[- ,]+\\([0-9]\\{2\\}\\|[0-9]\\{4\\}\\)\\)?\\'")
                       text)
