@@ -2881,6 +2881,26 @@ given.  The cases come from IronCalc's workbooks."
     (should (equal (grid-get-computed-value-at one 0 0) 8))
     (grid-set-raw-value-at one 0 1 "5")
     (should (equal (grid-get-computed-value-at one 0 0) 10))))
+(ert-deftest grid-table-formula-lambda-helpers-as-excel-has-them ()
+  "BYROW, BYCOL, MAP, REDUCE, SCAN and MAKEARRAY call a LAMBDA, or a
+built-in function named alone, as Excel does.  The cases come from
+IronCalc's and the formulas package's workbooks."
+  (dolist (case '(("=INDEX(BYROW({1,2;3,4},LAMBDA(x,SUM(x))),2)" 7)
+                  ("=INDEX(BYCOL({1,2;3,4},SUM),2)" 6)
+                  ("=INDEX(BYROW({1,2;3,4},LAMBDA(x,x)),1)" "#CALC!")
+                  ("=INDEX(MAP({1,2;3,4},{5,6;7,8},LAMBDA(x,y,x*y)),2,2)" 32)
+                  ("=MAP({1,2},LAMBDA(a,a+1),LAMBDA(b,b+3))" "#VALUE!")
+                  ("=REDUCE(,{3,4},LAMBDA(a,b,SQRT(a*a+b*b)))" 5)
+                  ("=REDUCE(1,{1,2,3},LAMBDA(a,b,a+b^2))" 15)
+                  ("=INDEX(SCAN(1,{1,2;3,4},LAMBDA(a,b,a+b)),2,1)" 7)
+                  ("=INDEX(SCAN(\"x\",{1,2},LAMBDA(a,b,a&b)),2)" "x12")
+                  ("=INDEX(MAKEARRAY(2,3,LAMBDA(r,c,r*10+c)),2,3)" 23)
+                  ("=MAKEARRAY(TRUE,1,LAMBDA(r,c,r+c))" 2)
+                  ("=MAKEARRAY(\"1\",1,LAMBDA(r,c,r+c))" "#VALUE!")
+                  ("=MAKEARRAY(0,1,LAMBDA(r,c,r+c))" "#VALUE!")
+                  ("=TYPE(LAMBDA(x,x))" 128)))
+    (should (equal (list (car case) (grid-table-formula-test--eval (car case)))
+                   case))))
 
 (ert-deftest grid-table-formula-finance-finds-coupons-and-accrual ()
   "COUP*, ACCRINT and ACCRINTM as Excel has them.

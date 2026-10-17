@@ -133,6 +133,128 @@ LAMBDA(x,x+1)(5) is 6."
         (eq (cdr (assoc (upcase (cadr name)) grid-calc--locals))
             'grid-calc--omitted))))
 
+(defun grid-calc--function-argument (ast)
+  "Return the function the lazy argument AST gives, a `grid-calc-lambda'.
+A built-in function's name alone is that function, as SUM is in
+BYROW(A1:B2,SUM).  Anything else is #VALUE!."
+  (let ((value (pcase ast
+                 ((and `(NAME ,name)
+                       (guard (not (assoc (upcase name) grid-calc--locals)))
+                       (guard (not (grid-calc--name-ast name)))
+                       (guard (gethash (upcase name) grid-calc-functions)))
+                  (grid-calc-lambda--make :function (upcase name)))
+                 (_ (grid-calc-arg ast 'values)))))
+    (cond ((grid-calc-lambda-p value) value)
+          ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+          (t (grid-calc-raise "#VALUE!")))))
+
+(defun grid-calc--one-result (value)
+  "Return VALUE, what a LAMBDA gave, as one value of an array.
+Several values in one place are #CALC!."
+  (let ((value (grid-calc--deref value)))
+    (cond ((not (grid-calc-array-p value)) value)
+          ((and (= (grid-calc-array-rows value) 1)
+                (= (grid-calc-array-cols value) 1))
+           (grid-calc-aref value 0 0))
+          (t (grid-calc-err "#CALC!")))))
+
+(defun grid-calc--call-each (function &rest values)
+  "Return one value of what FUNCTION gives for VALUES, or the error."
+  (grid-calc--one-result
+   (grid-calc--catching (grid-calc-apply-lambda function values))))
+
+(defun grid-calc--by-lines (array function across)
+  "Return what FUNCTION gives for each row of ARRAY, or with ACROSS each
+column, as BYROW and BYCOL do."
+  (let* ((rows (grid-calc-array-rows array))
+         (cols (grid-calc-array-cols array))
+         (count (if across cols rows))
+         (results (vconcat
+                   (cl-loop for index below count collect
+                            (grid-calc--call-each
+                             function
+                             (if across
+                                 (grid-calc-array rows 1 (lambda (row _)
+                                                           (grid-calc-aref array row index)))
+                               (grid-calc-array 1 cols (lambda (_ col)
+                                                         (grid-calc-aref array index col)))))))))
+    (if across
+        (grid-calc-array 1 count (lambda (_ col) (aref results col)))
+      (grid-calc-array count 1 (lambda (row _) (aref results row))))))
+
+(grid-calc-define byrow ((array array) (function lazy))
+  "What FUNCTION gives for each row of ARRAY, one value a row."
+  (grid-calc--by-lines array (grid-calc--function-argument function) nil))
+
+(grid-calc-define bycol ((array array) (function lazy))
+  "What FUNCTION gives for each column of ARRAY, one value a column."
+  (grid-calc--by-lines array (grid-calc--function-argument function) t))
+
+(grid-calc-define map (&rest (parts lazy))
+  "What the last of PARTS, a function, gives for the values in the same
+place of each array before it."
+  (when (< (length parts) 2) (grid-calc-raise "#VALUE!"))
+  (let* ((function (grid-calc--function-argument (car (last parts))))
+         (arrays (mapcar (lambda (part)
+                           (let ((value (grid-calc--deref (grid-calc-arg part 'values))))
+                             (cond ((grid-calc-lambda-p value) (grid-calc-raise "#VALUE!"))
+                                   ((grid-calc-array-p value) value)
+                                   (t (grid-calc-array 1 1 (lambda (_ _) value))))))
+                         (butlast parts))))
+    (grid-calc-array (apply #'max (mapcar #'grid-calc-array-rows arrays))
+                     (apply #'max (mapcar #'grid-calc-array-cols arrays))
+                     (lambda (row col)
+                       (apply #'grid-calc--call-each function
+                              (mapcar (lambda (array) (grid-calc-aref array row col))
+                                      arrays))))))
+
+(defun grid-calc--accumulate (initial array function each)
+  "Return the values of folding FUNCTION over ARRAY's values from INITIAL,
+row after row, calling EACH with each new one."
+  (let ((value (if (eq initial 'grid-calc--omitted) 0 initial))
+        (cols (grid-calc-array-cols array)))
+    (dotimes (row (grid-calc-array-rows array))
+      (dotimes (col cols)
+        (setq value (grid-calc--catching
+                      (grid-calc-apply-lambda
+                       function (list value (grid-calc-aref array row col)))))
+        (funcall each row col value)))
+    value))
+
+(grid-calc-define reduce ((initial lazy) (array array) (function lazy))
+  "INITIAL with FUNCTION applied to it and each value of ARRAY in turn,
+the result each time taking its place: REDUCE(0,A1:A3,LAMBDA(a,b,a+b))."
+  (grid-calc--accumulate (grid-calc--lambda-argument initial) array
+                         (grid-calc--function-argument function) #'ignore))
+
+(grid-calc-define scan ((initial lazy) (array array) (function lazy))
+  "Each value REDUCE comes to on its way through ARRAY, in its place."
+  (let ((results (grid-calc-array (grid-calc-array-rows array)
+                                  (grid-calc-array-cols array))))
+    (grid-calc--accumulate
+     (grid-calc--lambda-argument initial) array
+     (grid-calc--function-argument function)
+     (lambda (row col value)
+       (aset (grid-calc-array-data results)
+             (+ (* row (grid-calc-array-cols array)) col)
+             (grid-calc--one-result value))))
+    results))
+
+(grid-calc-define makearray ((rows any) (cols any) (function lazy))
+  "A ROWS by COLS array of what FUNCTION gives for each row and column,
+counting from 1."
+  (let ((function (grid-calc--function-argument function))
+        ;; TRUE is 1, but text is no count.
+        (counts (mapcar (lambda (count)
+                          (let ((count (if (eq count t) 1 count)))
+                            (if (and (numberp count) (>= count 1))
+                                (truncate count)
+                              (grid-calc-raise "#VALUE!"))))
+                        (list rows cols))))
+    (grid-calc-array (car counts) (cadr counts)
+                     (lambda (row col)
+                       (grid-calc--call-each function (1+ row) (1+ col))))))
+
 ;;;----------------------------------------------------------------------
 ;;; Logical functions
 ;;;----------------------------------------------------------------------
@@ -402,10 +524,11 @@ A range gives what its first cell holds."
 
 (grid-calc-define type ((value values))
   "What VALUE is: 1 a number or blank, 2 text, 4 TRUE or FALSE, 16 an
-error value and 64 several values."
+error value, 64 several values and 128 a function, as LAMBDA makes."
   :errors t
   (let ((value (grid-calc--deref value)))
     (cond ((grid-calc-array-p value) 64)
+          ((grid-calc-lambda-p value) 128)
           ((stringp value) 2)
           ((grid-calc-boolean-p value) 4)
           ((grid-calc-err-p value) 16)

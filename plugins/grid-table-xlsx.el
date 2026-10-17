@@ -373,7 +373,7 @@ SINGLE(X) and ANCHORARRAY(A1) read as @X and A1#, as Excel shows them."
      (grid-table-xlsx--outside-strings
       formula
       (lambda (text)
-        (replace-regexp-in-string "_xlfn\\.\\(?:_xlws\\.\\)?\\|_xl\\(?:pm\\|op\\)\\." "" text t t))))))
+        (replace-regexp-in-string "_xlfn\\.\\(?:_xlws\\.\\)?\\|_xl\\(?:pm\\|op\\|eta\\)\\." "" text t t))))))
 
 (defconst grid-table-xlsx--own-formula-regexp
   (concat "\\`=[ \t]*"
