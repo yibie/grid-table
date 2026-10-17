@@ -960,6 +960,34 @@
     (should (equal (mapcar #'car (grid-table-formula-test--values rows))
                    '("mid" "#N/A" "high" "mid" "#N/A" "#REF!")))))
 
+(ert-deftest grid-table-formula-sorted-lookup-halves-as-excel-does ()
+  ;; In values not sorted Excel's search by halves lands where a search
+  ;; from the start does not; these are what Excel gave.
+  (should (equal (grid-table-formula-test--eval
+                  "=LOOKUP(\"DOUBLE\",{\"DOUBLE\",\"BLANK\",\"STRING\",\"REF\",\"AREA\"},{1,2,3,4,5})")
+                 1))
+  (should (equal (car (nth 2 (grid-table-formula-test--values
+                              '(("INTEGRAL" "DOUBLE" "BLANK" "STRING" "REF" "AREA" "")
+                                ("1" "2" "3" "4" "5" "6" "")
+                                ("=HLOOKUP(\"STRING\",A1:G2,2,TRUE)" "" "" "" "" "" "")))))
+                 4))
+  ;; Of equal values the last is taken; none before the first is #N/A.
+  (should (equal (grid-table-formula-test--eval "=MATCH(5,{1,5,5,5,9},1)") 4))
+  (should (equal (grid-table-formula-test--eval "=MATCH(0,{1,5,9},1)") "#N/A"))
+  ;; Blanks below the values are passed over.
+  (should (equal (nth 2 (grid-table-formula-test--values
+                         '(("1" "3" "5" "" "")
+                           ("a" "b" "c" "" "")
+                           ("=HLOOKUP(4,A1:E2,2)" "=MATCH(9,A1:E1)" "" "" ""))))
+                 '("b" 3 "" "" "")))
+  ;; XLOOKUP's search by halves orders numbers before text.
+  (should (equal (grid-table-formula-test--eval
+                  "=XLOOKUP(46523,{9700;\"xyz\";\"xyz\";160726;204100;510300},{0.1;0.22;0.24;0.32;0.35;0.37},0,1,2)")
+                 0.22))
+  (should (equal (grid-table-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},0,1,-2)") 2))
+  (should (equal (grid-table-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},0,-1,-2)") 3))
+  (should (equal (grid-table-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},\"none\",0,-2)") "none")))
+
 (ert-deftest grid-table-formula-common-functions ()
   (should (equal (grid-table-formula-test--values
                   '(("=TRUNC(1.59)" "=TRUNC(-1.59,1)" "=FLOOR(7,2)"

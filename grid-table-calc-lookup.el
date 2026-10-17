@@ -180,16 +180,50 @@ MATCH(A1:A900,A1:A900,0) does, read it once."
 (defun grid-calc--find-sorted (wanted length getter &optional descending)
   "Return the position of WANTED among LENGTH sorted values, or nil.
 That is the last value not past WANTED: not above it, or not below it
-when DESCENDING.  Values of another kind than WANTED are passed over."
-  (let ((found nil) (i 0))
-    (while (< i length)
-      (let ((order (grid-calc--lookup-order (funcall getter i) wanted)))
-        (cond ((null order))
-              ((= order 0) (setq found i))
-              ((if descending (> order 0) (< order 0)) (setq found i))
-              (t (setq i length))))
-      (setq i (1+ i)))
-    found))
+when DESCENDING.  Values of another kind than WANTED are passed over.
+Values sorted up are searched by halves, as Excel does, so in values
+not sorted the answer is Excel's, not the last value not past WANTED."
+  (if descending
+      (let ((found nil) (i 0))
+        (while (< i length)
+          (let ((order (grid-calc--lookup-order (funcall getter i) wanted)))
+            (cond ((null order))
+                  ((>= order 0) (setq found i))
+                  (t (setq i length))))
+          (setq i (1+ i)))
+        found)
+    (grid-calc--find-halving wanted length getter)))
+
+(defun grid-calc--find-halving (wanted length getter)
+  "Return the last of LENGTH values not above WANTED, searched by halves.
+This is the search of Apache POI's LookupUtils, which follows Excel's:
+the values between LOW and HIGH, both apart, are halved until none are
+left, or one equal to WANTED is met, when the last of its run is taken.
+A middle value of another kind gives way to the next one that is not;
+when none is, the search keeps to the values before it."
+  (let ((low -1) (high length) (found nil))
+    (while (and (not found) (>= (- high low) 2))
+      (let* ((middle (+ low (/ (- high low) 2)))
+             (order (grid-calc--lookup-order (funcall getter middle) wanted)))
+        (unless order
+          (let ((next (1+ middle)))
+            (while (and next (< next high))
+              (let ((next-order (grid-calc--lookup-order (funcall getter next) wanted)))
+                (cond ((and (eql next-order 1) (= next (1- high)))
+                       (setq next nil))
+                      (next-order (setq middle next order next-order next nil))
+                      (t (setq next (1+ next))))))))
+        (cond ((null order) (setq high middle))
+              ((= order 0)
+               (setq found middle)
+               (while (and (< (1+ found) high)
+                           (eql (grid-calc--lookup-order (funcall getter (1+ found))
+                                                         wanted)
+                                0))
+                 (setq found (1+ found))))
+              ((> order 0) (setq high middle))
+              (t (setq low middle)))))
+    (or found (and (>= low 0) low))))
 
 (defun grid-calc--find-nearest (wanted length getter direction &optional from-end)
   "Return the position of WANTED among LENGTH values, or of the nearest.
@@ -231,6 +265,36 @@ values sorted down.  #N/A when there is none."
                        (t (grid-calc--find-sorted wanted length getter t)))))
       (if found (1+ found) (grid-calc-err "#N/A")))))
 
+(defun grid-calc--sort-order (left right)
+  "Return -1, 0 or 1 as LEFT sorts before, with or after RIGHT.
+Values of every kind compare, as Excel sorts them: numbers, then text,
+then TRUE and FALSE, then blanks and error values."
+  (let ((rank (lambda (value)
+                (cond ((numberp value) 0) ((stringp value) 1)
+                      ((grid-calc-boolean-p value) 2) (t 3)))))
+    (or (grid-calc--lookup-order left right)
+        (let ((a (funcall rank left)) (b (funcall rank right)))
+          (cond ((< a b) -1) ((> a b) 1) (t 0))))))
+
+(defun grid-calc--find-bisecting (wanted length getter mode descending)
+  "Return the position XLOOKUP's search by halves finds for WANTED, or nil.
+LENGTH values read with GETTER are taken as sorted up, or down when
+DESCENDING; MODE is its match_mode, 0, -1 or 1.  Where the values are
+not sorted this lands where Excel's search lands."
+  (let ((low 0) (high (1- length)) (found nil))
+    (while (and (not found) (<= low high))
+      (let* ((middle (/ (+ low high) 2))
+             (order (grid-calc--sort-order (funcall getter middle) wanted)))
+        (when descending (setq order (- order)))
+        (cond ((= order 0) (setq found middle))
+              ((< order 0) (setq low (1+ middle)))
+              (t (setq high (1- middle))))))
+    ;; LOW is now the first value past WANTED in the order searched, HIGH
+    ;; the last before it.
+    (cond (found)
+          ((= mode (if descending -1 1)) (and (< low length) low))
+          ((= mode (if descending 1 -1)) (and (>= high 0) high)))))
+
 (defun grid-calc--xfind (wanted length getter mode search &optional source)
   "Return the position XMATCH and XLOOKUP find for WANTED, or nil.
 MODE and SEARCH are their match_mode and search_mode; SOURCE is as
@@ -239,6 +303,8 @@ MODE and SEARCH are their match_mode and search_mode; SOURCE is as
   (unless (memq search '(1 -1 2 -2)) (grid-calc-raise "#VALUE!"))
   (let ((from-end (memq search '(-1 -2))))
     (pcase mode
+      ((guard (and (memq search '(2 -2)) (/= mode 2)))
+       (grid-calc--find-bisecting wanted length getter mode (= search -2)))
       (0 (grid-calc--find-exact wanted length getter from-end nil source))
       (2 (grid-calc--find-exact wanted length getter from-end t source))
       (_ (grid-calc--find-nearest wanted length getter mode from-end)))))
