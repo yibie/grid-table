@@ -380,7 +380,8 @@ array is one value, as Excel takes them then."
                (let ((number (grid-calc-text-number value)))
                  (and number (grid-calc--numbers-equal-p number criterion)))))))
    ((grid-calc-boolean-p criterion) (lambda (value) (eq value criterion)))
-   ((grid-calc-blank-p criterion) (lambda (value) (eq value :blank)))
+   ;; An empty cell given as the criterion means 0, as Excel takes it.
+   ((grid-calc-blank-p criterion) (grid-calc-criterion 0))
    (t
     (let* ((text criterion)
            (op (cond ((string-prefix-p ">=" text) ">=")
