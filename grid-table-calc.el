@@ -1859,34 +1859,58 @@ for #This Row."
                  (grid-calc--struct-area table text (nth 1 grid-calc--here))))
       (grid-calc-ref--make (car table) top left bottom right))))
 
+(defun grid-calc--areas (value)
+  "Return the areas of VALUE, a reference or a union of them.
+nil when VALUE is neither."
+  (cond ((grid-calc-ref-p value) (list value))
+        ((eq (car-safe value) 'union) (cdr value))))
+
 (defun grid-calc--span (left right)
   "Return the reference from the corner of LEFT to that of RIGHT.
-Both are references into the same sheet; the result takes in both."
-  (if (not (and (grid-calc-ref-p left) (grid-calc-ref-p right)
-                (eq (grid-calc-ref-model left) (grid-calc-ref-model right))))
-      (grid-calc-err "#VALUE!")
-    (grid-calc-ref--make (grid-calc-ref-model left)
-                         (min (grid-calc-ref-top left) (grid-calc-ref-top right))
-                         (min (grid-calc-ref-left left) (grid-calc-ref-left right))
-                         (max (grid-calc-ref-bottom left)
-                              (grid-calc-ref-bottom right))
-                         (max (grid-calc-ref-right left)
-                              (grid-calc-ref-right right)))))
+Both are references into the same sheet, or unions of them; the result
+takes in every area of both."
+  (let* ((areas (append (grid-calc--areas left) (grid-calc--areas right)))
+         (model (and areas (grid-calc-ref-model (car areas)))))
+    (if (not (and (grid-calc--areas left) (grid-calc--areas right)
+                  (cl-every (lambda (area) (eq (grid-calc-ref-model area) model))
+                            areas)))
+        (grid-calc-err "#VALUE!")
+      (grid-calc-ref--make model
+                           (apply #'min (mapcar #'grid-calc-ref-top areas))
+                           (apply #'min (mapcar #'grid-calc-ref-left areas))
+                           (apply #'max (mapcar #'grid-calc-ref-bottom areas))
+                           (apply #'max (mapcar #'grid-calc-ref-right areas))))))
+
+(defun grid-calc--area-intersection (left right)
+  "Return the cells LEFT and RIGHT, two areas of one sheet, have in common.
+nil when they have none."
+  (let ((top (max (grid-calc-ref-top left) (grid-calc-ref-top right)))
+        (left-edge (max (grid-calc-ref-left left) (grid-calc-ref-left right)))
+        (bottom (min (grid-calc-ref-bottom left) (grid-calc-ref-bottom right)))
+        (right-edge (min (grid-calc-ref-right left) (grid-calc-ref-right right))))
+    (and (<= top bottom) (<= left-edge right-edge)
+         (grid-calc-ref--make (grid-calc-ref-model left)
+                              top left-edge bottom right-edge))))
 
 (defun grid-calc--intersection (left right)
-  "Return the cells LEFT and RIGHT, two references, have in common.
-#NULL! when they have none."
-  (if (not (and (grid-calc-ref-p left) (grid-calc-ref-p right)
-                (eq (grid-calc-ref-model left) (grid-calc-ref-model right))))
-      (grid-calc-err "#VALUE!")
-    (let ((top (max (grid-calc-ref-top left) (grid-calc-ref-top right)))
-          (left-edge (max (grid-calc-ref-left left) (grid-calc-ref-left right)))
-          (bottom (min (grid-calc-ref-bottom left) (grid-calc-ref-bottom right)))
-          (right-edge (min (grid-calc-ref-right left) (grid-calc-ref-right right))))
-      (if (and (<= top bottom) (<= left-edge right-edge))
-          (grid-calc-ref--make (grid-calc-ref-model left)
-                               top left-edge bottom right-edge)
-        (grid-calc-err "#NULL!")))))
+  "Return the cells LEFT and RIGHT, references or unions, have in common.
+Each area of one meets each area of the other, as in Excel; #NULL!
+when none meet."
+  (let ((as (grid-calc--areas left))
+        (bs (grid-calc--areas right)))
+    (if (not (and as bs
+                  (cl-every (lambda (area)
+                              (eq (grid-calc-ref-model area)
+                                  (grid-calc-ref-model (car as))))
+                            (append as bs))))
+        (grid-calc-err "#VALUE!")
+      (let ((areas (cl-loop for a in as
+                            append (cl-loop for b in bs
+                                            for area = (grid-calc--area-intersection a b)
+                                            when area collect area))))
+        (cond ((null areas) (grid-calc-err "#NULL!"))
+              ((cdr areas) (cons 'union areas))
+              (t (car areas)))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Where a formula takes one value of a range
@@ -1923,7 +1947,11 @@ it.  A part whose class is VAL comes to one value.")
     ;; Newer than the tables, and they give references: A1# is
     ;; ANCHORARRAY(A1), and SUM(XLOOKUP(2,A1:A3,B1:D3)) adds a row.
     ("ANCHORARRAY" R (RO))
-    ("XLOOKUP" R (VR RA RA VR VR VR)))
+    ("XLOOKUP" R (VR RA RA VR VR VR))
+    ;; Like IF and CHOOSE, they give the reference they choose:
+    ;; SUM((A1,IFS(TRUE,B1))) adds both cells.
+    ("IFS" R (VO RO) . t)
+    ("SWITCH" R (VR RO)))
   "Classes that stand in for those of `grid-calc-argument-classes'.")
 
 (defun grid-calc--kind-class (kind)
@@ -2116,10 +2144,15 @@ whatever its class.  See `grid-calc--eval'."
              (t (grid-calc--intersection a b)))))
     (`(UNION . ,parts)
      ;; Several areas: only functions that take references read them
-     ;; whole, and they are read as the first area.
-     (let ((areas (mapcar (lambda (part) (grid-calc--eval model part)) parts)))
-       (or (cl-find-if #'grid-calc-err-p areas)
-           (cons 'union areas))))
+     ;; whole.  A union in a union adds its areas, and each part must
+     ;; be a reference: (A1,B1%) is #VALUE!.
+     (let ((values (mapcar (lambda (part) (grid-calc--eval model part)) parts)))
+       (or (cl-find-if #'grid-calc-err-p values)
+           (if (cl-every #'grid-calc--areas values)
+               (cons 'union (mapcan (lambda (value)
+                                      (copy-sequence (grid-calc--areas value)))
+                                    values))
+             (grid-calc-err "#VALUE!")))))
     (`(BINARY-OP ,op ,left ,right)
      (let ((a (grid-calc--scalar-or-array (grid-calc--eval model left)))
            (b (grid-calc--scalar-or-array (grid-calc--eval model right))))
@@ -2207,6 +2240,8 @@ of them, row after row."
 ;;   values   the argument as written: a `grid-calc-ref', an array or a
 ;;            single value, for functions that take several values, as
 ;;            SUM does;
+;;   areas    as values, but several areas, as (A1:A3,C1:C3), stay one
+;;            argument, for RANK and its like to read them all;
 ;;   array    an array, whatever was written: a range is its values and
 ;;            one value an array of one;
 ;;   ref      a reference, `grid-calc-ref', or #VALUE!;
@@ -2235,7 +2270,7 @@ SORT(A1:A3,,-1); otherwise an empty argument is blank, so 0 or FALSE."
   "The model of the sheet whose formula calls the function being run.")
 
 (defconst grid-calc--kinds
-  '(number integer text bool any values array ref lazy)
+  '(number integer text bool any values areas array ref lazy)
   "The kinds an argument may be; see the commentary above.")
 
 (defun grid-calc--parse-arglist (arglist)
@@ -2601,6 +2636,9 @@ Cells past the sheet's filled cells are not visited."
    ((grid-calc-array-p argument)
     (mapc (lambda (value) (funcall function value nil))
           (grid-calc-array-data argument)))
+   ((eq (car-safe argument) 'union)
+    (dolist (area (cdr argument))
+      (grid-calc-each-value area function)))
    ((null argument))
    (t (funcall function argument t))))
 

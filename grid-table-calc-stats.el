@@ -331,14 +331,14 @@ ASCENDING ranks the smallest first; AVERAGE gives ties their mean rank."
     (if average (grid-calc--tidy-number (+ before (/ (1+ ties) 2.0)))
       (1+ before))))
 
-(grid-calc-define rank.eq ((number number) (numbers values) &optional (order number 0))
+(grid-calc-define rank.eq ((number number) (numbers areas) &optional (order number 0))
   "The rank of NUMBER among NUMBERS, the largest first, or the smallest
 when ORDER is not 0.  Equal numbers share the best rank."
   (grid-calc--rank number (grid-calc-numbers (list numbers)) (/= order 0) nil))
 
 (grid-calc-alias rank rank.eq)
 
-(grid-calc-define rank.avg ((number number) (numbers values) &optional (order number 0))
+(grid-calc-define rank.avg ((number number) (numbers areas) &optional (order number 0))
   "The rank of NUMBER among NUMBERS, equal numbers sharing their mean rank."
   (grid-calc--rank number (grid-calc-numbers (list numbers)) (/= order 0) t))
 

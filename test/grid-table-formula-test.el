@@ -27,6 +27,25 @@
     (should (equal (grid-table-formula-test--eval (car case) "1" "2" "4")
                    (cdr case)))))
 
+(ert-deftest grid-table-formula-unions-hold-every-area ()
+  ;; A union in a union adds its areas, duplicates and all; the range
+  ;; and intersection operators take in each area of a union.
+  (dolist (case '(("=SUM(((B1,C1),C1))" . 5)
+                  ("=SUM((B1,(B1,C1)))" . 4)
+                  ("=SUM(B1:(C1,D1))" . 7)
+                  ("=SUM((B1,C1):D1)" . 7)
+                  ("=SUM((B1:C1,D1) C1:D1)" . 6)
+                  ("=SUM(B1 (C1,D1))" . "#NULL!")
+                  ("=SUM((B1,C1%))" . "#VALUE!")
+                  ("=COUNT((B1,C1%))" . 0)
+                  ("=AREAS((B1,(C1,D1)))" . 3)
+                  ("=RANK(B1,(B1,C1,D1),1)" . 1)
+                  ("=RANK.AVG(C1,(B1:C1,C1:D1))" . 2.5)
+                  ("=SUM((B1,IFS(TRUE,C1)))" . 3)
+                  ("=SUM((B1,SWITCH(2,1,C1,D1)))" . 5)))
+    (should (equal (grid-table-formula-test--eval (car case) "1" "2" "4")
+                   (cdr case)))))
+
 (ert-deftest grid-table-formula-operators-follow-spreadsheet-rules ()
   (should (equal (grid-table-formula-test--eval "=2^3") 8))
   (should (equal (grid-table-formula-test--eval "=(-2)^3") -8))
