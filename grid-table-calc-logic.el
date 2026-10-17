@@ -103,6 +103,36 @@ after it, as LET(x,2,y,x*3,x+y) is 8."
               grid-calc--locals)))
     (grid-calc-arg (car parts) 'values)))
 
+(grid-calc-define lambda (&rest (parts lazy))
+  "A function of the names before the last argument, which it computes:
+LAMBDA(x,x+1)(5) is 6."
+  (unless parts (grid-calc-raise "#VALUE!"))
+  (let ((names (mapcar (lambda (part)
+                         (if (eq (car-safe part) 'NAME)
+                             (upcase (cadr part))
+                           (grid-calc-raise "#VALUE!")))
+                       (butlast parts))))
+    (unless (= (length names) (length (delete-dups (copy-sequence names))))
+      (grid-calc-raise "#VALUE!"))
+    (grid-calc-lambda--make :parameters names :body (car (last parts))
+                            :locals grid-calc--locals)))
+
+(grid-calc-define \(apply\) ((callee values) &rest (arguments lazy))
+  "What CALLEE, a LAMBDA, gives for ARGUMENTS, as LAMBDA(x,x+1)(5) asks."
+  :errors t
+  (cond ((grid-calc-err-p callee) callee)
+        ((grid-calc-lambda-p callee)
+         (grid-calc-apply-lambda
+          callee (mapcar #'grid-calc--lambda-argument arguments)))
+        (t (grid-calc-err "#VALUE!"))))
+
+(grid-calc-define isomitted ((name lazy))
+  "TRUE when NAME is an argument its LAMBDA was not given."
+  (grid-calc-bool
+   (and (eq (car-safe name) 'NAME)
+        (eq (cdr (assoc (upcase (cadr name)) grid-calc--locals))
+            'grid-calc--omitted))))
+
 ;;;----------------------------------------------------------------------
 ;;; Logical functions
 ;;;----------------------------------------------------------------------

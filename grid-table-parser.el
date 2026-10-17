@@ -799,9 +799,18 @@ Returns (ast . remaining-tokens).  See `grid-parser--starts'."
             ;; defined names do.
             (cons (list 'NAME func-name) tokens)
         (pop tokens) ; Consume '('
-        (let ((result (grid-parser--parse-arguments tokens 'RPAREN)))
-          (cons (grid-ast-make-function-call func-name (car result))
-                (cdr result))))))
+        (let* ((result (grid-parser--parse-arguments tokens 'RPAREN))
+               (call (grid-ast-make-function-call func-name (car result)))
+               (tokens (cdr result)))
+          ;; What a call gives may be called in turn, as a LAMBDA is:
+          ;; LAMBDA(x,x+1)(5) applies it to 5.
+          (while (and tokens (grid-parser-token-is-p
+                              (car tokens) grid-parser-token-type-lparen))
+            (let ((result (grid-parser--parse-arguments (cdr tokens) 'RPAREN)))
+              (setq call (grid-ast-make-function-call
+                          "(APPLY)" (cons call (car result)))
+                    tokens (cdr result))))
+          (cons call tokens)))))
 
      ;; A name a sheet keeps: Sheet2!Total
      ((eq (car token) 'NAME-REF)

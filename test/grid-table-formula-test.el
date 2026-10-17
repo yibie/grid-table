@@ -2845,6 +2845,42 @@ package's workbooks."
       (should (if (numberp (cadr case))
                   (and (numberp value) (< (abs (- value (cadr case))) 1e-9))
                 (equal (list (car case) value) case))))))
+(ert-deftest grid-table-formula-lambda-is-called-as-excel-calls-it ()
+  "LAMBDA is called where it is made, through a LET name or a defined
+name, takes references as references, and leaves out what it is not
+given.  The cases come from IronCalc's workbooks."
+  (dolist (case '(("=LAMBDA(x, x+1)(5)" 6)
+                  ("=LAMBDA(x,y, SQRT(x*x+y*y))(3,4)" 5)
+                  ("=LAMBDA(x,LAMBDA(y,x*y))(3)(4)" 12)
+                  ("=LET(area, LAMBDA(x,y,x*y), area(B1,C1))" 42)
+                  ("=LAMBDA(x, ISREF(x))(B1:C1)" t)
+                  ("=LAMBDA(x, ISREF(x))(B1+1)" nil)
+                  ("=LET(x, B1, ISREF(x))" t)
+                  ("=LAMBDA(x, SUM(x))(B1:C1*2)" 26)
+                  ("=LAMBDA(x,y, IF(ISOMITTED(y),\"none\",x+y))(1,)" "none")
+                  ("=LAMBDA(x,y, IF(ISOMITTED(y),x/2,x*y))(B1)" 3)
+                  ("=LAMBDA(x,x)(1,2)" "#VALUE!")
+                  ("=LAMBDA(x,x,x)(1,2)" "#VALUE!")
+                  ("=LAMBDA(x,x+1)" "#CALC!")
+                  ("=area(1)" "#NAME?")))
+    (should (equal (list (car case)
+                         (grid-table-formula-test--eval (car case) "6" "7"))
+                   case)))
+  ;; An edit reaches a LAMBDA's arguments and what its body reads.
+  (let ((model (grid-model-create
+                1 4 '(("=LAMBDA(x,x*2)(B1)" "5" "=LET(f,LAMBDA(x,x+D1),f(B1))" "1")))))
+    (grid-model-set-raw-value model 0 1 "10")
+    (should (equal (grid-model-get-computed-value model 0 0) 20))
+    (should (equal (grid-model-get-computed-value model 0 2) 11))
+    (grid-model-set-raw-value model 0 3 "3")
+    (should (equal (grid-model-get-computed-value model 0 2) 13)))
+  ;; A name defined as a LAMBDA is called by its name.
+  (let* ((one (make-default-data-source '("" "") '(("=Twice(B1)" "4"))))
+         (workbook (grid-workbook-create (list (cons "Sheet1" one)))))
+    (grid-workbook-define-name workbook "Twice" "=LAMBDA(x,x*2)")
+    (should (equal (grid-get-computed-value-at one 0 0) 8))
+    (grid-set-raw-value-at one 0 1 "5")
+    (should (equal (grid-get-computed-value-at one 0 0) 10))))
 
 (ert-deftest grid-table-formula-finance-finds-coupons-and-accrual ()
   "COUP*, ACCRINT and ACCRINTM as Excel has them.

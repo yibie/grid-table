@@ -1021,6 +1021,14 @@ EVERYTHING."
   "An error value, such as #N/A; CODE is its text."
   code)
 
+(cl-defstruct (grid-calc-lambda (:constructor grid-calc-lambda--make))
+  "A function a formula makes, as LAMBDA does.
+PARAMETERS are the names of its arguments, in capitals, BODY the parsed
+form it computes and LOCALS the names LET gave values to where it was
+made.  FUNCTION is instead the name of a built-in one, as SUM is where
+BYROW(A1:B2,SUM) passes it."
+  parameters body locals function)
+
 (defconst grid-calc--errors
   (mapcar (lambda (code) (cons code (grid-calc--make-err code)))
           grid-calc-error-values)
@@ -1267,6 +1275,8 @@ an array formula or under `grid-calc-legacy-arrays', else #VALUE!."
    ((null value) 0)
    ;; Several areas are no value a cell can show.
    ((eq (car-safe value) 'union) "#VALUE!")
+   ;; A function is no value either.
+   ((grid-calc-lambda-p value) "#CALC!")
    ;; A chart
    (t value)))
 
@@ -2033,7 +2043,12 @@ it.  A part whose class is VAL comes to one value.")
     ;; Like IF and CHOOSE, they give the reference they choose:
     ;; SUM((A1,IFS(TRUE,B1))) adds both cells.
     ("IFS" R (VO RO) . t)
-    ("SWITCH" R (VR RO)))
+    ("SWITCH" R (VR RO))
+    ;; A name LET or LAMBDA gives a reference is that reference:
+    ;; LET(x,A1,ISREF(x)) is TRUE.
+    ("LET" R (RO))
+    ("LAMBDA" V (RO))
+    ("(APPLY)" R (RO)))
   "Classes that stand in for those of `grid-calc-argument-classes'.")
 
 (defun grid-calc--kind-class (kind)
@@ -2200,7 +2215,8 @@ whatever its class.  See `grid-calc--eval'."
               rows)))
     (`(NAME ,name . ,qualifier)
      (if-let* ((local (assoc (upcase name) grid-calc--locals)))
-         (cdr local)
+         ;; An argument a LAMBDA was not given is blank.
+         (if (eq (cdr local) 'grid-calc--omitted) :blank (cdr local))
        (let ((definition (grid-calc--name-ast name (car qualifier))))
          (if (or (null definition)
                  ;; A name defined by way of itself
@@ -2496,7 +2512,16 @@ A value for a scalar KIND may still be an array, or an error value."
       (setq function (grid-calc-function--make :name name :body function
                                                :legacy t)))
     (cond
-     ((null function) (grid-calc-err "#NAME?"))
+     ((null function)
+      ;; A name LET or the workbook gives a LAMBDA calls it.
+      (let ((callee (grid-calc--eval model (list 'NAME name))))
+        (if (and (grid-calc-lambda-p callee)
+                 (null (grid-calc-lambda-function callee)))
+            (grid-calc--catching
+              (let ((grid-calc--lazy-model model))
+                (grid-calc-apply-lambda
+                 callee (mapcar #'grid-calc--lambda-argument arguments))))
+          (grid-calc-err "#NAME?"))))
      ((grid-calc-function-legacy function)
       (grid-calc--call-legacy model function arguments))
      (t
@@ -2542,6 +2567,34 @@ A value for a scalar KIND may still be an array, or an error value."
                                     finally (setq all-kinds spread-kinds)
                                     finally return spread)))
             (grid-calc--apply function model all-kinds values))))))))
+
+(defun grid-calc--lambda-argument (ast)
+  "Return the lazy argument AST computed for a LAMBDA to take.
+A reference stays one; an argument left out is `grid-calc--omitted'."
+  (if (equal ast '(MISSING))
+      'grid-calc--omitted
+    (let ((grid-calc--array-context t))
+      (grid-calc--eval grid-calc--lazy-model ast))))
+
+(defun grid-calc-apply-lambda (function values)
+  "Return what FUNCTION, a `grid-calc-lambda', gives for VALUES.
+A value may be `grid-calc--omitted', as one past the last given is;
+ISOMITTED is TRUE of it.  Too many values signal #VALUE!."
+  (if-let* ((name (grid-calc-lambda-function function)))
+      (grid-calc--call grid-calc--lazy-model name
+                       (mapcar (lambda (value)
+                                 (if (eq value 'grid-calc--omitted)
+                                     '(MISSING)
+                                   (list 'QUOTED value)))
+                               values))
+    (let ((parameters (grid-calc-lambda-parameters function))
+          (grid-calc--locals (grid-calc-lambda-locals function)))
+      (when (> (length values) (length parameters))
+        (grid-calc-raise "#VALUE!"))
+      (dolist (parameter parameters)
+        (push (cons parameter (if values (pop values) 'grid-calc--omitted))
+              grid-calc--locals))
+      (grid-calc-arg (grid-calc-lambda-body function) 'values))))
 
 (defun grid-calc--apply (function model kinds values)
   "Run FUNCTION on VALUES, its arguments as KINDS take them, on MODEL.
