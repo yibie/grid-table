@@ -27,6 +27,16 @@
     (should (equal (grid-table-formula-test--eval (car case) "1" "2" "4")
                    (cdr case)))))
 
+(ert-deftest grid-table-formula-subtotal-counts-error-values ()
+  ;; As COUNT and COUNTA do; the other functions give the error.
+  (dolist (case '(("=SUBTOTAL(3,B1:D1)" . 3)
+                  ("=SUBTOTAL(2,B1:D1)" . 1)
+                  ("=SUBTOTAL(103,B1:D1)" . 3)
+                  ("=SUBTOTAL(9,B1:D1)" . "#DIV/0!")
+                  ("=AGGREGATE(3,4,B1:D1)" . 3)))
+    (should (equal (grid-table-formula-test--eval (car case) "1" "=1/0" "x")
+                   (cdr case)))))
+
 (ert-deftest grid-table-formula-sums-and-means-keep-every-digit ()
   ;; Excel keeps a whole double, only showing 15 digits: a formula
   ;; that reads the sum or the mean sees all of it.

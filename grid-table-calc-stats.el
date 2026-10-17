@@ -418,7 +418,8 @@ AGGREGATE, which these functions leave out to not count twice."
   "Return the values of ARGUMENTS as SUBTOTAL and AGGREGATE see them.
 Cells holding a SUBTOTAL or AGGREGATE are left out unless KEEP-NESTED,
 and with SKIP-HIDDEN the hidden rows; SKIP-ERRORS leaves error values
-out."
+out, and `keep' keeps them, for COUNT and COUNTA to count.  Otherwise
+an error value signals."
   (let (values)
     (dolist (argument arguments)
       (if (grid-calc-ref-p argument)
@@ -436,10 +437,18 @@ out."
                     (push (grid-calc--cell model (+ top row) (+ left col)) values))))))
         (grid-calc-each-value argument (lambda (value _) (push value values)))))
     (setq values (nreverse values))
-    (if skip-errors (cl-remove-if #'grid-calc-err-p values)
-      (let ((error (cl-find-if #'grid-calc-err-p values)))
-        (when error (grid-calc-raise (grid-calc-err-code error))))
-      values)))
+    (pcase skip-errors
+      ('keep values)
+      ('nil
+       (let ((error (cl-find-if #'grid-calc-err-p values)))
+         (when error (grid-calc-raise (grid-calc-err-code error))))
+       values)
+      (_ (cl-remove-if #'grid-calc-err-p values)))))
+
+(defun grid-calc--counting-p (number)
+  "Return non-nil when SUBTOTAL's function NUMBER is COUNT or COUNTA.
+They count error values rather than give them, as COUNT and COUNTA do."
+  (memq (% number 100) '(2 3)))
 
 (defun grid-calc--aggregate-by (number values &optional k)
   "Return function NUMBER of SUBTOTAL or AGGREGATE over VALUES.
@@ -475,7 +484,9 @@ rows."
   (unless (or (<= 1 function 11) (<= 101 function 111))
     (grid-calc-raise "#VALUE!"))
   (grid-calc--aggregate-by (% function 100)
-                           (grid-calc--shown-values ranges (> function 100) nil)))
+                           (grid-calc--shown-values
+                            ranges (> function 100)
+                            (and (grid-calc--counting-p function) 'keep))))
 
 (grid-calc-define aggregate ((function integer) (options integer) (range values)
                              &rest (more values))
@@ -487,7 +498,8 @@ ones leave out hidden rows, 2 and 3 and 6 and 7 error values, 0 to 3
 other subtotals."
   (unless (and (<= 1 function 19) (<= 0 options 7)) (grid-calc-raise "#VALUE!"))
   (let ((skip-hidden (memq options '(1 3 5 7)))
-        (skip-errors (memq options '(2 3 6 7)))
+        (skip-errors (or (memq options '(2 3 6 7))
+                         (and (grid-calc--counting-p function) 'keep)))
         (keep-nested (> options 3)))
     (if (>= function 14)
         (grid-calc--aggregate-by
