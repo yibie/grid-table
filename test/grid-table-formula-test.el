@@ -1589,6 +1589,31 @@
     (grid-workbook-recalculate workbook t)
     (should (equal (grid-get-computed-value-at one 0 0) 4))))
 
+;; A column each of whose cells reads the one below is computed from the
+;; top down, however long, as is a cycle longer than the formulas put on
+;; top of each other at a time.
+(ert-deftest grid-table-formula-long-chains-are-computed ()
+  (let* ((plain (make-default-data-source
+                 '("") (append (cl-loop for row from 2 to 300
+                                        collect (list (format "=A%d+1" row)))
+                               '(("1")))))
+         (named (make-default-data-source
+                 '("") (append (make-list 299 '("=Next")) '(("1")))))
+         (workbook (grid-workbook-create (list (cons "One" named))))
+         (cycle (make-default-data-source
+                 '("") (cl-loop for row from 1 to 30
+                                collect (list (format "=A%d" (1+ (% row 30))))))))
+    (should (equal (grid-get-computed-value-at plain 0 0) 300))
+    (grid-workbook-set-names workbook '(("Next" . "=One!$A2+1")))
+    (grid-workbook-recalculate workbook t)
+    (should (equal (grid-get-computed-value-at named 0 0) 300))
+    ;; With less room, fewer formulas fit on top of each other.
+    (let ((max-lisp-eval-depth 400))
+      (grid-workbook-recalculate workbook t))
+    (should (equal (grid-get-computed-value-at named 0 0) 300))
+    (should (equal (grid-get-computed-value-at cycle 0 0) "#CYCLE!"))
+    (should (equal (grid-get-computed-value-at cycle 29 0) "#CYCLE!"))))
+
 (ert-deftest grid-table-formula-names-on-a-lone-sheet-are-saved ()
   (let* ((source (make-default-data-source
                   '("" "") '(("x" "4") ("y" "=Four*2"))))

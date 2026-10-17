@@ -253,10 +253,44 @@ parsed once and not at every recalculation."
         (aset cell grid-cell--parsed (cons raw parsed))
         parsed))))
 
+(defvar grid-calc--deepest 10
+  "How many formulas may be computed on top of each other.
+A formula reading a cell not yet computed computes it first, and that
+cell the ones it reads: a long chain of them, as a column each of whose
+cells reads the one below, would go deeper than Lisp may.  The formula
+that would go deeper, or that does, is put off, computed on its own, and
+the ones waiting on it are computed again after it.")
+
+(defvar grid-calc--put-off nil
+  "The depth formulas are counted from while one may be put off, or nil.")
+
+;; Not an `error', so no formula takes it for a failure of its own.
+(put 'grid-calc-put-off 'error-conditions '(grid-calc-put-off))
+(put 'grid-calc-put-off 'error-message "Formula put off")
+
 (defun grid-calc--compute-cell (model index)
   "Compute the cell at INDEX of MODEL unless this pass already did.
 A formula that fails gives its cell one of `grid-calc-error-values'
 instead of stopping the recalculation."
+  (if grid-calc--put-off
+      (grid-calc--compute-cell-1 model index)
+    (let ((grid-calc--put-off grid-calc--depth)
+          (waiting (list (cons model index))))
+      (while waiting
+        (condition-case put-off
+            (let ((grid-calc--deepest
+                   ;; A formula put off again while it waits is on a
+                   ;; cycle, which is found only by going round it.
+                   (if (member (car waiting) (cdr waiting))
+                       most-positive-fixnum
+                     grid-calc--deepest)))
+              (grid-calc--compute-cell-1 (caar waiting) (cdar waiting))
+              (pop waiting))
+          (grid-calc-put-off (push (cdr put-off) waiting)))))))
+
+(defun grid-calc--compute-cell-1 (model index)
+  "Compute the cell at INDEX of MODEL as `grid-calc--compute-cell' does.
+Signal `grid-calc-put-off' when its formula would go too deep."
   (let ((cell (aref (grid-data-model-cells model) index))
         (pass (grid-calc--pass-of model)))
     (pcase (if (vectorp pass) (aref pass index) (gethash index pass 'done))
@@ -283,6 +317,9 @@ instead of stopping the recalculation."
 (defun grid-calc--compute-own-cell (model index cell pass)
   "Compute the cell CELL at INDEX of MODEL from what it holds.
 PASS is MODEL's state in the recalculation in progress."
+  (when (and grid-calc--put-off
+             (> grid-calc--depth (+ grid-calc--put-off grid-calc--deepest)))
+    (signal 'grid-calc-put-off (cons model index)))
   (grid-calc--set-pass-state pass index 'visiting)
        (let ((raw (grid-cell-raw-input cell))
              cycle-head)
@@ -323,6 +360,19 @@ PASS is MODEL's state in the recalculation in progress."
                         (if raw-value (grid-calc--store value) value))))
                 (grid-calc-cycle (grid-calc--spill-retract model index)
                                  (setq cycle-head (cdr err)) "#CYCLE!")
+                ;; Computed again once what it waits on is
+                (grid-calc-put-off (grid-calc--set-pass-state pass index nil)
+                                   (signal (car err) (cdr err)))
+                ;; Names using names can go too deep in fewer formulas:
+                ;; this formula is put off, unless nothing waits on it.
+                (recursion-error
+                 (grid-calc--spill-retract model index)
+                 (if (and grid-calc--put-off
+                          (> grid-calc--depth grid-calc--put-off)
+                          (< grid-calc--deepest most-positive-fixnum))
+                     (progn (grid-calc--set-pass-state pass index nil)
+                            (signal 'grid-calc-put-off (cons model index)))
+                   (grid-calc--error-value err)))
                 (error (grid-calc--spill-retract model index)
                        (grid-calc--error-value err)))
             (grid-calc--spill-retract model index)
