@@ -2772,6 +2772,28 @@ come from IronCalc's DCOUNT workbook."
         (should (equal (list (car case) (grid-model-get-computed-value model 4 0))
                        case))))))
 
+(ert-deftest grid-table-formula-database-functions-reduce-their-field ()
+  "DSUM and its like read the numbers in the field of the rows meeting
+the criteria; DCOUNTA and DGET read every value there."
+  (let ((rows '(("Region" "Units" "" "Region" "Region")
+                ("East" "120" "" "East" "West")
+                ("West" "80" "" "" "")
+                ("East" "200" "" "" "")
+                ("East" "n/a" "" "" ""))))
+    (dolist (case '(("=DSUM(A1:B5,2,D1:D2)" 320) ("=DAVERAGE(A1:B5,2,D1:D2)" 160)
+                    ("=DMIN(A1:B5,2,D1:D2)" 120) ("=DMAX(A1:B5,2,D1:D2)" 200)
+                    ("=DPRODUCT(A1:B5,2,D1:D2)" 24000) ("=DVAR(A1:B5,2,D1:D2)" 3200)
+                    ("=DVARP(A1:B5,2,D1:D2)" 1600) ("=DSTDEVP(A1:B5,2,D1:D2)" 40)
+                    ("=DCOUNTA(A1:B5,2,D1:D2)" 3) ("=DCOUNTA(A1:B5,,D1:D2)" 3)
+                    ("=DGET(A1:B5,2,E1:E2)" 80) ("=DGET(A1:B5,2,D1:D2)" "#NUM!")
+                    ("=DGET(A1:B5,2,D1:D3)" "#NUM!")
+                    ("=DMIN(A1:B5,2,E1:E2)" 80) ("=DAVERAGE(A1:B1,2,D1:D2)" "#VALUE!")))
+      (let* ((model (grid-model-create 6 5 (append rows (list (list (car case) "" "" "" "")))))
+             (value (grid-model-get-computed-value model 5 0)))
+        (should (if (numberp (cadr case))
+                    (and (numberp value) (= value (cadr case)))
+                  (equal (list (car case) value) case)))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

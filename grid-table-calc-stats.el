@@ -620,6 +620,59 @@ Without FIELD every row meeting CRITERIA that holds a number counts."
                      rows)
       (length rows))))
 
+;; DCOUNTA and DGET read every value of the field, the others its numbers.
+
+(defun grid-calc--database-values (database field criteria)
+  "Return the values in FIELD of the rows of DATABASE meeting CRITERIA."
+  (let ((rows (grid-calc--database-rows database criteria))
+        (col (or (grid-calc--database-field database field)
+                 (grid-calc-raise "#VALUE!"))))
+    (mapcar (lambda (row) (grid-calc--table-at database row col)) rows)))
+
+(defmacro grid-calc--define-database (name doc reduce)
+  "Define NAME, a database function giving REDUCE of the numbers it reads.
+DOC is its docstring."
+  `(grid-calc-define ,name ((database values) (field values) (criteria values))
+     ,doc
+     (funcall ,reduce (cl-remove-if-not
+                       #'numberp
+                       (grid-calc--database-values database field criteria)))))
+
+(grid-calc--define-database dsum "The sum of FIELD in the rows meeting CRITERIA."
+                            (lambda (ns) (grid-calc--tidy-number (apply #'+ 0 ns))))
+(grid-calc--define-database daverage "The mean of FIELD in the rows meeting CRITERIA."
+                            #'grid-calc--mean)
+(grid-calc--define-database dmin "The least of FIELD in the rows meeting CRITERIA."
+                            (lambda (ns) (if ns (apply #'min ns) 0)))
+(grid-calc--define-database dmax "The greatest of FIELD in the rows meeting CRITERIA."
+                            (lambda (ns) (if ns (apply #'max ns) 0)))
+(grid-calc--define-database dproduct "The product of FIELD in the rows meeting CRITERIA."
+                            (lambda (ns) (if ns (grid-calc--finite (apply #'* ns)) 0)))
+(grid-calc--define-database dvar "The variance of FIELD in the rows meeting CRITERIA, a sample."
+                            (lambda (ns) (grid-calc--variance ns t)))
+(grid-calc--define-database dvarp "The variance of FIELD in all the rows meeting CRITERIA."
+                            (lambda (ns) (grid-calc--variance ns nil)))
+(grid-calc--define-database dstdev "The standard deviation of FIELD in the rows meeting CRITERIA, a sample."
+                            (lambda (ns) (sqrt (grid-calc--variance ns t))))
+(grid-calc--define-database dstdevp "The standard deviation of FIELD in all the rows meeting CRITERIA."
+                            (lambda (ns) (sqrt (grid-calc--variance ns nil))))
+
+(grid-calc-define dcounta ((database values) (field values) (criteria values))
+  "How many rows of DATABASE meeting CRITERIA hold a value in FIELD.
+Without FIELD every row meeting CRITERIA counts."
+  (if (eq field :blank)
+      (length (grid-calc--database-rows database criteria))
+    (cl-count-if-not #'grid-calc-blank-p
+                     (grid-calc--database-values database field criteria))))
+
+(grid-calc-define dget ((database values) (field values) (criteria values))
+  "The one value in FIELD of the rows meeting CRITERIA.
+#VALUE! when no row meets them, #NUM! when more than one does."
+  (let ((values (grid-calc--database-values database field criteria)))
+    (cond ((null values) (grid-calc-raise "#VALUE!"))
+          ((cdr values) (grid-calc-raise "#NUM!"))
+          (t (car values)))))
+
 (provide 'grid-table-calc-stats)
 
 ;;; grid-table-calc-stats.el ends here
