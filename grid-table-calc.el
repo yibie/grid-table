@@ -2058,6 +2058,8 @@ it.  A part whose class is VAL comes to one value.")
     ("LET" R (RO))
     ("LAMBDA" V (RO))
     ("(APPLY)" R (RO))
+    ;; Newer than the tables, and it takes its range whole.
+    ("ARRAYTOTEXT" V (RA VR))
     ;; The tables take these for value arguments, but Excel hands them
     ;; the reference, as the Analysis ToolPak's: in an array formula
     ;; ERF.PRECISE(A1:C1) is #VALUE!, not the ERF of each cell.

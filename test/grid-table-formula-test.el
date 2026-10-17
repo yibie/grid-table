@@ -3175,6 +3175,16 @@ Excel's values for."
                     ("=CODE(\"€\")" . 219) ("=CHAR(65)" . "A")))
       (grid-table-formula-test--should-be case))))
 
+(ert-deftest grid-table-formula-file-arraytotext-takes-its-range-whole ()
+  ;; ARRAYTOTEXT in a workbook file's formula writes out every cell of
+  ;; its range, not the one in the formula's row.
+  (let ((model (grid-model-create
+                2 3 '(("1" "2" "=ARRAYTOTEXT(A1:B2)") ("3" "4" "")))))
+    (grid-model-set-legacy model '((0 . 2)))
+    (grid-calc-forget model)
+    (grid-model-recalculate-all model)
+    (should (equal (grid-model-get-computed-value model 0 2) "1, 2, 3, 4"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
