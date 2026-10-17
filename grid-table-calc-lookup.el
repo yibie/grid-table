@@ -369,6 +369,7 @@ whole column and COLUMN 0 the whole row.  A range gives a reference."
                           &optional (height integer) (width integer))
   "The reference ROWS down and COLS across from REFERENCE.
 It is HEIGHT by WIDTH, by default as large as REFERENCE."
+  :empty t
   (let ((height (or height (grid-calc-ref-rows reference)))
         (width (or width (grid-calc-ref-cols reference)))
         (top (+ (grid-calc-ref-top reference) rows))

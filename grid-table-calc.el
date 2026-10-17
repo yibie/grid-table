@@ -2388,9 +2388,12 @@ A value for a scalar KIND may still be an array, or an error value."
                                   for kind in all-kinds
                                   for index from 0
                                   collect
-                                  (if (and (equal ast '(MISSING))
-                                           (nth index empty))
-                                      (nth index empty)
+                                  (if (and (equal ast '(MISSING)) empty
+                                           (<= (grid-calc-function-min function)
+                                               index (1- (length empty))))
+                                      ;; Left empty, it is left out:
+                                      ;; OFFSET(A1:B2,0,0,,1) is 2 high.
+                                      (or (nth index empty) 'grid-calc--omitted)
                                     (grid-calc--argument
                                      model ast
                                      (if (and (eq kind 'values)
@@ -2449,13 +2452,14 @@ Several values for one value make the result several values too."
                         (apply (grid-calc-function-body function)
                                (cl-mapcar
                                 (lambda (value kind one)
-                                  (if (and one (not (grid-calc-err-p value)))
-                                      (grid-calc--coerce value kind)
-                                    (if (and (eq kind 'ref) (grid-calc-err-p value)
-                                             (not errors))
-                                        (grid-calc-raise
-                                         (grid-calc-err-code value))
-                                      value)))
+                                  (cond
+                                   ((eq value 'grid-calc--omitted) nil)
+                                   ((and one (not (grid-calc-err-p value)))
+                                    (grid-calc--coerce value kind))
+                                   ((and (eq kind 'ref) (grid-calc-err-p value)
+                                         (not errors))
+                                    (grid-calc-raise (grid-calc-err-code value)))
+                                   (t value)))
                                 values kinds scalar)))))))
       (if (cl-loop for value in values
                    for one in scalar

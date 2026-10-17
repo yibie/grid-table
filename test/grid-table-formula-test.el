@@ -17,6 +17,16 @@
   "Return the value of FORMULA in A1 of a row whose other cells are CELLS."
   (caar (grid-table-formula-test--values (list (cons formula cells)))))
 
+(ert-deftest grid-table-formula-offset-takes-empty-arguments-as-excel-does ()
+  ;; An empty height or width keeps the size of the reference; an
+  ;; empty row or column offset is 0.
+  (dolist (case '(("=SUM(OFFSET(B1:D1,0,0,))" . 7)
+                  ("=SUM(OFFSET(B1:D1,0,0,,2))" . 3)
+                  ("=SUM(OFFSET(B1:D1,,1))" . 6)
+                  ("=SUM(OFFSET(B1:D1,0,0,1,))" . 7)))
+    (should (equal (grid-table-formula-test--eval (car case) "1" "2" "4")
+                   (cdr case)))))
+
 (ert-deftest grid-table-formula-operators-follow-spreadsheet-rules ()
   (should (equal (grid-table-formula-test--eval "=2^3") 8))
   (should (equal (grid-table-formula-test--eval "=(-2)^3") -8))
