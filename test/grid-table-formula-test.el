@@ -22,6 +22,16 @@
   (cons (cons formula (make-list (1- cols) ""))
         (make-list (1- rows) (make-list cols ""))))
 
+(defun grid-table-formula-test--should-be (case)
+  "Check that the formula in CASE gives the value it is paired with."
+  (let* ((model (grid-model-create 1 3 (list (list (car case) "" ""))))
+         (value (grid-model-get-computed-value model 0 0))
+         (want (cdr case)))
+    (should (if (numberp want)
+                (and (numberp value)
+                     (< (abs (- value want)) (* 1e-9 (max 1 (abs want)))))
+              (and (stringp value) (equal value want))))))
+
 (ert-deftest grid-table-formula-offset-takes-empty-arguments-as-excel-does ()
   ;; An empty height or width keeps the size of the reference; an
   ;; empty row or column offset is 0.
@@ -2835,6 +2845,71 @@ package's workbooks."
       (should (if (numberp (cadr case))
                   (and (numberp value) (< (abs (- value (cadr case))) 1e-9))
                 (equal (list (car case) value) case))))))
+
+(ert-deftest grid-table-formula-finance-finds-coupons-and-accrual ()
+  "COUP*, ACCRINT and ACCRINTM as Excel has them.
+The cases are the ones the ironcalc and formulas workbooks keep
+Excel's values for."
+  (dolist (case '(("=COUPPCD(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 43831)
+                  ("=COUPNCD(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 44013)
+                  ("=COUPNUM(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 2)
+                  ("=COUPDAYBS(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 0)
+                  ("=COUPDAYSNC(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 180)
+                  ("=COUPDAYS(DATE(2020,1,1),DATE(2021,1,1),1,0)" . 360)
+                  ("=COUPDAYS(DATE(2020,1,1),DATE(2021,1,1),4,3)" . 91.25)
+                  ("=COUPDAYS(DATE(2020,1,1),DATE(2021,1,1),1,2)" . 360)
+                  ("=COUPNUM(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 17)
+                  ("=COUPPCD(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 43816)
+                  ("=COUPNCD(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 43907)
+                  ("=COUPDAYBS(DATE(2020,1,1),DATE(2024,3,17),4,1)" . 15)
+                  ("=COUPDAYSNC(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 76)
+                  ("=COUPNCD(DATE(2020,1,1),DATE(2021,1,1),3,0)" . "#NUM!")
+                  ("=COUPDAYS(DATE(2021,1,1),DATE(2020,1,1),2,0)" . "#NUM!")
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,0)"
+                   . 12.5)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,1)"
+                   . 12.568306010928962)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,2)"
+                   . 12.777777777777777)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,3)"
+                   . 12.602739726027398)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,4)"
+                   . 12.5)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,12,1),0.025,5000,2,0)"
+                   . 62.5)
+                  ("=ACCRINT(DATE(2008,3,1),DATE(2008,9,1),DATE(2008,5,1),0,1000,2,0)"
+                   . "#NUM!")
+                  ("=ACCRINT(DATE(2008,5,1),DATE(2008,9,1),DATE(2008,5,1),0.1,1000,2,0)"
+                   . "#NUM!")
+                  ("=ACCRINTM(DATE(2020,1,1),DATE(2021,1,1),0.1,1000,0)" . 100)))
+    (grid-table-formula-test--should-be case)))
+
+(ert-deftest grid-table-formula-finance-prices-bonds-and-bills ()
+  "PRICE, YIELD, the discounted securities and the bills, as Excel has them."
+  (dolist (case '(("=PRICE(DATE(2020,3,1),DATE(2030,3,1),0.06,0.07,130,1,0)"
+                   . 108.22689722310892)
+                  ("=YIELD(DATE(2020,3,1),DATE(2030,3,1),0.06,108.2268972231089,130,1,0)"
+                   . 0.07)
+                  ("=DURATION(32000,43232,0.09,0.08,1)" . 11.816961230148491)
+                  ("=MDURATION(32000,43232,0.09,0.08,1)" . 10.94163076865601)
+                  ("=DISC(39472,39614,97.975,100,0)" . 0.05207142857142884)
+                  ("=INTRATE(DATE(2027,2,15),DATE(2027,5,15),2000000,2040000,0)" . 0.08)
+                  ("=RECEIVED(32000,43232,0.01,0.014,1)" . 0.017559927308391263)
+                  ("=PRICEDISC(DATE(2020,1,15),DATE(2025,4,15),0.05,100,0)" . 73.75)
+                  ("=YIELDDISC(DATE(2020,1,15),DATE(2025,4,15),95,100,0)"
+                   . 0.010025062656641603)
+                  ("=PRICEMAT(DATE(2020,1,15),DATE(2025,4,15),DATE(2019,3,1),0.05,0.06,0)"
+                   . 94.962927756654)
+                  ("=YIELDMAT(DATE(2020,1,15),DATE(2025,4,15),DATE(2019,3,1),0.05,98,0)"
+                   . 0.05256832719519287)
+                  ("=TBILLEQ(20000,20182,0.5)" . 0.6784386617100372)
+                  ("=TBILLPRICE(20000,20182,0.5)" . 74.72222222222223)
+                  ("=TBILLYIELD(20000,20182,200)" . -0.989010989010989)
+                  ("=TBILLPRICE(20000,20182,0)" . "#NUM!")
+                  ("=PRICE(DATE(2020,3,1),DATE(2030,3,1),0.06,-0.01,130,1,0)" . "#NUM!")
+                  ("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.075,0.05,120,1,1)"
+                   . 131.5377155865953)))
+    (grid-table-formula-test--should-be case)))
 
 (provide 'grid-table-formula-test)
 
