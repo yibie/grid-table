@@ -2039,7 +2039,7 @@ it.  A part whose class is VAL comes to one value.")
   "Each parsed formula's table of classes, once worked out.")
 
 (defconst grid-calc--class-overrides
-  '(;; Excel takes the third argument on as an array, whatever the
+  `(;; Excel takes the third argument on as an array, whatever the
     ;; table says: AGGREGATE(14,6,A1:A9/(B1:B9="x"),1) needs no array
     ;; formula.
     ("AGGREGATE" V (VR RO RA))
@@ -2057,7 +2057,13 @@ it.  A part whose class is VAL comes to one value.")
     ;; LET(x,A1,ISREF(x)) is TRUE.
     ("LET" R (RO))
     ("LAMBDA" V (RO))
-    ("(APPLY)" R (RO)))
+    ("(APPLY)" R (RO))
+    ;; The tables take these for value arguments, but Excel hands them
+    ;; the reference, as the Analysis ToolPak's: in an array formula
+    ;; ERF.PRECISE(A1:C1) is #VALUE!, not the ERF of each cell.
+    ,@(mapcar (lambda (name) (list name 'V '(RR)))
+              '("ERF.PRECISE" "ERFC.PRECISE" "IMCOSH" "IMCOT" "IMCSC"
+                "IMCSCH" "IMSEC" "IMSECH" "IMSINH" "IMTAN")))
   "Classes that stand in for those of `grid-calc-argument-classes'.")
 
 (defun grid-calc--kind-class (kind)
@@ -2482,9 +2488,13 @@ An error value signals."
   "Return non-nil when an argument of KIND is one value."
   (memq kind '(number integer text bool date any)))
 
-(defun grid-calc--argument (model ast kind)
+(defun grid-calc--argument (model ast kind &optional reference)
   "Return the argument AST computed on MODEL as one of KIND wants it.
-A value for a scalar KIND may still be an array, or an error value."
+A value for a scalar KIND may still be an array, or an error value.
+REFERENCE non-nil says Excel hands the function the reference itself,
+as it does those it took from the Analysis ToolPak: a range of several
+cells is then #VALUE! where one value is wanted, as in DELTA(A1:A3),
+though an array is taken a value at a time."
   (pcase kind
     ('lazy ast)
     ('ref
@@ -2508,7 +2518,12 @@ A value for a scalar KIND may still be an array, or an error value."
          value)))
     (_
      (let ((value (grid-calc--eval model ast)))
-       (when (eq (car-safe value) 'union)
+       (when (or (eq (car-safe value) 'union)
+                 (and reference (grid-calc-ref-p value)
+                      (not (and (= (grid-calc-ref-top value)
+                                   (grid-calc-ref-bottom value))
+                                (= (grid-calc-ref-left value)
+                                   (grid-calc-ref-right value))))))
          (setq value (grid-calc-err "#VALUE!")))
        (grid-calc--scalar-or-array value)))))
 
@@ -2545,6 +2560,7 @@ A value for a scalar KIND may still be an array, or an error value."
                                                  (nth i kinds)
                                                rest)))
                  (empty (grid-calc-function-empty function))
+                 (classes (grid-calc--function-classes name))
                  (values (cl-loop for ast in arguments
                                   for kind in all-kinds
                                   for index from 0
@@ -2560,7 +2576,10 @@ A value for a scalar KIND may still be an array, or an error value."
                                      (if (and (eq kind 'values)
                                               (>= index (length kinds)))
                                          'areas
-                                       kind))))))
+                                       kind)
+                                     (eq (grid-calc--argument-class
+                                          (cadr classes) index (cddr classes))
+                                         'RR))))))
             ;; Each area of a union, as in SUM((A1,C3)), is an argument
             ;; of its own where the arguments may repeat.
             (when (cl-some (lambda (value) (eq (car-safe value) 'union)) values)

@@ -3126,6 +3126,32 @@ Excel's values for."
                   ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),0,1,0.2,0)" . 0)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-toolpak-function-takes-no-range-for-a-value ()
+  ;; Excel hands the functions of the Analysis ToolPak, and some newer
+  ;; ones like them, the reference itself: several cells where one value
+  ;; is wanted are #VALUE!, neither intersected nor taken one at a time,
+  ;; though an array is.
+  (cl-flet ((value (formula legacy)
+              (let ((model (grid-model-create
+                            3 5 '(("1" "" "" "" "") ("-2" "" "" "" "")
+                                  ("3" "" "" "" "")))))
+                (grid-model-set-raw-value model 1 4 formula)
+                (when legacy
+                  (grid-model-set-legacy model '((1 . 4))))
+                (grid-calc-forget model)
+                (grid-model-recalculate-all model)
+                (grid-model-get-computed-value model 1 4))))
+    (pcase-dolist (`(,formula ,typed ,file)
+                   '(("=DELTA(A1:A3)" "#VALUE!" "#VALUE!")
+                     ("=DELTA(A2,-2)" 1 1)
+                     ("=SUM(DELTA(A1:A3+2,0))" 1 1)
+                     ("=SUM(GESTEP({1,-2,3}))" 2 2)
+                     ("=ERF.PRECISE(A1:A3)" "#VALUE!" "#VALUE!")
+                     ("=IMSINH(A1:A3)" "#VALUE!" "#VALUE!")
+                     ("=ABS(A1:A3)" "#SPILL!" 2)))
+      (should (equal (value formula nil) typed))
+      (should (equal (value formula t) file)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
