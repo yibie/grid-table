@@ -248,9 +248,26 @@ the file it was read from, or nil, for CELL(\"filename\")."
 (defvar grid-workbook--parsed-names (make-hash-table :test 'equal)
   "Definitions of names already parsed, from their text.")
 
+(defvar grid-workbook--name-index (make-hash-table :test 'eq :weakness 'key)
+  "Maps a workbook's list of names to (LENGTH . TABLE).
+TABLE holds each entry of the list under its name in upper case.  Its
+entries change in place, so the table holds them, not definitions; one
+added makes the list longer, and a new table is made.")
+
 (defun grid-workbook-name-definition (workbook name)
   "Return the definition of NAME in WORKBOOK, ignoring case, or nil."
-  (cdr (assoc-string name (grid-workbook-names workbook) t)))
+  (let ((names (grid-workbook-names workbook)))
+    (if (length< names 16)
+        (cdr (assoc-string name names t))
+      (let ((index (gethash names grid-workbook--name-index))
+            (length (safe-length names)))
+        (unless (eql (car index) length)
+          (let ((table (make-hash-table :test 'equal :size length)))
+            (dolist (entry (reverse names))
+              (puthash (upcase (car entry)) entry table))
+            (setq index (puthash names (cons length table)
+                                 grid-workbook--name-index))))
+        (cdr (gethash (upcase name) (cdr index)))))))
 
 (defun grid-workbook--local-definition (workbook sheet name)
   "Return the definition of NAME belonging to the sheet called SHEET, or nil."
