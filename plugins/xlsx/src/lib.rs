@@ -648,13 +648,15 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
         let fields: Vec<&str> = record.split(FIELD).collect();
         match fields[0] {
             // C row col kind text bold italic color fill align format
-            // KIND is f, a:RANGE, d:RANGE, n, b or s.
+            // KIND is f, a:RANGE, d:RANGE, n, b, s or t, empty text.
             "C" if fields.len() >= 5 => {
                 let row: u32 = fields[1].parse()?;
                 let col: u32 = fields[2].parse()?;
                 let at = (col + 1, row + 1);
                 let text = fields[4];
-                if !text.is_empty() {
+                if fields[3] == "t" {
+                    sheet.cell_mut(at).set_value_string("");
+                } else if !text.is_empty() {
                     let cell = sheet.cell_mut(at);
                     match fields[3] {
                         "f" => {

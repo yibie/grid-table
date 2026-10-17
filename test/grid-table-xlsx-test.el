@@ -228,6 +228,22 @@
                        '(text)))
         (should (equal (grid-get-computed-value-at back 6 1) 3))))))
 
+(ert-deftest grid-table-xlsx-test-empty-text-is-no-blank ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    ;; A1 holds empty text, B1 nothing.
+    (let ((source (make-default-data-source
+                   '("" "" "" "" "")
+                   '(("'" "" "=A1" "=ISBLANK(A1)" "=COUNTA(A1:B1)")))))
+      (grid-table-xlsx-write-data-source source file "Empty")
+      (let ((back (grid-table-xlsx-create-data-source file "Empty")))
+        (should (equal (grid-get-raw-value-at back 0 0) "'"))
+        (should (equal (grid-get-display-value-at back 0 0) ""))
+        (should (equal (grid-get-raw-value-at back 0 1) ""))
+        (should (equal (grid-get-computed-value-at back 0 2) ""))
+        (should-not (grid-get-computed-value-at back 0 3))
+        (should (equal (grid-get-computed-value-at back 0 4) 1))))))
+
 (ert-deftest grid-table-xlsx-test-spills-and-array-formulas ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file

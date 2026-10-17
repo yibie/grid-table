@@ -154,6 +154,12 @@ impl SharedStringItem {
                     _ => (),
                 }
             },
+            // `<t/>`: an empty string, which a cell may hold, not no text.
+            Event::Empty(ref e) => {
+                if e.name().into_inner() == b"t" {
+                    self.set_text(Text::default());
+                }
+            },
             Event::End(ref e) => {
                 if e.name().into_inner() == b"si" {
                     if !vec_text_element.is_empty() {
@@ -185,5 +191,27 @@ impl SharedStringItem {
         write_start_tag(writer, "phoneticPr", vec![("fontId", "1").into()], true);
 
         write_end_tag(writer, "si");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(xml: &str) -> SharedStringItem {
+        let mut reader = Reader::from_str(xml);
+        let mut item = SharedStringItem::default();
+        loop {
+            if let Event::Start(ref e) = reader.read_event().unwrap() {
+                item.set_attributes(&mut reader, e);
+                return item;
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_t_is_an_empty_string() {
+        assert_eq!(read("<si><t/></si>").text().map(Text::value), Some(""));
+        assert_eq!(read("<si><t>a</t></si>").text().map(Text::value), Some("a"));
     }
 }

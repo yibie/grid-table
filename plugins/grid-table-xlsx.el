@@ -392,7 +392,9 @@ not.  A formula loses the prefixes a workbook gives newer functions."
   (let ((value (nth 2 cell)))
     (cond ((plist-get (nthcdr 3 cell) :text)
            ;; grid-table's own formulas travel as text and come back.
-           (if (and (grid-table--reads-as-other-than-text-p value)
+           ;; Empty text is no blank: =A1 of it is "", not 0.
+           (if (and (or (equal value "")
+                        (grid-table--reads-as-other-than-text-p value))
                     (let ((case-fold-search t))
                       (not (string-match-p grid-table-xlsx--own-formula-regexp
                                            value))))
@@ -893,7 +895,8 @@ is its record kind, as `grid-table-xlsx--array-kind' gives it."
                 ;; the text format, as it does in a spreadsheet.
                 ((string-prefix-p "'" text)
                  (setq text (substring text 1))
-                 "s")
+                 ;; Empty text, which is not nothing, is t.
+                 (if (string-empty-p text) "t" "s"))
                 ((and (string-prefix-p "=" text) (> (length text) 1)
                       (not (string-match-p
                             grid-table-xlsx--own-formula-regexp text)))
@@ -903,7 +906,7 @@ is its record kind, as `grid-table-xlsx--array-kind' gives it."
                 ((string-match-p grid-table-xlsx--number-regexp text) "n")
                 ((member text '("TRUE" "FALSE")) "b")
                 (t "s"))))
-    (unless (and (string-empty-p text) (null style))
+    (unless (and (string-empty-p text) (null style) (not (equal kind "t")))
       (mapconcat #'identity
                  (append (list "C" (number-to-string row)
                                (number-to-string col) kind text)
