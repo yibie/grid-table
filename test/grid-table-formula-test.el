@@ -1396,6 +1396,8 @@
           ;; share a function's name, as Excel allows: Rate is one.
           (should (grid-calc-name-problem "TAX1"))
           (should (grid-calc-name-problem "Q1Sales"))
+          ;; No sheet has a column GLOBAL, so Global1 is a name.
+          (should-not (grid-calc-name-problem "Global1"))
           (should-not (grid-calc-name-problem "Sum"))
           (should (grid-calc-name-problem "TRUE"))
           (should-not (grid-calc-name-problem "Sales_2024"))
