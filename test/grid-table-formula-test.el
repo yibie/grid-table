@@ -3537,6 +3537,14 @@ Excel's values for."
           ("=NOMINAL(TRUE,NA())" . "#VALUE!") ("=EFFECT(0.1,TRUE)" . "#VALUE!")
           ("=FVSCHEDULE(TRUE,{0.1,0.2})" . "#VALUE!"))))
 
+(ert-deftest grid-table-formula-test-quartile-error-first ()
+  "QUARTILE gives an error in its numbers before a QUART out of range."
+  (dolist (f '("=QUARTILE(B1:C1,-5)" "=QUARTILE.INC(B1:C1,9)"
+               "=QUARTILE.EXC(B1:C1,0)"))
+    (should (equal (grid-table-formula-test--eval f "#REF!" "1") "#REF!")))
+  (should (equal (grid-table-formula-test--eval "=QUARTILE(B1:C1,D1)" "#NUM!" "1" "#REF!")
+                 "#REF!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

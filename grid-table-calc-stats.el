@@ -758,18 +758,22 @@ EXCLUSIVE leaves out the first and last as PERCENTILE.EXC does."
 
 (grid-calc-define quartile.inc ((numbers values) (quart number))
   "The QUART quartile of NUMBERS, 0 their smallest to 4 their largest.
-A fraction is cut off, but one below 0 is #NUM!, as in Excel."
-  (unless (<= 0 quart) (grid-calc-raise "#NUM!"))
-  (setq quart (truncate quart))
-  (unless (<= quart 4) (grid-calc-raise "#NUM!"))
-  (grid-calc--percentile (grid-calc-numbers (list numbers)) (/ quart 4.0) nil))
+A fraction is cut off, but one below 0 is #NUM!, as in Excel.  An error
+in NUMBERS comes before QUART is checked."
+  (let ((numbers (grid-calc-numbers (list numbers))))
+    (unless (<= 0 quart) (grid-calc-raise "#NUM!"))
+    (setq quart (truncate quart))
+    (unless (<= quart 4) (grid-calc-raise "#NUM!"))
+    (grid-calc--percentile numbers (/ quart 4.0) nil)))
 
 (grid-calc-alias quartile quartile.inc)
 
 (grid-calc-define quartile.exc ((numbers values) (quart integer))
-  "The QUART quartile of NUMBERS, 1 to 3, the ends left out."
-  (unless (<= 1 quart 3) (grid-calc-raise "#NUM!"))
-  (grid-calc--percentile (grid-calc-numbers (list numbers)) (/ quart 4.0) t))
+  "The QUART quartile of NUMBERS, 1 to 3, the ends left out.
+An error in NUMBERS comes before QUART is checked."
+  (let ((numbers (grid-calc-numbers (list numbers))))
+    (unless (<= 1 quart 3) (grid-calc-raise "#NUM!"))
+    (grid-calc--percentile numbers (/ quart 4.0) t)))
 
 (defun grid-calc--percent-rank (numbers number digits exclusive)
   "Return where NUMBER stands among NUMBERS, to DIGITS places.
