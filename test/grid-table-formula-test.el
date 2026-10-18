@@ -3081,6 +3081,14 @@ Excel's values for."
                   ("=EFFECT(0.2,12)" . 0.21939108490523163)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-prices-a-bill-past-half-a-year ()
+  "TBILLEQ past 182 days, as a bond paying twice a year would yield."
+  (dolist (case '(("=TBILLEQ(DATE(2024,4,1),DATE(2025,3,4),0.3)" . 0.3883686423017574)
+                  ("=TBILLEQ(2040,2400,0.8)" . 2.5066048253748145)
+                  ("=TBILLEQ(2040,2223,0.8)" . 1.364497682211261)
+                  ("=TBILLEQ(20000,20182,0.5)" . 0.6784386617100372)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

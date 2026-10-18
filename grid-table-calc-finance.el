@@ -673,9 +673,17 @@ METHOD non-nil counts from ISSUE, nil from the coupon before FIRST."
   (let* ((days (grid-calc--finance-bill-days settlement maturity))
          (price (* 100 (- 1 (/ (* discount days) 360.0)))))
     (when (<= price 0) (grid-calc-raise "#NUM!"))
-    (if (<= days 182)
-        (/ (* 365.0 discount) (- 360 (* discount days)))
-      (* 2 (- (sqrt (/ 100.0 price)) 1)))))
+    (cond
+     ((<= days 182) (/ (* 365.0 discount) (- 360 (* discount days))))
+     ;; A year or less: the rate a bond paying twice a year would pay.
+     ((<= days 365)
+      (let* ((years (/ days 365.0))
+             (squared (- (* years years)
+                         (* (- (* 2 years) 1) (- 1 (/ 100.0 price))))))
+        (when (< squared 0) (grid-calc-raise "#NUM!"))
+        (/ (+ (* -2 years) (* 2 (sqrt squared)))
+           (- (* 2 years) 1))))
+     (t (* 2 (- (sqrt (/ 100.0 price)) 1))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Bonds
