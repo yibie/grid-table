@@ -842,7 +842,9 @@ with BY-COL.  With ONCE only rows that come only once."
   "The rows of ARRAY whose value in INCLUDE is true, or its columns when
 INCLUDE is a row.  EMPTY is given when none is; without it #CALC!."
   (let* ((by-col (and (= (grid-calc-array-rows include) 1)
-                      (> (grid-calc-array-cols include) 1)))
+                      ;; One value is a row for an ARRAY of one column.
+                      (or (> (grid-calc-array-cols include) 1)
+                          (= (grid-calc-array-cols array) 1))))
          (lines (grid-calc--lines array by-col))
          (keep (grid-calc-array-values include)))
     (unless (= (length keep) (length lines)) (grid-calc-raise "#VALUE!"))

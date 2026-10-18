@@ -3639,6 +3639,12 @@ Excel's values for."
                   ("=XMATCH(\"ß\",{1,\"ss\",2.1},2)" . "#N/A")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-filter-one-flag ()
+  "FILTER takes one value as the row of flags of an array of one column."
+  (should (equal (grid-table-formula-test--eval "=ROWS(FILTER({\"a\";2.1;\"b\"},TRUE))") 3))
+  (should (equal (grid-table-formula-test--eval "=FILTER({\"a\",2.1;\"b\",4.1},TRUE)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=FILTER({\"a\";2.1},FALSE)") "#CALC!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
