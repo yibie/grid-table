@@ -450,18 +450,25 @@ MODE and SEARCH are as XMATCH's."
 ;;; Making references
 ;;;----------------------------------------------------------------------
 
-(grid-calc-define index ((source values) (row integer)
-                         &optional (column integer) (_area integer))
+(grid-calc-define index ((source areas) (row integer)
+                         &optional (column integer) (area integer 1))
   "The value at ROW and COLUMN of SOURCE, counted from 1.
-SOURCE of one row takes a lone ROW as its column.  ROW 0 gives the
+SOURCE of several areas is looked in its AREA'th.  SOURCE of one row
+takes a lone ROW as its column; a range of several rows and columns
+needs COLUMN, an array of them gives the whole row.  ROW 0 gives the
 whole column and COLUMN 0 the whole row.  A range gives a reference.
-A ROW or COLUMN below 0 is #VALUE!, past SOURCE #REF!."
+A ROW or COLUMN below 0 is #VALUE!, past SOURCE or its areas #REF!."
+  (let ((areas (if (eq (car-safe source) 'union) (cdr source) (list source))))
+    (unless (<= 1 area (length areas)) (grid-calc-raise "#REF!"))
+    (setq source (nth (1- area) areas)))
   (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size source)))
     (when (and (null column) (= rows 1) (> cols 1))
       (setq column row row 1))
+    (when (or (< row 0) (and column (< column 0)))
+      (grid-calc-raise "#VALUE!"))
+    (when (and (null column) (> cols 1) (grid-calc-ref-p source))
+      (grid-calc-raise "#REF!"))
     (setq column (or column (if (= cols 1) 1 0)))
-    (when (and (null column) (> cols 1)) (grid-calc-raise "#REF!"))
-    (when (or (< row 0) (< column 0)) (grid-calc-raise "#VALUE!"))
     (unless (and (<= 0 row rows) (<= 0 column cols))
       (grid-calc-raise "#REF!"))
     (grid-calc--part source

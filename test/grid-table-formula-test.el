@@ -3572,6 +3572,20 @@ Excel's values for."
           ("=DATEDIF(DATE(2001,6,1),DATE(2002,8,15),\"YD\")" . 75)
           ("=DATEDIF(DATE(2015,3,1),DATE(2016,2,29),\"YD\")" . 365))))
 
+;; INDEX looks in the AREA'th of several areas, and a range of several
+;; rows and columns needs a column.
+(ert-deftest grid-table-formula-test-index-areas ()
+  (dolist (case '(("=INDEX((B1:B2,C1:C2),1,1,2)" . 2)
+                  ("=INDEX((B1:B2,C1:C2),1,1)" . 1)
+                  ("=INDEX((B1:B2,C1:C2),1,1,3)" . "#REF!")
+                  ("=INDEX(B1:C2,1,1,2)" . "#REF!")
+                  ("=INDEX(B1:C2,2)" . "#REF!")
+                  ("=INDEX(B1:C2,-1)" . "#VALUE!")
+                  ("=INDEX(B1:D1,2)" . 2)
+                  ("=SUM(INDEX({1,2;3,4},2))" . 7)))
+    (should (equal (grid-table-formula-test--eval (car case) "1" "2" "3")
+                   (cdr case)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
