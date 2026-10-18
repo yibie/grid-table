@@ -278,8 +278,10 @@ kind being below or above as Excel sorts them."
   "The position of WANTED in VALUES, one row or column, counted from 1.
 TYPE 0 finds a value equal to WANTED, where text may hold wildcards;
 1 the last not above it in values sorted up; -1 the last not below it in
-values sorted down.  #N/A when there is none."
-  (when (grid-calc-blank-p wanted) (grid-calc-raise "#N/A"))
+values sorted down.  #N/A when there is none; a blank WANTED is
+sought as 0 in sorted values."
+  (when (grid-calc-blank-p wanted)
+    (if (= type 0) (grid-calc-raise "#N/A") (setq wanted 0)))
   (pcase-let ((`(,length . ,getter) (grid-calc--line-of values)))
     (let ((found (cond ((= type 0)
                         (grid-calc--find-exact wanted length getter nil t
@@ -359,12 +361,12 @@ value, -1 at the last."
 (defun grid-calc--table-lookup (wanted table index approximate across)
   "Look WANTED up in the first column of TABLE and give column INDEX.
 ACROSS looks along the first row and gives row INDEX instead, as HLOOKUP
-does.  APPROXIMATE takes the last value not above WANTED."
-  (when (grid-calc-blank-p wanted) (grid-calc-raise "#N/A"))
+does.  APPROXIMATE takes the last value not above WANTED, as 0 when
+it is blank."
+  (when (grid-calc-blank-p wanted)
+    (if approximate (setq wanted 0) (grid-calc-raise "#N/A")))
   (pcase-let ((`(,rows . ,cols) (grid-calc--table-size table))
               (`(,full-rows . ,full-cols) (grid-calc--table-full-size table)))
-    (unless (<= 1 index (if across full-rows full-cols))
-      (grid-calc-raise (if (< index 1) "#VALUE!" "#REF!")))
     (let* ((length (if across cols rows))
            (getter (if across (lambda (i) (grid-calc--table-at table 0 i))
                      (lambda (i) (grid-calc--table-at table i 0))))
@@ -372,7 +374,10 @@ does.  APPROXIMATE takes the last value not above WANTED."
                       (grid-calc--find-sorted wanted length getter)
                     (grid-calc--find-exact wanted length getter nil t
                                            (cons table (if across 'row 'column))))))
+      ;; Only a value found is looked for in INDEX.
       (cond ((null found) (grid-calc-err "#N/A"))
+            ((not (<= 1 index (if across full-rows full-cols)))
+             (grid-calc-err (if (< index 1) "#VALUE!" "#REF!")))
             (across (grid-calc--table-at table (1- index) found))
             (t (grid-calc--table-at table found (1- index)))))))
 
@@ -393,7 +398,8 @@ See VLOOKUP."
   "The value matching WANTED in sorted VALUES, or the same place of RESULTS.
 Without RESULTS, VALUES wider than tall is looked along its first row
 and gives its last row; otherwise along its first column, giving its
-last column."
+last column.  A blank WANTED is sought as 0."
+  (when (grid-calc-blank-p wanted) (setq wanted 0))
   (pcase-let ((`(,rows . ,cols) (grid-calc--table-size values)))
     (let* ((across (and (null results) (> cols rows)))
            (length (cond (results (car (grid-calc--line-of values)))

@@ -1006,6 +1006,18 @@
     (should (equal (mapcar #'car (grid-table-formula-test--values rows))
                    '("mid" "#N/A" "high" "mid" "#N/A" "#REF!")))))
 
+(ert-deftest grid-table-formula-sorted-lookup-takes-a-blank-for-0 ()
+  ;; A3 is blank: sought among sorted values it is 0, matched exactly
+  ;; it is nothing.  An index past the table is looked at only when the
+  ;; value is found.
+  (should (equal (car (grid-table-formula-test--values
+                       '(("0" "a" "=VLOOKUP(A3,A1:B2,2)" "=MATCH(A3,A1:A2)"
+                          "=LOOKUP(A3,A1:A2,B1:B2)" "=MATCH(A3,A1:A2,0)"
+                          "=VLOOKUP(A3,B1:B2,0)")
+                         ("1" "b" "" "" "" "" "")
+                         ("" "" "" "" "" "" ""))))
+                 '("0" "a" "a" 1 "a" "#N/A" "#N/A"))))
+
 (ert-deftest grid-table-formula-match-down-stops-at-an-equal-value ()
   ;; Values read from the first, the search stops at the first below
   ;; WANTED or after the run of those equal to it.
