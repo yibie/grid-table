@@ -3373,6 +3373,13 @@ Excel's values for."
   (should (equal (grid-table-formula-test--eval "=WORKDAY.INTL(1,30,B1)" "=1/0")
                  "#NUM!")))
 
+(ert-deftest grid-table-formula-coupdaysnc-on-30-360-is-the-rest-of-the-period ()
+  "On a 30/360 basis Excel gives COUPDAYS less COUPDAYBS, not DAYS360 to the next."
+  (dolist (case '(("=COUPDAYSNC(7,DATE(2050,12,31),1,0)" . 353)
+                  ("=COUPDAYSNC(3.2,DATE(2050,12,31),1,0)" . 357)
+                  ("=COUPDAYSNC(DATE(2011,1,25),DATE(2011,11,15),2,1)" . 110)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

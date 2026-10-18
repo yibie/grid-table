@@ -467,14 +467,17 @@ MONTHS how many months before MATURITY PCD stands."
   "Return (N PCD NCD A DSC E) of the coupons about SETTLEMENT.
 N is how many coupons are still to come, A the days from the coupon
 before SETTLEMENT, DSC the days to the one after, and E the days of
-the coupon period."
+the coupon period.  On a 30/360 BASIS, DSC is E less A, as Excel has
+it, not the days counted that way to the next coupon."
   (pcase-let* ((`(,pcd ,ncd ,months)
                 (grid-calc--finance-coupons settlement maturity frequency))
-               (step (grid-calc--finance-step frequency)))
-    (list (/ months step) pcd ncd
-          (grid-calc--finance-days pcd settlement basis)
-          (grid-calc--finance-days settlement ncd basis)
-          (grid-calc--finance-period-days pcd ncd frequency basis))))
+               (step (grid-calc--finance-step frequency))
+               (a (grid-calc--finance-days pcd settlement basis))
+               (e (grid-calc--finance-period-days pcd ncd frequency basis)))
+    (list (/ months step) pcd ncd a
+          (if (memq basis '(0 4)) (- e a)
+            (grid-calc--finance-days settlement ncd basis))
+          e)))
 
 (defun grid-calc--finance-bond-period (pcd ncd frequency basis)
   "The days of the coupon period PCD to NCD, as a bond counts them."
