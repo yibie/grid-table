@@ -3352,6 +3352,14 @@ Excel's values for."
                   (cons '("=FREQUENCY({1,2,3,0,-1},B1)" "") '(("" ""))))
                  '((2 "") (3 "")))))
 
+(ert-deftest grid-table-formula-beta-inv-takes-a-chance-above-0 ()
+  "BETA.INV of a chance of 0 is #NUM!, and of 1 the top of its range."
+  (dolist (case '(("=BETA.INV(0,4,4)" . "#NUM!")
+                  ("=BETAINV(0,3,2)" . "#NUM!")
+                  ("=BETA.INV(1,2,2)" . 1)
+                  ("=BETA.INV(1,2,2,3,5)" . 5)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

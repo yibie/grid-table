@@ -473,10 +473,11 @@ its density."
                             &optional (low number 0) (high number 1))
   "X where the beta distribution of ALPHA and BETA, between LOW and
 HIGH, is P."
-  (grid-calc--require (<= 0 p 1) (> alpha 0) (> beta 0) (< low high))
-  (+ low (* (- high low)
-            (grid-calc--invert (lambda (y) (grid-calc--beta-i y alpha beta))
-                               p 0.0 1.0))))
+  (grid-calc--require (< 0 p) (<= p 1) (> alpha 0) (> beta 0) (< low high))
+  (if (= p 1) high
+    (+ low (* (- high low)
+              (grid-calc--invert (lambda (y) (grid-calc--beta-i y alpha beta))
+                                 p 0.0 1.0)))))
 
 (grid-calc-alias betainv beta.inv)
 
