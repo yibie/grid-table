@@ -209,11 +209,19 @@ are the last day of February."
         (when (and (= d2 31) (>= d1 30)) (setq d2 30))))
     (+ (* 360 (- y2 y1)) (* 30 (- m2 m1)) (- d2 d1))))
 
-(grid-calc-define days360 ((start date) (end date) &optional (european bool))
+(defun grid-calc--days-360-day (value)
+  "Return VALUE as the day DAYS360 counts it on.
+A time within half a second of midnight counts on to the next day, as
+Excel keeps a time to the second."
+  (let ((serial (grid-calc--snap (float value))))
+    (grid-calc--day-checked
+     (floor (grid-calc--snap (+ serial (/ 0.5 86400.0)))) t)))
+
+(grid-calc-define days360 ((start number) (end number) &optional (european bool))
   "The days from START to END in a year of twelve 30-day months.
 The day after 9999-12-31 is #NUM! here, as in Excel."
-  (grid-calc--days-360 (grid-calc--day-checked start t)
-                       (grid-calc--day-checked end t)
+  (grid-calc--days-360 (grid-calc--days-360-day start)
+                       (grid-calc--days-360-day end)
                        european))
 
 (defun grid-calc--leap-year-p (year)

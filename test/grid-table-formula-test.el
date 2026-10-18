@@ -3760,6 +3760,22 @@ The cases are IronCalc's TRIGONOMETRIC workbook, as Excel keeps them."
                   ("=CSCH(0)" . "#DIV/0!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-days360-rounds-a-time-to-the-second ()
+  "DAYS360 counts a day whose time is within half a second of midnight.
+The cases are IronCalc's DAYS_DAYS360 workbook, as Excel keeps them."
+  (dolist (case '(("=DAYS360(DATE(2025,1,1),DATE(2025,12,1))" . 330)
+                  ("=DAYS360(DATE(2025,1,1),DATE(2025,1,31))" . 30)
+                  ("=DAYS360(DATE(2025,1,1),DATE(2025,1,31),TRUE)" . 29)
+                  ;; A time just before midnight is the next day.
+                  ("=DAYS360(45992.000001,46000.999999)" . 9)
+                  ("=DAYS360(45658.0000001,45658.9999999)" . 1)
+                  ("=DAYS360(45658.9999999,45659.0000001)" . 0)
+                  ("=DAYS360(45658.9999999,45658)" . -1)
+                  ;; A day and a half is one day either way.
+                  ("=DAYS360(45658.5,45659.5)" . 1)
+                  ("=DAYS360(45658.4999999,45659.5)" . 1)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
