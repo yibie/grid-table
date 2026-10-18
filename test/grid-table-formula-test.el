@@ -3562,6 +3562,13 @@ Excel's values for."
         '(("=DAY(2958466)" . "#NUM!") ("=MONTH(2958466)" . "#NUM!")
           ("=YEAR(2958466)" . "#NUM!") ("=DAY(2958465)" . 31))))
 
+(ert-deftest grid-table-formula-test-datedif-yd-start-year ()
+  "DATEDIF's YD counts in START's year, as Excel does."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=DATEDIF(8,1987,\"YD\")" . 153)
+          ("=DATEDIF(DATE(2001,6,1),DATE(2002,8,15),\"YD\")" . 75)
+          ("=DATEDIF(DATE(2015,3,1),DATE(2016,2,29),\"YD\")" . 365))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

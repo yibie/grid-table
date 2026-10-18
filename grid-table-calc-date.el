@@ -276,10 +276,12 @@ BASIS 0 is US 30/360, 1 actual days by actual years, 2 actual/360,
         ("YM" (% months 12))
         ("MD" (if (>= d2 d1) (- d2 d1)
                 (- end (grid-calc-date-serial y2 (1- m2) d1))))
-        ("YD" (let ((anniversary (grid-calc-date-serial
-                                  (if (or (> m2 m1) (and (= m2 m1) (>= d2 d1))) y2 (1- y2))
-                                  m1 d1)))
-                (- end anniversary)))
+        ;; Excel moves END into START's year, or the next, and counts
+        ;; the days to it from START, so 1900 has its 29 February.
+        ("YD" (let ((moved (grid-calc-date-serial
+                            (if (or (> m2 m1) (and (= m2 m1) (>= d2 d1))) y1 (1+ y1))
+                            m2 d2)))
+                (- moved start)))
         (_ (grid-calc-raise "#NUM!"))))))
 
 ;;;----------------------------------------------------------------------
