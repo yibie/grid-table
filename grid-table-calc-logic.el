@@ -133,17 +133,23 @@ LAMBDA(x,x+1)(5) is 6."
         (eq (cdr (assoc (upcase (cadr name)) grid-calc--locals))
             'grid-calc--omitted))))
 
+(defun grid-calc--function-or-value (ast)
+  "Return what the lazy argument AST gives, as a `values' argument.
+A built-in function's name alone is that function, a `grid-calc-lambda',
+as SUM is in BYROW(A1:B2,SUM)."
+  (pcase ast
+    ((and `(NAME ,name)
+          (guard (not (assoc (upcase name) grid-calc--locals)))
+          (guard (not (grid-calc--name-ast name)))
+          (guard (gethash (upcase name) grid-calc-functions)))
+     (grid-calc-lambda--make :function (upcase name)))
+    (_ (grid-calc-arg ast 'values))))
+
 (defun grid-calc--function-argument (ast)
   "Return the function the lazy argument AST gives, a `grid-calc-lambda'.
 A built-in function's name alone is that function, as SUM is in
 BYROW(A1:B2,SUM).  Anything else is #VALUE!."
-  (let ((value (pcase ast
-                 ((and `(NAME ,name)
-                       (guard (not (assoc (upcase name) grid-calc--locals)))
-                       (guard (not (grid-calc--name-ast name)))
-                       (guard (gethash (upcase name) grid-calc-functions)))
-                  (grid-calc-lambda--make :function (upcase name)))
-                 (_ (grid-calc-arg ast 'values)))))
+  (let ((value (grid-calc--function-or-value ast)))
     (cond ((grid-calc-lambda-p value) value)
           ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
           (t (grid-calc-raise "#VALUE!")))))
@@ -522,11 +528,12 @@ A range gives what its first cell holds."
         ((grid-calc-array-p value) (grid-calc-aref value 0 0))
         (t value)))
 
-(grid-calc-define type ((value values))
+(grid-calc-define type ((value lazy))
   "What VALUE is: 1 a number or blank, 2 text, 4 TRUE or FALSE, 16 an
-error value, 64 several values and 128 a function, as LAMBDA makes."
+error value, 64 several values and 128 a function, as LAMBDA makes or
+a built-in function's name is."
   :errors t
-  (let ((value (grid-calc--deref value)))
+  (let ((value (grid-calc--deref (grid-calc--function-or-value value))))
     (cond ((grid-calc-array-p value) 64)
           ((grid-calc-lambda-p value) 128)
           ((stringp value) 2)

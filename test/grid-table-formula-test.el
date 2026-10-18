@@ -3500,6 +3500,11 @@ Excel's values for."
           ("=HYPGEOM.DIST(0,2,3,3,TRUE)" . 0.0)
           ("=HYPGEOM.DIST(5,10,30,7,FALSE)" . "#NUM!"))))
 
+(ert-deftest grid-table-formula-test-type-of-function-name ()
+  "TYPE of a built-in function's name alone is 128."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=TYPE(SUM)" . 128) ("=TYPE(NOSUCHNAME)" . 16) ("=TYPE(1/0)" . 16))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
