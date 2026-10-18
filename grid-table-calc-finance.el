@@ -477,10 +477,11 @@ coupon period unless BASIS counts a year as 360 days even of them."
     (_ (float (- first (grid-calc--finance-coupon-date
                         first (grid-calc--finance-step frequency)))))))
 
-(defun grid-calc--finance-accrued (start settle first frequency basis)
+(defun grid-calc--finance-accrued (start settle first frequency basis whole)
   "The coupon periods accrued from START to SETTLE, on FIRST's coupons.
 A coupon period that ends before FIRST counts as its normal length,
-whatever its own, as ACCRINT counts an odd first period."
+whatever its own, as ACCRINT counts an odd first period.  With WHOLE, a
+period that is over before SETTLE counts as one, whatever its days."
   (let ((sign 1.0) (total 0.0)
         (normal (grid-calc--finance-normal-length first frequency basis))
         (step (grid-calc--finance-step frequency)))
@@ -499,7 +500,9 @@ whatever its own, as ACCRINT counts an odd first period."
                  (days (grid-calc--finance-days low high basis)))
             (when (and (= low pcd) (< ncd first))
               (setq days (+ days (- normal length))))
-            (setq total (+ total (/ days (float normal)))))
+            (setq total (+ total (if (and whole (= low pcd) (< ncd settle))
+                                     1.0
+                                   (/ days (float normal))))))
           (setq months (- months step)
                 pcd ncd
                 ncd (grid-calc--finance-coupon-date first (- months step))))))
@@ -524,8 +527,9 @@ METHOD non-nil counts from ISSUE, nil from the coupon before FIRST."
                         (/= issue (grid-calc--finance-coupon-date first months)))
                     issue
                   (grid-calc--finance-coupon-date first step))))
-    (* par (/ rate frequency)
-       (grid-calc--finance-accrued start settlement first frequency basis))))
+    (* par (/ (float rate) frequency)
+       (grid-calc--finance-accrued start settlement first frequency basis
+                                    method))))
 
 (grid-calc-define accrintm ((issue date) (settlement date) (rate number)
                             (par number) &optional (basis integer 0))

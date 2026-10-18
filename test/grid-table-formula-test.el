@@ -3029,6 +3029,18 @@ Excel's values for."
                   ("=VDB(10000,1000,10,0,1)" . 2000)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-counts-whole-periods-once ()
+  "A coupon period over before settlement counts as one, but only from the issue."
+  (dolist (case '(("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2022,3,1),0.025,5000,2,2)"
+                   . 93.75)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2022,3,1),0.025,5000,2,2,FALSE)"
+                   . 94.79166666666666)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2022,9,1),0.025,5000,2,2)"
+                   . 156.94444444444443)
+                  ("=ACCRINT(DATE(2005,1,15),DATE(2007,1,1),DATE(2009,4,15),1,1,4,0)"
+                   . 4.25)))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-finance-finds-a-rate-below-nothing ()
   "IRR walks to a rate under zero, and XIRR refuses a rate of nothing or less."
   (dolist (case '(("=IRR({-5,1})" . -0.8)
