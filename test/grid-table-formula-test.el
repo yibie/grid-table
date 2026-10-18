@@ -3556,6 +3556,12 @@ Excel's values for."
   (mapc #'grid-table-formula-test--should-be
         '(("=NEGBINOM.DIST(1,1,0,TRUE)" . "#NUM!") ("=NEGBINOMDIST(1,1,0)" . "#NUM!"))))
 
+(ert-deftest grid-table-formula-test-date-parts-past-9999 ()
+  "YEAR, MONTH and DAY refuse the day after 9999-12-31."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=DAY(2958466)" . "#NUM!") ("=MONTH(2958466)" . "#NUM!")
+          ("=YEAR(2958466)" . "#NUM!") ("=DAY(2958465)" . 31))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

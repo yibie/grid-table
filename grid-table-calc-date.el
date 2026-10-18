@@ -94,15 +94,15 @@ carries over into the years and months around it."
 
 (grid-calc-define year ((date date))
   "The year of DATE."
-  (nth 0 (grid-calc-serial-date date)))
+  (nth 0 (grid-calc-serial-date (grid-calc--day-checked date t))))
 
 (grid-calc-define month ((date date))
   "The month of DATE, 1 to 12."
-  (nth 1 (grid-calc-serial-date date)))
+  (nth 1 (grid-calc-serial-date (grid-calc--day-checked date t))))
 
 (grid-calc-define day ((date date))
   "The day of the month of DATE."
-  (nth 2 (grid-calc-serial-date date)))
+  (nth 2 (grid-calc-serial-date (grid-calc--day-checked date t))))
 
 (grid-calc-define hour ((time any))
   "The hour of TIME, 0 to 23."
