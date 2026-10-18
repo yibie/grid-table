@@ -3472,6 +3472,14 @@ Excel's values for."
                   ("=SMALL({1,2},0.5)" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-test-complex-mixed-suffix ()
+  "IMSUB and IMDIV give #NUM! for mixed suffixes, IMSUM #VALUE!."
+  (mapc #'grid-table-formula-test--should-be
+   '(("=IMSUB(\"3.1+2j\",\"-3+2i\")" . "#NUM!")
+     ("=IMDIV(\"3.1+2j\",\"-3+2i\")" . "#NUM!")
+     ("=IMSUM(\"3.1+2j\",\"-3+2i\")" . "#VALUE!")
+     ("=IMPRODUCT(\"3.1+2j\",\"-3+2i\")" . "#VALUE!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

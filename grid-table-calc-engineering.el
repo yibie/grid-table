@@ -249,6 +249,11 @@ exponent much sooner: 1e-16 is 0.0000000000000001, 1e-20 is 1E-20."
     (when (cdr suffixes) (grid-calc-raise "#VALUE!"))
     (car suffixes)))
 
+(defun grid-calc--complex-suffix-pair (x y)
+  "Return the suffix X and Y share, or #NUM!, as IMSUB and IMDIV do."
+  (condition-case nil (grid-calc--complex-suffix x y)
+    (grid-calc-error (grid-calc-raise "#NUM!"))))
+
 (grid-calc-define complex ((real number) (imag number) &optional (suffix text "i"))
   "The complex number REAL + IMAG SUFFIX, SUFFIX being i or j."
   :toolpak t
@@ -303,7 +308,7 @@ An empty cell is zero here, so that IMPRODUCT of it is 0."
   "The complex number A less B."
   (let* ((x (grid-calc--complex a)) (y (grid-calc--complex b)))
     (grid-calc--complex-text (- (nth 0 x) (nth 0 y)) (- (nth 1 x) (nth 1 y))
-                             (grid-calc--complex-suffix x y))))
+                             (grid-calc--complex-suffix-pair x y))))
 
 (defun grid-calc--complex-times (x y)
   "Return the product of the complex numbers X and Y, as (REAL IMAG)."
@@ -327,7 +332,7 @@ An empty cell is zero here, so that IMPRODUCT of it is 0."
     (grid-calc--complex-text
      (/ (+ (* (nth 0 x) (nth 0 y)) (* (nth 1 x) (nth 1 y))) den)
      (/ (- (* (nth 1 x) (nth 0 y)) (* (nth 0 x) (nth 1 y))) den)
-     (grid-calc--complex-suffix x y))))
+     (grid-calc--complex-suffix-pair x y))))
 
 (defun grid-calc--complex-polar (number)
   "Return NUMBER, a parsed complex number, as (MODULUS ANGLE SUFFIX)."
