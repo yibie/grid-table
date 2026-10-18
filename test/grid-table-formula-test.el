@@ -2478,6 +2478,15 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval
                   "=XMATCH(B1,{-1.1,2.1,3.1,4.1},1)" "") "#N/A")))
 
+(ert-deftest grid-table-formula-xmatch-halves-values-not-sorted-as-excel-does ()
+  ;; The middle of the first and last value, both searched, rounded down
+  (dolist (case '(("=XMATCH(4.1,{\"\",\"a\",1.1,4.1},0,2)" . "#N/A")
+                  ("=XMATCH(4.1,{\"c\",4.1,\"a\",1.1},0,2)" . 2)
+                  ("=XMATCH(4.1,{\"\",4.1,\"a\",1.1},1,2)" . 2)
+                  ("=XMATCH(4.1,{TRUE,4.1,FALSE,\"c\"},-1,-2)" . 2)
+                  ("=XMATCH(FALSE,{\"a\",2,FALSE,4.1,3,2.1,2,FALSE,9,9},-1,2)" . 8)))
+    (should (equal (grid-table-formula-test--eval (car case)) (cdr case)))))
+
 (ert-deftest grid-table-formula-xlookup-takes-no-wildcards-by-halves ()
   (should (equal (grid-table-formula-test--eval "=XMATCH(\"b\",{\"a\",\"b\"},2,2)")
                  "#VALUE!"))

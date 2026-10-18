@@ -308,24 +308,25 @@ then TRUE and FALSE, then blanks and error values."
 (defun grid-calc--find-bisecting (wanted length getter mode descending)
   "Return the position XLOOKUP's search by halves finds for WANTED, or nil.
 LENGTH values read with GETTER are taken as sorted up, or down when
-DESCENDING; MODE is its match_mode, 0, -1 or 1.  Values sorted down are
-searched as if read from the last, sorted up: of several equal to
+DESCENDING; MODE is its match_mode, 0, -1 or 1.  As Excel searches, the
+values from LOW to HIGH, both in, are halved at the middle rounded down,
+so in values not sorted it lands where Excel does.  Of several equal to
 WANTED, the first is found in values sorted up, the last in values
-sorted down, as Excel finds them."
-  (let ((at (if descending (lambda (j) (funcall getter (- length j 1))) getter))
-        (low 0) (high length))
-    ;; Find LOW, the first value not before WANTED.
-    (while (< low high)
-      (let ((middle (/ (+ low high) 2)))
-        (if (< (grid-calc--sort-order (funcall at middle) wanted) 0)
-            (setq low (1+ middle))
-          (setq high middle))))
-    (let ((j (cond ((and (< low length)
-                         (eql (grid-calc--sort-order (funcall at low) wanted) 0))
-                    low)
-                   ((= mode 1) (and (< low length) low))
-                   ((= mode -1) (and (> low 0) (1- low))))))
-      (and j (if descending (- length j 1) j)))))
+sorted down."
+  (let ((low 0) (high (1- length)) found)
+    (while (<= low high)
+      (let* ((middle (/ (+ low high) 2))
+             (order (grid-calc--sort-order (funcall getter middle) wanted)))
+        (cond ((= order 0)
+               (setq found middle)
+               (if descending (setq low (1+ middle)) (setq high (1- middle))))
+              ;; A value that comes before WANTED in the sorting
+              ((if descending (> order 0) (< order 0)) (setq low (1+ middle)))
+              (t (setq high (1- middle))))))
+    ;; Unless found, WANTED would come between HIGH and LOW.
+    (or found
+        (let ((j (if (eq (= mode 1) (not descending)) low high)))
+          (and (/= mode 0) (< -1 j length) j)))))
 
 (defun grid-calc--xfind (wanted length getter mode search &optional source)
   "Return the position XMATCH and XLOOKUP find for WANTED, or nil.
