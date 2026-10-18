@@ -340,6 +340,16 @@ MODE and SEARCH are their match_mode and search_mode; SOURCE is as
     (pcase mode
       ((guard (memq search '(2 -2)))
        (grid-calc--find-bisecting wanted length getter mode (= search -2)))
+      ;; Their search for equal text takes ß for ss, as MATCH does not.
+      ((and 0 (guard (and (stringp wanted)
+                          (string-match-p "ss\\|ß" (downcase wanted)))))
+       (let ((fold (lambda (value)
+                     (if (stringp value)
+                         (string-replace "ß" "ss" (downcase value))
+                       value))))
+         (grid-calc--find-exact (funcall fold wanted) length
+                                (lambda (i) (funcall fold (funcall getter i)))
+                                from-end)))
       (0 (grid-calc--find-exact wanted length getter from-end nil source))
       (2 (grid-calc--find-exact wanted length getter from-end t source))
       (_ (grid-calc--find-nearest wanted length getter mode from-end)))))

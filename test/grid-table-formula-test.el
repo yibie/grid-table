@@ -3630,6 +3630,15 @@ Excel's values for."
   "YEARFRAC's average year leaves out the serials' 29 February 1900."
   (grid-table-formula-test--should-be '("=YEARFRAC(1987,345,1)" . 4.496576905522592)))
 
+(ert-deftest grid-table-formula-xmatch-sharp-s ()
+  "XMATCH's search for equal text takes ß for ss; MATCH's and wildcards' do not."
+  (dolist (case '(("=XMATCH(\"ß\",{1,\"ss\",2.1},0)" . 2)
+                  ("=XMATCH(\"SS\",{1,\"ß\",2.1})" . 2)
+                  ("=XLOOKUP(\"ß\",{\"a\",\"ss\"},{1,2})" . 2)
+                  ("=MATCH(\"ß\",{1,\"ss\",2.1},0)" . "#N/A")
+                  ("=XMATCH(\"ß\",{1,\"ss\",2.1},2)" . "#N/A")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
