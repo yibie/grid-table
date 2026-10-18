@@ -1011,6 +1011,27 @@ the whole number divides by a thousand; any other is written as one."
                   ((and (>= i whole-end) (not digit-after-in-part)) 'scale)
                   (t 'ignore)))))))
 
+(defun grid-calc--fifteen-digits (number decimals)
+  "Return NUMBER written with DECIMALS places, as Excel writes it.
+It is read to 15 significant digits, and the places past them are 0."
+  (if (zerop number)
+      (format (format "%%.%df" decimals) 0)
+    (let* ((sci (format "%.14e" (abs number)))
+           (digits (concat (substring sci 0 1) (substring sci 2 16)))
+           (exponent (string-to-number (substring sci 17)))
+           (whole (if (< exponent 0) "0"
+                    (let ((count (1+ exponent)))
+                      (if (<= count 15) (substring digits 0 count)
+                        (concat digits (make-string (- count 15) ?0))))))
+           (fraction (if (< exponent 0)
+                         (concat (make-string (- -1 exponent) ?0) digits)
+                       (if (< (1+ exponent) 15) (substring digits (1+ exponent)) "")))
+           (fraction (if (> (length fraction) decimals)
+                         (substring fraction 0 decimals)
+                       (concat fraction (make-string (- decimals (length fraction)) ?0)))))
+      (concat (if (< number 0) "-" "") whole
+              (if (> decimals 0) (concat "." fraction) "")))))
+
 (defun grid-calc--format-number (number tokens negative-shown)
   "Return NUMBER written after TOKENS, a number code's.
 NEGATIVE-SHOWN says the section shows a minus sign for a negative."
@@ -1048,7 +1069,7 @@ NEGATIVE-SHOWN says the section shows a minus sign for a negative."
               (setq exponent (+ exponent places)))
             (setq value (/ value (expt 10.0 exponent))))))
       (let* ((rounded (grid-calc--round-to value decimals 'nearest))
-             (text (format (format "%%.%df" decimals) rounded))
+             (text (grid-calc--fifteen-digits rounded decimals))
              (point (string-search "." text))
              (whole (if point (substring text 0 point) text))
              (whole-slots (grid-calc--fill-whole

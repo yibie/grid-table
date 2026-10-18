@@ -3426,6 +3426,14 @@ Excel's values for."
                   ("=NUMBERVALUE(\"250)027\",\")\")" . 250.027)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-numbers-show-fifteen-digits ()
+  "A number written by a format shows 15 significant digits, then 0s."
+  (dolist (case '(("=FIXED(\"123456789076754345682.2\",0)" . "123,456,789,076,754,000,000")
+                  ("=FIXED(0.1+0.2,20)" . "0.30000000000000000000")
+                  ("=TEXT(12345678901234567,\"0\")" . "12345678901234600")
+                  ("=TEXT(99.996,\"0.00\")" . "100.00")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
