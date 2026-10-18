@@ -434,12 +434,14 @@ MODE and SEARCH are as XMATCH's."
                          &optional (column integer) (_area integer))
   "The value at ROW and COLUMN of SOURCE, counted from 1.
 SOURCE of one row takes a lone ROW as its column.  ROW 0 gives the
-whole column and COLUMN 0 the whole row.  A range gives a reference."
+whole column and COLUMN 0 the whole row.  A range gives a reference.
+A ROW or COLUMN below 0 is #VALUE!, past SOURCE #REF!."
   (pcase-let ((`(,rows . ,cols) (grid-calc--table-full-size source)))
     (when (and (null column) (= rows 1) (> cols 1))
       (setq column row row 1))
     (setq column (or column (if (= cols 1) 1 0)))
     (when (and (null column) (> cols 1)) (grid-calc-raise "#REF!"))
+    (when (or (< row 0) (< column 0)) (grid-calc-raise "#VALUE!"))
     (unless (and (<= 0 row rows) (<= 0 column cols))
       (grid-calc-raise "#REF!"))
     (grid-calc--part source

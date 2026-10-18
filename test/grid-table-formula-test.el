@@ -966,6 +966,12 @@
                    ("4" "5" "6" 6 7)
                    ("7" "8" "9" "#SPILL!" "#REF!")))))
 
+(ert-deftest grid-table-formula-index-below-1-is-value ()
+  (should (equal (grid-table-formula-test--eval "=INDEX({1,2;3,4},-1)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=INDEX({1,2;3,4},1,-1)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=INDEX({1,2;3,4},-1,9)") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=INDEX({1,2;3,4},1,9)") "#REF!")))
+
 (ert-deftest grid-table-formula-match-compares-numbers-by-value ()
   (should (equal (grid-table-formula-test--values
                   '(("10" "20" "30" "=MATCH(20,A1:C1,0)" "=MATCH(\"B\",A2:C2,0)")
