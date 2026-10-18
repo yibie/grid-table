@@ -1079,7 +1079,10 @@
                   ("=SUMPRODUCT(E1:E1,B1:B1)" . 0)
                   ;; A workbook before a plain sheet name is not quoted.
                   ("=ADDRESS(2,3,3,TRUE,\"[Book1]Sheet1\")" . "[Book1]Sheet1!$C2")
-                  ("=ADDRESS(2,3,3,TRUE,\"[Book1]My Sheet\")" . "'[Book1]My Sheet'!$C2")))
+                  ("=ADDRESS(2,3,3,TRUE,\"[Book1]My Sheet\")" . "'[Book1]My Sheet'!$C2")
+                  ;; An empty sheet name, or a blank cell, leaves a bare !.
+                  ("=ADDRESS(2,3,3,TRUE,\"\")" . "!$C2")
+                  ("=ADDRESS(2,3,4,TRUE,E1)" . "!C2")))
     (should (equal (grid-table-formula-test--eval (car case) "1" "x" "y" "")
                    (cdr case)))))
 

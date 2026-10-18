@@ -632,18 +632,20 @@ and several areas are #REF!, as in Excel."
                            (sheet text))
   "The text of the reference to ROW and COLUMN, as $B$3.
 ABSOLUTE 1 fixes both, 2 the row, 3 the column and 4 neither.  With A1
-false the text is in R1C1 style; SHEET is put before it."
+false the text is in R1C1 style; SHEET is put before it, even empty."
   (unless (and (<= 1 row grid-calc--max-rows) (<= 1 column grid-calc--max-cols)
                (<= 1 absolute 4))
     (grid-calc-raise "#VALUE!"))
   (let ((fixed-row (memq absolute '(1 2)))
         (fixed-col (memq absolute '(1 3))))
     (concat
-     (and sheet (not (string-empty-p sheet))
-          ;; Excel quotes [Book1]Sheet1 only as it would Sheet1.
-          (if (and (string-match "\\`\\[[^]]+\\]\\(.+\\)\\'" sheet)
-                   (not (string-prefix-p "'" (grid-calc-sheet-prefix
-                                              (match-string 1 sheet)))))
+     (and sheet
+          ;; Excel quotes [Book1]Sheet1 only as it would Sheet1, and
+          ;; puts a bare ! for an empty name.
+          (if (or (string-empty-p sheet)
+                  (and (string-match "\\`\\[[^]]+\\]\\(.+\\)\\'" sheet)
+                       (not (string-prefix-p "'" (grid-calc-sheet-prefix
+                                                  (match-string 1 sheet))))))
               (concat sheet "!")
             (grid-calc-sheet-prefix sheet)))
      (if a1
