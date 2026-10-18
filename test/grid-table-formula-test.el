@@ -3413,6 +3413,19 @@ Excel's values for."
                   "=INDEX(AVERAGEIF(B1:D1,{1,2}),2)" "1" "2" "1")
                  2)))
 
+(ert-deftest grid-table-formula-numbervalue-reads-as-excel ()
+  "NUMBERVALUE reads parentheses as negative and wants its separators."
+  (dolist (case '(("=NUMBERVALUE(\"(2.500,27)\",\",\",\".\")" . -2500.27)
+                  ("=NUMBERVALUE(\"(2,500.27%)%\",\".\",\",.,\")" . -0.250027)
+                  ("=NUMBERVALUE(\"(,25,,0,0.27E + 6%)%\",\".\",\",.,\")" . -250027)
+                  ("=NUMBERVALUE(\"(2500,27E+6%)%\",\",\")" . -250027)
+                  ("=NUMBERVALUE(\"(-2500.27E+2%)%\",\".\",\",.,\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"(2500.27)\",\".\",\".,\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"1\",\"\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"1\",\"2\",\"\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"250)027\",\")\")" . 250.027)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -561,27 +561,44 @@ or a time."
         ((eq text :blank) 0)
         (t (grid-calc-raise "#VALUE!"))))
 
-(grid-calc-define numbervalue ((text text) &optional (decimal text ".") (group text ","))
+(grid-calc-define numbervalue ((text text) &optional (decimal text ".") (group text))
   "The number TEXT reads as, its decimal point DECIMAL and its thousands
-separator GROUP."
-  (let* ((decimal (if (string-empty-p decimal) "." (substring decimal 0 1)))
-         (group (if (string-empty-p group) "," (substring group 0 1)))
+separator GROUP.  Parentheses about it make it negative, as Excel has
+it, and percent signs within them count as those after them do; an
+empty DECIMAL or GROUP, or the two alike, are #VALUE!.  GROUP left out
+is a comma, or none when DECIMAL is one."
+  (when (or (string-empty-p decimal) (equal group ""))
+    (grid-calc-raise "#VALUE!"))
+  (let* ((decimal (substring decimal 0 1))
+         (group (cond (group (substring group 0 1))
+                      ((equal decimal ",") nil)
+                      (t ",")))
          (body (replace-regexp-in-string "[ \t\n]" "" text))
-         (percents 0))
-    (while (string-suffix-p "%" body)
-      (setq body (substring body 0 -1) percents (1+ percents)))
+         (percents 0)
+         (sign 1))
+    (when (equal decimal group) (grid-calc-raise "#VALUE!"))
+    (cl-flet ((strip-percents ()
+                (while (string-suffix-p "%" body)
+                  (setq body (substring body 0 -1) percents (1+ percents)))))
+      (strip-percents)
+      (when (string-match "\\`(\\(.*\\))\\'" body)
+        (setq body (match-string 1 body) sign -1)
+        (when (string-match-p "\\`[-+]" body) (grid-calc-raise "#VALUE!"))
+        (strip-percents)))
     (let* ((point (string-search decimal body))
            (whole (if point (substring body 0 point) body))
            (fraction (if point (substring body (1+ point)) "")))
-      (when (or (string-search decimal fraction) (string-search group fraction))
+      (when (or (string-search decimal fraction)
+                (and group (string-search group fraction)))
         (grid-calc-raise "#VALUE!"))
-      (let ((plain (concat (string-replace group "" whole)
+      (let ((plain (concat (if group (string-replace group "" whole) whole)
                            (if point "." "") fraction)))
         (if (string-empty-p plain) 0
           (unless (string-match-p "\\`[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
                                   plain)
             (grid-calc-raise "#VALUE!"))
-          (grid-calc--tidy-number (/ (string-to-number plain) (expt 100.0 percents))))))))
+          (grid-calc--tidy-number (/ (* sign (string-to-number plain))
+                                     (expt 100.0 percents))))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Format codes
