@@ -3360,6 +3360,19 @@ Excel's values for."
                   ("=BETA.INV(1,2,2,3,5)" . 5)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-weekend-read-as-excel ()
+  "A weekend left out is Saturday and Sunday, but not one in a blank cell."
+  (should (equal (grid-table-formula-test--eval "=NETWORKDAYS.INTL(1,30,B1)" "") "#NUM!"))
+  (should (equal (grid-table-formula-test--eval "=WORKDAY.INTL(1,30,B1)" "") "#NUM!"))
+  (should (equal (grid-table-formula-test--eval "=NETWORKDAYS.INTL(1,30,,)") 21))
+  (should (equal (grid-table-formula-test--eval "=WORKDAY.INTL(1,30,,B1)" "") 41))
+  (should (equal (grid-table-formula-test--eval "=NETWORKDAYS.INTL(1,30,B1)" "TRUE") 21))
+  ;; An error there is no weekend, whatever error it is.
+  (should (equal (grid-table-formula-test--eval "=NETWORKDAYS.INTL(1,30,B1)" "=NA()")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=WORKDAY.INTL(1,30,B1)" "=1/0")
+                 "#NUM!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

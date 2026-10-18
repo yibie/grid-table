@@ -290,12 +290,26 @@ BASIS 0 is US 30/360, 1 actual days by actual years, 2 actual/360,
     (16 . (5)) (17 . (6)))
   "The days of the weekend, 0 for Sunday, for each weekend number.")
 
+(defun grid-calc--weekend-value (ast)
+  "Return the weekend the lazy argument AST gives, nil when left out.
+A range gives its first value, and an error is a value, not raised."
+  (when (and ast (not (equal ast '(MISSING))))
+    (let ((value (grid-calc-arg ast 'values)))
+      (when (grid-calc-ref-p value) (setq value (grid-calc--deref value)))
+      (if (grid-calc-array-p value) (car (grid-calc-array-values value)) value))))
+
 (defun grid-calc--weekend (weekend &optional all-off)
   "Return the days of the week WEEKEND names, as a list, 0 for Sunday.
 WEEKEND is a weekend number, or seven 0s and 1s from Monday, 1 a day off;
-seven 1s are #VALUE!, unless ALL-OFF."
+seven 1s are #VALUE!, unless ALL-OFF.  Left out it is Saturday and
+Sunday, but a blank cell is #NUM!, TRUE is 1, and an error #VALUE! when
+ALL-OFF and else #NUM!, as Excel gives."
   (cond
    ((null weekend) '(6 0))
+   ((grid-calc-blank-p weekend) (grid-calc-raise "#NUM!"))
+   ((grid-calc-err-p weekend) (grid-calc-raise (if all-off "#VALUE!" "#NUM!")))
+   ((grid-calc-boolean-p weekend)
+    (grid-calc--weekend (if (eq weekend :false) 0 1)))
    ((stringp weekend)
     (unless (string-match-p "\\`[01]\\{7\\}\\'" weekend) (grid-calc-raise "#VALUE!"))
     (when (and (not all-off) (string= weekend "1111111")) (grid-calc-raise "#VALUE!"))
@@ -343,13 +357,12 @@ number that is no date #NUM!."
   (grid-calc--work-day start days '(6 0)
                        (grid-calc--holidays holidays)))
 
-(grid-calc-define workday.intl ((start date) (days integer) &optional (weekend any)
+(grid-calc-define workday.intl ((start date) (days integer) &optional (weekend lazy)
                                 (holidays values))
   "The date DAYS working days from START, WEEKEND days and HOLIDAYS left out."
   :toolpak t
   (grid-calc--work-day start days
-                       (grid-calc--weekend (and weekend (not (grid-calc-blank-p weekend))
-                                                weekend))
+                       (grid-calc--weekend (grid-calc--weekend-value weekend))
                        (grid-calc--holidays holidays)))
 
 (grid-calc-define networkdays ((start date) (end date) &optional (holidays values))
@@ -358,14 +371,12 @@ number that is no date #NUM!."
   (grid-calc--network-days start end
                            '(6 0) (grid-calc--holidays holidays)))
 
-(grid-calc-define networkdays.intl ((start date) (end date) &optional (weekend any)
+(grid-calc-define networkdays.intl ((start date) (end date) &optional (weekend lazy)
                                     (holidays values))
   "The working days from START to END, WEEKEND days and HOLIDAYS left out."
   :toolpak t
   (grid-calc--network-days start end
-                           (grid-calc--weekend (and weekend (not (grid-calc-blank-p weekend))
-                                                    weekend)
-                                               t)
+                           (grid-calc--weekend (grid-calc--weekend-value weekend) t)
                            (grid-calc--holidays holidays)))
 
 (provide 'grid-table-calc-date)
