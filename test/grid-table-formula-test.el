@@ -3457,6 +3457,12 @@ Excel's values for."
                   ("=ROWS(1/0)" . "#DIV/0!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-days-refuses-the-day-after-9999 ()
+  "DAYS takes no day after 9999-12-31."
+  (dolist (case '(("=DAYS(2958466,0)" . "#NUM!")
+                  ("=DAYS(2958465,1)" . 2958464)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

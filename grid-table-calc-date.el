@@ -185,8 +185,8 @@ becomes its last day."
   (grid-calc--add-months start months t))
 
 (grid-calc-define days ((end date) (start date))
-  "The days from START to END."
-  (- end start))
+  "The days from START to END.  The day after 9999-12-31 is #NUM!."
+  (- (grid-calc--day-checked end t) (grid-calc--day-checked start t)))
 
 (defun grid-calc--days-360 (start end european &optional both-februaries)
   "Return the days from START to END in a year of twelve 30-day months.
