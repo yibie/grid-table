@@ -3089,6 +3089,14 @@ Excel's values for."
                   ("=TBILLEQ(20000,20182,0.5)" . 0.6784386617100372)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-prices-a-bond-without-a-coupon ()
+  "A bond that pays no coupon has a price and a yield."
+  (dolist (case '(("=PRICE(DATE(2005,4,15),DATE(2009,7,31),0,0.065,100,4)"
+                   . 75.82697729980659)
+                  ("=YIELD(DATE(2005,4,15),DATE(2009,7,31),0,0.065,100,4)"
+                   . 2.1336010409109454)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

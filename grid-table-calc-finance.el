@@ -613,7 +613,7 @@ METHOD non-nil counts from ISSUE, nil from the coupon before FIRST."
   :toolpak t
   (grid-calc--finance-basis basis)
   (grid-calc--finance-dates-check settlement maturity)
-  (when (or (<= rate 0) (< yield 0) (>= issue settlement))
+  (when (or (< rate 0) (< yield 0) (>= issue settlement))
     (grid-calc-raise "#NUM!"))
   (let* ((dim (grid-calc--finance-years issue maturity basis))
          (a (grid-calc--finance-years issue settlement basis))
@@ -629,7 +629,7 @@ METHOD non-nil counts from ISSUE, nil from the coupon before FIRST."
   :toolpak t
   (grid-calc--finance-basis basis)
   (grid-calc--finance-dates-check settlement maturity)
-  (when (or (<= rate 0) (<= price 0) (>= issue settlement))
+  (when (or (< rate 0) (<= price 0) (>= issue settlement))
     (grid-calc-raise "#NUM!"))
   (let* ((dim (grid-calc--finance-years issue maturity basis))
          (a (grid-calc--finance-years issue settlement basis))
@@ -738,7 +738,7 @@ for it, the interest accrued since the last coupon taken off."
   (pcase-let ((`(,n ,_ ,_ ,a ,dsc ,e)
                (grid-calc--finance-coupon-setup
                 settlement maturity frequency basis)))
-    (when (or (<= rate 0) (< yield 0) (<= redemption 0))
+    (when (or (< rate 0) (< yield 0) (<= redemption 0))
       (grid-calc-raise "#NUM!"))
     (nth 1 (grid-calc--finance-bond-value
             n a dsc e rate yield redemption frequency))))
@@ -751,7 +751,7 @@ for it, the interest accrued since the last coupon taken off."
   (pcase-let ((`(,n ,_ ,_ ,a ,dsc ,e)
                (grid-calc--finance-coupon-setup
                 settlement maturity frequency basis)))
-    (when (or (<= rate 0) (<= price 0) (<= redemption 0))
+    (when (or (< rate 0) (<= price 0) (<= redemption 0))
       (grid-calc-raise "#NUM!"))
     (let* ((fraction (/ dsc (float e)))
            (coupon (/ (* 100.0 rate) frequency)))
@@ -865,7 +865,7 @@ for it, the interest accrued since the last coupon taken off."
   :toolpak t
   (grid-calc--finance-basis basis)
   (grid-calc--finance-frequency frequency)
-  (when (or (<= rate 0) (< yield 0) (<= redemption 0))
+  (when (or (< rate 0) (< yield 0) (<= redemption 0))
     (grid-calc-raise "#NUM!"))
   (when (or (>= issue settlement) (>= settlement first) (>= first maturity))
     (grid-calc-raise "#NUM!"))
@@ -880,7 +880,7 @@ for it, the interest accrued since the last coupon taken off."
   :toolpak t
   (grid-calc--finance-basis basis)
   (grid-calc--finance-frequency frequency)
-  (when (or (<= rate 0) (<= price 0) (<= redemption 0))
+  (when (or (< rate 0) (<= price 0) (<= redemption 0))
     (grid-calc-raise "#NUM!"))
   (when (or (>= issue settlement) (>= settlement first) (>= first maturity))
     (grid-calc-raise "#NUM!"))
@@ -918,7 +918,7 @@ for it, the interest accrued since the last coupon taken off."
   :toolpak t
   (grid-calc--finance-basis basis)
   (grid-calc--finance-frequency frequency)
-  (when (or (<= rate 0) (< yield 0) (<= redemption 0))
+  (when (or (< rate 0) (< yield 0) (<= redemption 0))
     (grid-calc-raise "#NUM!"))
   (when (or (<= settlement last-interest) (>= last-interest maturity))
     (grid-calc-raise "#NUM!"))
@@ -933,7 +933,7 @@ for it, the interest accrued since the last coupon taken off."
   :toolpak t
   (grid-calc--finance-basis basis)
   (grid-calc--finance-frequency frequency)
-  (when (or (<= rate 0) (<= price 0) (<= redemption 0))
+  (when (or (< rate 0) (<= price 0) (<= redemption 0))
     (grid-calc-raise "#NUM!"))
   (when (or (<= settlement last-interest) (>= last-interest maturity))
     (grid-calc-raise "#NUM!"))
