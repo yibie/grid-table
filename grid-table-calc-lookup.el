@@ -251,12 +251,16 @@ and error values compare with nothing."
   "Return the position of WANTED among LENGTH values, or of the nearest.
 Values need not be sorted.  DIRECTION -1 takes the largest value below
 WANTED when none equals it, 1 the smallest above it, values of another
-kind being below or above as Excel sorts them."
+kind being below or above as Excel sorts them.  A blank WANTED is above
+every value but an empty cell, which equals it."
   (let (best best-value)
     (dotimes (n length)
       (let* ((i (if from-end (- length n 1) n))
              (value (funcall getter i))
-             (order (grid-calc--nearest-order value wanted)))
+             (order (if (grid-calc-blank-p wanted)
+                        (cond ((grid-calc-blank-p value) 0)
+                              ((grid-calc--nearest-order value 0) -1))
+                      (grid-calc--nearest-order value wanted))))
         (when order
           (cond
            ((= order 0) (unless (and best (eql (grid-calc--nearest-order

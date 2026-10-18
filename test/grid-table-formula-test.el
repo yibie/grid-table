@@ -2469,6 +2469,15 @@ come from pycel's and IronCalc's TEXT test workbooks."
                   ("=XMATCH(0,{1,5,9},-1,2)" . "#N/A")))
     (should (equal (grid-table-formula-test--eval (car case)) (cdr case)))))
 
+(ert-deftest grid-table-formula-xmatch-nearest-takes-a-blank-above-all ()
+  ;; B1 is blank: the next smaller value is the largest, as Excel sorts.
+  (should (equal (grid-table-formula-test--eval
+                  "=XMATCH(B1,{FALSE,2.1,TRUE,4.1},-1)" "") 3))
+  (should (equal (grid-table-formula-test--eval
+                  "=XMATCH(B1,{\"a\",2.1,\"c\",4.1},-1)" "") 3))
+  (should (equal (grid-table-formula-test--eval
+                  "=XMATCH(B1,{-1.1,2.1,3.1,4.1},1)" "") "#N/A")))
+
 (ert-deftest grid-table-formula-xlookup-takes-no-wildcards-by-halves ()
   (should (equal (grid-table-formula-test--eval "=XMATCH(\"b\",{\"a\",\"b\"},2,2)")
                  "#VALUE!"))
