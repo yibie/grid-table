@@ -444,7 +444,7 @@ DOMAIN, a function of the number, makes it #NUM! when it does not hold."
                         (lambda (x) (<= -1 x 1)))
 (grid-calc--define-math atan "The angle whose tangent is NUMBER." #'atan)
 (grid-calc--define-math sinh "The hyperbolic sine of NUMBER."
-                        (lambda (x) (/ (- (exp x) (exp (- x))) 2)))
+                        (lambda (x) (grid-calc--sinh x)))
 (grid-calc--define-math cosh "The hyperbolic cosine of NUMBER."
                         (lambda (x) (/ (+ (exp x) (exp (- x))) 2)))
 (grid-calc--define-math tanh "The hyperbolic tangent of NUMBER."
@@ -482,14 +482,28 @@ DOMAIN, a function of the number, makes it #NUM! when it does not hold."
 (grid-calc--define-math sech "The hyperbolic secant of NUMBER."
                         (lambda (x) (if (> (abs x) 710) 0.0
                                       (/ 2 (+ (exp x) (exp (- x)))))))
+
+(defun grid-calc--sinh (x)
+  "Return the hyperbolic sine of X with all its digits.
+Below 1 it sums the series, where the two exponentials would cancel."
+  (if (>= (abs x) 1) (/ (- (exp x) (exp (- x))) 2)
+    (let ((sum (float x)) (term (float x)) (k 1))
+      (while (/= (+ sum (setq term (/ (* term x x) (* (1+ k) (+ k 2))))) sum)
+        (setq sum (+ sum term) k (+ k 2)))
+      sum)))
+
 (grid-calc--define-math csch "The hyperbolic cosecant of NUMBER."
                         (lambda (x) (if (> (abs x) 710) 0.0
-                                      (grid-calc--reciprocal
-                                       (/ (- (exp x) (exp (- x))) 2)))))
+                                      (grid-calc--reciprocal (grid-calc--sinh x)))))
 (grid-calc--define-math coth "The hyperbolic cotangent of NUMBER."
-                        (lambda (x) (if (> (abs x) 20) (cl-signum x)
-                                      (grid-calc--reciprocal
-                                       (/ (- (exp (* 2 x)) 1) (+ (exp (* 2 x)) 1))))))
+                        (lambda (x)
+                          (cond ((> (abs x) 20) (cl-signum x))
+                                ((< (abs x) 1)
+                                 (* (/ (+ (exp x) (exp (- x))) 2)
+                                    (grid-calc--reciprocal (grid-calc--sinh x))))
+                                (t (grid-calc--reciprocal
+                                    (/ (- (exp (* 2 x)) 1)
+                                       (+ (exp (* 2 x)) 1)))))))
 (grid-calc--define-math acot "The angle whose cotangent is NUMBER."
                         (lambda (x) (- (/ float-pi 2) (atan x))))
 (grid-calc--define-math acoth "The number whose hyperbolic cotangent is NUMBER."

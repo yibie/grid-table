@@ -3749,6 +3749,17 @@ The marks are \u201c, \u201d, \u2018 and \u2019."
       (should (equal (list (car case) (grid-get-computed-value-at sheet 0 2))
                      (list (car case) (cdr case)))))))
 
+(ert-deftest grid-table-formula-coth-and-csch-keep-their-digits ()
+  "COTH and CSCH of a tiny number, where two exponentials would cancel.
+The cases are IronCalc's TRIGONOMETRIC workbook, as Excel keeps them."
+  (dolist (case '(("=COTH(0.000000000001)" . 1000000000000)
+                  ("=CSCH(0.000000000001)" . 1000000000000)
+                  ("=COTH(-0.000000000001)" . -1000000000000)
+                  ("=CSCH(-0.000000000001)" . -1000000000000)
+                  ("=COTH(0)" . "#DIV/0!")
+                  ("=CSCH(0)" . "#DIV/0!")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
