@@ -109,13 +109,14 @@ prefix starts there."
 ;;;----------------------------------------------------------------------
 
 (defun grid-parser--name-start-p (char)
-  "Return non-nil when CHAR may start a name, a function or a reference."
+  "Return non-nil when CHAR may start a name, a function or a reference.
+A quotation mark may, as Excel takes the curly ones for names."
   (or (and (>= char ?A) (<= char ?Z))
       (and (>= char ?a) (<= char ?z))
       (memq char '(?$ ?_ ?\\))
       (and (> char 127)
            (memq (get-char-code-property char 'general-category)
-                 '(Lu Ll Lt Lm Lo)))))
+                 '(Lu Ll Lt Lm Lo Pi Pf)))))
 
 (defun grid-parser--name-char-p (char)
   "Return non-nil when CHAR may stand inside a name."
@@ -123,7 +124,8 @@ prefix starts there."
       (and (>= char ?0) (<= char ?9))
       (memq char '(?. ??))
       (and (> char 127)
-           (memq (get-char-code-property char 'general-category) '(Nd Mn Mc)))))
+           (memq (get-char-code-property char 'general-category)
+                 '(Nd Mn Mc Pi Pf)))))
 
 (defconst grid-parser--cell-regexp "\\`\\$?\\([A-Z]\\{1,3\\}\\)\\$?\\([0-9]\\{1,7\\}\\)\\'"
   "Matches the text of one cell, such as $B$2, in capitals.")

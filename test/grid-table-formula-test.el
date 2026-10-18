@@ -3727,6 +3727,28 @@ Excel's values for."
     (should (equal (grid-get-computed-value-at one 1 0) 2.1))
     (should (equal (grid-get-computed-value-at one 1 1) "#REF!"))))
 
+(ert-deftest grid-table-formula-names-take-a-curly-quote ()
+  "A name may be one curly quotation mark, as tdf165886.xlsx has it.
+The marks are \u201c, \u201d, \u2018 and \u2019."
+  (should-not (grid-calc-name-problem "\u201c"))
+  (should-not (grid-calc-name-problem "\u201d"))
+  (let* ((sheet (make-default-data-source
+                 '("" "" "" "" "" "" "") '(("0" "0" "" "" "" "0" "0"))))
+         (workbook (grid-workbook-create (list (cons "Sheet1" sheet)))))
+    (grid-workbook-define-name workbook "\u201c" "=Sheet1!$G$1")
+    (grid-workbook-define-name workbook "\u201d" "=Sheet1!$G$2")
+    (dolist (case '(("=\u201c" . 0)
+                    ("=\u201d" . 0)
+                    ("=OR(A1=0,A1<>\u201c)" . t)
+                    ("=OR(B1=0,B1<>\u201d)" . t)
+                    ;; Two marks in a row are no name.
+                    ("=OR(A1=0,A1<>\u201c\u201c)" . "#NAME?")
+                    ("=\u2018" . "#NAME?")
+                    ("=\u2019" . "#NAME?")))
+      (grid-set-raw-value-at sheet 0 2 (car case))
+      (should (equal (list (car case) (grid-get-computed-value-at sheet 0 2))
+                     (list (car case) (cdr case)))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

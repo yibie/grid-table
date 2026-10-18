@@ -140,6 +140,20 @@ to the left and A1048576 the row above."
                           ast))
     (_ ast)))
 
+(defun grid-calc--name-written-p (name)
+  "Return non-nil when NAME is spelled as a name may be.
+A letter other than $, an underscore or a backslash starts it, and
+letters, digits, dots, question marks and quotation marks go on, as the
+formula reader takes them."
+  (and (stringp name)
+       (> (length name) 0)
+       (let ((first (aref name 0)))
+         (and (not (eq first ?$))
+              (grid-parser--name-start-p first)
+              (cl-loop for char across (substring name 1)
+                       always (and (not (eq char ?$))
+                                   (grid-parser--name-char-p char)))))))
+
 (defun grid-calc-name-problem (name)
   "Return why NAME cannot be a defined name, or nil when it can.
 A name starts with a letter, an underscore or a backslash and goes on
@@ -150,7 +164,7 @@ It may share a function's name, as Excel allows: RATE is the name and
 RATE(...) the function."
   (let ((upper (and (stringp name) (upcase name))))
     (cond
-     ((not (and upper (string-match-p "\\`[A-Za-z_\\][A-Za-z0-9_.?\\]*\\'" name)))
+     ((not (grid-calc--name-written-p name))
       "A name starts with a letter, _ or \\ and holds those, digits, . and ?")
      ((> (length name) 255) "A name cannot be longer than 255 characters")
      ((and (string-match "\\`\\([A-Za-z]+\\)\\([0-9]+\\)\\'" name)
