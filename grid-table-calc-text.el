@@ -72,6 +72,24 @@
   "TEXT with its control characters gone."
   (replace-regexp-in-string "[\x00-\x1f]" "" text))
 
+(grid-calc-define asc ((text text))
+  "TEXT with its full-width letters, digits, signs and katakana made
+half-width."
+  (require 'japan-util)
+  (japanese-hankaku text))
+
+(grid-calc-define dbcs ((text text))
+  "TEXT with its half-width letters, digits, signs and katakana made
+full-width."
+  (require 'japan-util)
+  (japanese-zenkaku
+   (apply #'string
+          (mapcar (lambda (char)
+                    (cond ((= char ?\s) #x3000)
+                          ((<= #x21 char #x7e) (+ char #xfee0))
+                          (t char)))
+                  text))))
+
 (grid-calc-define exact ((left text) (right text))
   "TRUE when LEFT and RIGHT are the same text, case and all."
   (grid-calc-bool (string= left right)))

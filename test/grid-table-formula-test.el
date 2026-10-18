@@ -3440,6 +3440,15 @@ Excel's values for."
                   ("=FIXED(5,-128000)" . "0")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-asc-and-dbcs-change-width ()
+  "ASC makes full-width characters half-width, and DBCS the reverse."
+  (dolist (case '(("=ASC(\"ＡＢＣ　アイ１２ガ\")" . "ABC ｱｲ12ｶﾞ")
+                  ("=ASC(65.8)" . "65.8")
+                  ("=ASC(TRUE)" . "TRUE")
+                  ("=ASC(1/0)" . "#DIV/0!")
+                  ("=DBCS(\"AB 1~ｱ\")" . "ＡＢ　１～ア")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
