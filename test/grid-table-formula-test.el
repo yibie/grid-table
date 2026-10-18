@@ -3029,6 +3029,23 @@ Excel's values for."
                   ("=VDB(10000,1000,10,0,1)" . 2000)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-finds-a-rate-below-nothing ()
+  "IRR walks to a rate under zero, and XIRR refuses a rate of nothing or less."
+  (dolist (case '(("=IRR({-5,1})" . -0.8)
+                  ("=IRR({-2,1})" . -0.5)
+                  ("=IRR({-70,12,15})" . -0.44350694133432755)
+                  ("=IRR({-20,1,1,1,1,1})" . -0.3352800891362343)
+                  ("=IRR({-400,1,1,1,1,1})" . -0.6737366751808405)
+                  ("=IRR({-20,5,5,5,5,5},17)" . 0.07930826116414913)
+                  ("=IRR({-20,5,5,5,5,5},-1)" . "#VALUE!")
+                  ("=XIRR({-400,100,10,5,6,5},{44958,44986,45017,45078,45108,45139})"
+                   . -0.9977533546974883)
+                  ("=XIRR({\"hello\",1},{1,2})" . "#VALUE!")
+                  ("=XNPV(-0.1,{-10,1,5,0.0001,4.5},{1,99,55,4,9})" . "#NUM!")
+                  ("=XNPV(0,{-10,1,5,0.0001,4.5},{1,99,55,4,9})" . "#NUM!")
+                  ("=XNPV(0.1,{-20,8,8,8,8,8},{-100,1,2,3,4,5})" . "#NUM!")))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-finance-refuses-what-excel-refuses ()
   "A rate at or below -1, and a logical value where a number is wanted."
   (dolist (case '(("=PMT(-3,5,100,300,1)" . "#NUM!")

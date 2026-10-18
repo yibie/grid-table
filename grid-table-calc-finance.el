@@ -117,6 +117,27 @@ FUNCTION returns (VALUE . SLOPE) at a point."
     (if (and found (not (isnan found)) (/= (abs found) 1.0e+INF)) found
       (grid-calc-raise "#NUM!"))))
 
+(defun grid-calc--finance-root (function guess)
+  "Return where FUNCTION is zero, searching from GUESS, or #NUM!.
+FUNCTION returns (VALUE . SLOPE) at a point.  A step that would pass
+-1, where a rate has no meaning, is halved towards it, so that a root
+between -1 and GUESS can still be found."
+  (let ((x guess) (found nil) (tries 0))
+    (while (and (not found) (< tries 500))
+      (setq tries (1+ tries))
+      (pcase-let ((`(,value . ,slope) (funcall function x)))
+        (cond
+         ((or (zerop slope) (isnan value) (isnan slope)) (setq tries 500))
+         (t
+          (let ((next (- x (/ value slope))))
+            (when (<= next -1) (setq next (/ (1- x) 2.0)))
+            (if (< (abs (- next x)) 1e-12)
+                (setq found next)
+              (setq x next)))))))
+    (if (and found (not (isnan found)) (/= (abs found) 1.0e+INF))
+        found
+      (grid-calc-raise "#NUM!"))))
+
 (grid-calc-define rate ((periods number) (payment number) (present number)
                         &optional (future number 0) (type integer 0) (guess number 0.1))
   "The rate per period at which PERIODS payments of PAYMENT pay PRESENT
@@ -154,24 +175,45 @@ off to FUTURE."
       (setq i (1+ i) sum (+ sum (/ value (grid-calc--growth rate i)))))
     sum))
 
-(defun grid-calc--range-numbers (values)
-  "Return the numbers of VALUES, a range or array, other values left out."
+(defun grid-calc--range-numbers (values &optional plain-error)
+  "Return the numbers of VALUES, a range or array, other values left out.
+An error value signals itself, unless PLAIN-ERROR, when it is #VALUE!."
   (let (numbers)
-    (grid-calc-each-value values (lambda (value _)
-                                   (when (grid-calc-err-p value)
-                                     (grid-calc-raise (grid-calc-err-code value)))
-                                   (when (numberp value) (push value numbers))))
+    (grid-calc-each-value
+     values
+     (lambda (value _)
+       (when (grid-calc-err-p value)
+         (grid-calc-raise (if plain-error "#VALUE!" (grid-calc-err-code value))))
+       (when (numberp value) (push value numbers))))
+    (nreverse numbers)))
+
+(defun grid-calc--finance-flow-numbers (values)
+  "Return the numbers of VALUES, or #VALUE! for text or a logical value.
+Text that is no number is an error and not nothing, as XIRR has it;
+a cell left empty is worth nothing."
+  (let (numbers)
+    (grid-calc-each-value
+     values
+     (lambda (value _)
+       (cond
+        ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+        ((stringp value)
+         (push (or (grid-calc-text-number value) (grid-calc-raise "#VALUE!"))
+               numbers))
+        ((memq value '(t :false)) (grid-calc-raise "#VALUE!"))
+        ((eq value :blank) (push 0 numbers))
+        ((numberp value) (push value numbers)))))
     (nreverse numbers)))
 
 (grid-calc-define irr ((values values) &optional (guess number 0.1))
   "The rate at which the cash flows VALUES, one per period, are worth 0."
-  (let ((flows (grid-calc--range-numbers values)))
+  (let ((flows (grid-calc--range-numbers values t)))
+    (when (<= guess -1) (grid-calc-raise "#VALUE!"))
     (unless (and (cl-some (lambda (n) (> n 0)) flows)
                  (cl-some (lambda (n) (< n 0)) flows))
       (grid-calc-raise "#NUM!"))
-    (grid-calc--newton
+    (grid-calc--finance-root
      (lambda (rate)
-       (when (<= (+ 1 rate) 0) (grid-calc-raise "#NUM!"))
        (let ((value 0.0) (slope 0.0) (i 0))
          (dolist (flow flows)
            (setq value (+ value (/ flow (expt (+ 1.0 rate) i)))
@@ -180,38 +222,51 @@ off to FUTURE."
          (cons value slope)))
      guess)))
 
-(defun grid-calc--dated-flows (values dates)
-  "Return ((DAYS . FLOW) ...) for VALUES on DATES, days from the first."
-  (let ((flows (grid-calc--range-numbers values))
-        (days (mapcar #'ffloor (mapcar #'float (grid-calc--range-numbers dates)))))
+(defun grid-calc--dated-flows (values dates &optional strict)
+  "Return ((DAYS . FLOW) ...) for VALUES on DATES, days from the first.
+DATES is read first, as Excel reads it.  With STRICT, text that is no
+number and a logical value are #VALUE!, where otherwise they are left
+out and the counts no longer agree."
+  (let ((days (mapcar #'ffloor (mapcar #'float (grid-calc--range-numbers dates))))
+        (flows (if strict
+                   (grid-calc--finance-flow-numbers values)
+                 (grid-calc--range-numbers values))))
     (unless (and flows (= (length flows) (length days))) (grid-calc-raise "#NUM!"))
+    (when (cl-some (lambda (day) (or (< day 0) (> day grid-calc--last-serial)))
+                   days)
+      (grid-calc-raise "#NUM!"))
     (let ((first (car days)))
       (when (cl-some (lambda (day) (< day first)) days) (grid-calc-raise "#NUM!"))
       (cl-mapcar (lambda (day flow) (cons (/ (- day first) 365.0) flow)) days flows))))
 
-(grid-calc-define xnpv ((rate number) (values values) (dates values))
+(grid-calc-define xnpv ((rate any) (values values) (dates values))
   "The value at the first of DATES of the cash flows VALUES on DATES."
-  (when (<= rate -1) (grid-calc-raise "#NUM!"))
-  (let ((sum 0.0))
-    (pcase-dolist (`(,years . ,flow) (grid-calc--dated-flows values dates))
-      (setq sum (+ sum (/ flow (expt (+ 1.0 rate) years)))))
-    sum))
+  (let ((rate (grid-calc--finance-number rate)))
+    (when (<= rate 0) (grid-calc-raise "#NUM!"))
+    (let ((sum 0.0))
+      (pcase-dolist (`(,years . ,flow) (grid-calc--dated-flows values dates))
+        (setq sum (+ sum (/ flow (expt (+ 1.0 rate) years)))))
+      sum)))
 
-(grid-calc-define xirr ((values values) (dates values) &optional (guess number 0.1))
+(grid-calc-define xirr ((values values) (dates values) &optional (guess any 0.1))
   "The yearly rate at which the cash flows VALUES on DATES are worth 0."
-  (let ((flows (grid-calc--dated-flows values dates)))
+  (let ((flows (grid-calc--dated-flows values dates t))
+        (guess (grid-calc--finance-number guess)))
     (unless (and (cl-some (lambda (f) (> (cdr f) 0)) flows)
                  (cl-some (lambda (f) (< (cdr f) 0)) flows))
       (grid-calc-raise "#NUM!"))
-    (grid-calc--newton
-     (lambda (rate)
-       (when (<= (+ 1 rate) 0) (grid-calc-raise "#NUM!"))
-       (let ((value 0.0) (slope 0.0))
-         (pcase-dolist (`(,years . ,flow) flows)
-           (setq value (+ value (/ flow (expt (+ 1.0 rate) years)))
-                 slope (- slope (/ (* years flow) (expt (+ 1.0 rate) (1+ years))))))
-         (cons value slope)))
-     guess)))
+    (let ((rate (grid-calc--finance-root
+                 (lambda (rate)
+                   (let ((value 0.0) (slope 0.0))
+                     (pcase-dolist (`(,years . ,flow) flows)
+                       (setq value (+ value (/ flow (expt (+ 1.0 rate) years)))
+                             slope (- slope (/ (* years flow)
+                                               (expt (+ 1.0 rate) (1+ years))))))
+                     (cons value slope)))
+                 guess)))
+      ;; Excel gives up on a rate that comes within nothing of -1.
+      (when (< (+ 1 rate) 1e-9) (grid-calc-raise "#NUM!"))
+      rate)))
 
 (defun grid-calc--finance-number (value)
   "Return VALUE as a number, or #VALUE! where TRUE or FALSE is given."
