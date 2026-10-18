@@ -302,6 +302,74 @@ out and the counts no longer agree."
   (/ (* (- cost salvage) (+ (- life period) 1))
      (/ (* life (+ life 1)) 2.0)))
 
+(defun grid-calc--finance-amorlinc (cost start first salvage period rate basis)
+  "Return the AMORLINC depreciation of COST in PERIOD.
+The first period, from START to FIRST, is a fraction of a full one."
+  (let* ((one (* cost rate))
+         (first-rate (* (grid-calc--finance-years start first basis) one))
+         (rest (- cost salvage first-rate))
+         (full (truncate (/ rest one))))
+    (cond
+     ((zerop period) first-rate)
+     ((<= 1 period full) one)
+     ((= period (1+ full)) (- rest (* full one)))
+     (t 0.0))))
+
+(grid-calc-define amorlinc ((cost any) (start date) (first date) (salvage any)
+                            (period any) (rate any) &optional (basis integer 0))
+  "The depreciation in PERIOD of COST bought on START, by the French method."
+  :toolpak t
+  (grid-calc--finance-basis basis)
+  (let ((cost (grid-calc--finance-number cost))
+        (salvage (grid-calc--finance-number salvage))
+        (period (grid-calc--finance-number period))
+        (rate (grid-calc--finance-number rate)))
+    (when (or (<= cost 0) (<= rate 0) (< salvage 0) (< period 0) (> start first))
+      (grid-calc-raise "#NUM!"))
+    (grid-calc--finance-amorlinc cost start first salvage (truncate period)
+                                 rate basis)))
+
+(defun grid-calc--finance-amordegrc (cost start first salvage period rate basis)
+  "Return the AMORDEGRC depreciation of COST in PERIOD.
+The depreciation takes a coefficient by the life RATE gives, and the
+last of it is half of what is left."
+  (let* ((life (ceiling (/ 1.0 rate)))
+         (coefficient (cond ((memq life '(3 4)) 1.5)
+                            ((memq life '(5 6)) 2.0)
+                            ((> life 6) 2.5)
+                            (t (grid-calc-raise "#NUM!"))))
+         (room (- cost salvage))
+         (value (grid-calc--round-to
+                 (min (* (grid-calc--finance-years start first basis)
+                         coefficient rate cost)
+                      room)
+                 0 'nearest))
+         (total 0.0)
+         (i 3))
+    (while (<= i (+ period 2))
+      (setq total (+ total value))
+      (cond
+       ((> total room) (setq value 0.0 i (+ period 3)))
+       ((< i life) (setq value (* coefficient rate (- cost total))))
+       ((= i life) (setq value (/ (- cost total) 2.0))))
+      (setq i (1+ i)))
+    (grid-calc--round-to value 0 'nearest)))
+
+(grid-calc-define amordegrc ((cost any) (start date) (first date) (salvage any)
+                             (period any) (rate any) &optional (basis integer 0))
+  "The depreciation in PERIOD of COST bought on START, the French way."
+  :toolpak t
+  (grid-calc--finance-basis basis)
+  (let ((cost (grid-calc--finance-number cost))
+        (salvage (grid-calc--finance-number salvage))
+        (period (grid-calc--finance-number period))
+        (rate (grid-calc--finance-number rate)))
+    (when (or (<= cost salvage) (<= rate 0) (< salvage 0) (< period 0)
+              (> start first))
+      (grid-calc-raise "#NUM!"))
+    (grid-calc--finance-amordegrc cost start first salvage (truncate period)
+                                  rate basis)))
+
 (grid-calc-define ddb ((cost number) (salvage number) (life number) (period number)
                        &optional (factor number 2))
   "The depreciation in PERIOD by declining balance at FACTOR."

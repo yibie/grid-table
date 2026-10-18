@@ -3110,6 +3110,22 @@ Excel's values for."
                    . 0.04519223562916933)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-depreciates-the-french-way ()
+  "AMORLINC and AMORDEGRC, as the French accounting has them."
+  (dolist (case '(("=AMORLINC(100,DATE(2005,1,15),DATE(2009,4,15),6,1,0.2,0)"
+                   . 8.999999999999986)
+                  ("=AMORLINC(100,DATE(2005,1,11),DATE(2009,4,15),7,1,0.2,0)"
+                   . 7.7777777777777715)
+                  ("=AMORLINC(100,DATE(2005,1,15),DATE(2009,4,15),12,0,0.2,0)"
+                   . 85.00000000000001)
+                  ("=AMORLINC(100,DATE(2005,1,15),DATE(2009,4,15),-1,1,0.2,0)" . "#NUM!")
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),6,0,0.2,0)" . 94)
+                  ("=AMORDEGRC(100,DATE(2005,1,11),DATE(2009,4,15),7,1,0.2,0)" . 3)
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),4,1,0.2,0)" . 2)
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),9,1,0.2,0)" . 4)
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),0,1,0.2,0)" . 0)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
