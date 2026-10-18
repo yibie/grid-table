@@ -740,21 +740,46 @@ negative number counts from the last."
                          (lambda (r c) (grid-calc-aref array c r)))
       array)))
 
-(grid-calc-define sort ((array array) &optional (index integer 1)
-                        (order integer 1) (by-col bool))
+(defun grid-calc--sorts-before-p (left right direction)
+  "Return non-nil when LEFT goes before RIGHT, sorting up with DIRECTION
+1 and down with -1.  A blank goes last either way."
+  (cond ((eq left :blank) nil)
+        ((eq right :blank) t)
+        (t (let ((order (grid-calc-compare left right)))
+             (if (= direction 1) (< order 0) (> order 0))))))
+
+(grid-calc-define sort ((array array) &optional (index values 1)
+                        (order values 1) (by-col bool))
   "ARRAY with its rows sorted by their INDEXth value, or its columns with
-BY-COL.  ORDER 1 sorts up, -1 down."
+BY-COL.  ORDER 1 sorts up, -1 down.  INDEX may give several places, the
+first sorting first, with an ORDER for each or one for all."
   :empty t
-  (unless (memq order '(1 -1)) (grid-calc-raise "#VALUE!"))
-  (let ((lines (grid-calc--lines array by-col)))
-    (unless (<= 1 index (length (car lines))) (grid-calc-raise "#VALUE!"))
-    (grid-calc--from-lines
-     (cl-stable-sort (copy-sequence lines)
-                     (lambda (a b)
-                       (let ((order-of (grid-calc-compare (nth (1- index) a)
-                                                          (nth (1- index) b))))
-                         (if (= order 1) (< order-of 0) (> order-of 0)))))
-     by-col)))
+  (let* ((lines (grid-calc--lines array by-col))
+         (width (length (car lines)))
+         (indexes (mapcar (lambda (n)
+                            (let ((n (truncate n)))
+                              (unless (<= 1 n width) (grid-calc-raise "#VALUE!"))
+                              (1- n)))
+                          (grid-calc--line-numbers (list index))))
+         (orders (mapcar (lambda (n)
+                           (let ((n (truncate n)))
+                             (unless (memq n '(1 -1)) (grid-calc-raise "#VALUE!"))
+                             n))
+                         (grid-calc--line-numbers (list order)))))
+    (unless (and indexes orders) (grid-calc-raise "#VALUE!"))
+    (cond ((= (length orders) 1)
+           (setq orders (make-list (length indexes) (car orders))))
+          ((/= (length orders) (length indexes)) (grid-calc-raise "#VALUE!")))
+    ;; The last place sorts first, the ones before it keeping what it
+    ;; leaves in order.
+    (cl-loop for place in (reverse indexes)
+             for direction in (reverse orders)
+             do (setq lines (cl-stable-sort
+                             (copy-sequence lines)
+                             (lambda (a b)
+                               (grid-calc--sorts-before-p
+                                (nth place a) (nth place b) direction)))))
+    (grid-calc--from-lines lines by-col)))
 
 (grid-calc-define unique ((array array) &optional (by-col bool) (once bool))
   "The rows of ARRAY each once, in the order they come, or its columns
@@ -1015,11 +1040,8 @@ before it leave in order, and a 1 after one of them sorts up, a -1 down."
                         (cl-stable-sort
                          order
                          (lambda (a b)
-                           (let ((order-of (grid-calc-compare (nth a key)
-                                                              (nth b key))))
-                             (if (= direction 1)
-                                 (< order-of 0)
-                               (> order-of 0)))))))
+                           (grid-calc--sorts-before-p (nth a key) (nth b key)
+                                                      direction)))))
       (grid-calc--from-lines (mapcar (lambda (index) (nth index lines)) order)
                              by-col))))
 

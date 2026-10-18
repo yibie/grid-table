@@ -2575,6 +2575,24 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval "=SORTBY({1;2;3},{1;2;3},2)")
                  "#VALUE!")))
 
+(ert-deftest grid-table-formula-sort-takes-several-places-and-puts-blanks-last ()
+  "SORT sorts by each place in turn, and a blank goes after every value."
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=SORT({1,2;1,1;0,3},{1,2},{1,-1})" 3 2))
+                 '((0 3) (1 2) (1 1))))
+  ;; Not an order for each place, or a block of places.
+  (should (equal (grid-table-formula-test--eval "=SORT({2,1,2,1},1,{1;-1})")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=SORT({1,2;3,4},{1,2;1,2})")
+                 "#VALUE!"))
+  (should (equal (mapcar #'car (grid-table-formula-test--values
+                                '(("=SORT(B1:B3)" "2") ("" "") ("" "1"))))
+                 '(1 2 0)))
+  (should (equal (mapcar #'car (grid-table-formula-test--values
+                                '(("=SORTBY({1;2;3},B1:B3,-1)" "") ("" "5") ("" "7"))))
+                 '(3 2 1))))
+
 (ert-deftest grid-table-formula-textsplit-splits-at-its-delimiters ()
   (should (equal (grid-table-formula-test--values
                   (grid-table-formula-test--grid
