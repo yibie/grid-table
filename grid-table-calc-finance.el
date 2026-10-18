@@ -483,7 +483,8 @@ MONTHS how many months before MATURITY PCD stands."
   (pcase basis
     ((or 0 2 4) (/ 360.0 frequency))
     (3 (/ 365.0 frequency))
-    (_ (- ncd pcd))))
+    ;; Counted in the calendar, without the 29 February 1900 of serials.
+    (_ (- ncd pcd (if (and (< pcd 60) (> ncd 60)) 1 0)))))
 
 (defun grid-calc--finance-coupon-parts (settlement maturity frequency basis)
   "Return (N PCD NCD A DSC E) of the coupons about SETTLEMENT.

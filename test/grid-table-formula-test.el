@@ -3603,6 +3603,11 @@ Excel's values for."
                1e-9))
     (should (equal (grid-model-get-computed-value model 1 0) "#VALUE!"))))
 
+;; COUPDAYS counts a period over February 1900 in the calendar, as Excel.
+(ert-deftest grid-table-formula-test-coupdays-early-1900 ()
+  (grid-table-formula-test--should-be '("=COUPDAYS(3.2,DATE(2050,12,31),1,1)" . 365))
+  (grid-table-formula-test--should-be '("=COUPDAYS(DATE(2020,3,3),DATE(2050,12,31),1,1)" . 366)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
