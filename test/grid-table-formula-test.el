@@ -3528,6 +3528,13 @@ Excel's values for."
                   "=FREQUENCY(B1:C1,D1)" "#NULL!" "#NUM!" "1")
                  "#NULL!")))
 
+(ert-deftest grid-table-formula-test-truth-not-a-number ()
+  "ISEVEN, ISODD and MROUND take TRUE and FALSE as #VALUE!."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=ISEVEN(TRUE)" . "#VALUE!") ("=ISODD(FALSE)" . "#VALUE!")
+          ("=MROUND(TRUE,1)" . "#VALUE!") ("=MROUND(5,TRUE)" . "#VALUE!")
+          ("=IF(ISEVEN(\"4\"),1,0)" . 1) ("=MROUND(7,2)" . 8))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

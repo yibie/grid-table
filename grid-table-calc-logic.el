@@ -336,13 +336,13 @@ as an argument must be TRUE or FALSE.  None at all is #VALUE!."
 (grid-calc--define-is isna "TRUE when VALUE is #N/A."
                       (lambda (value) (eq value (grid-calc-err "#N/A"))))
 
-(grid-calc-define iseven ((number number))
-  "TRUE when NUMBER, its fraction cut off, is even."
-  (grid-calc-bool (cl-evenp (truncate number))))
+(grid-calc-define iseven ((number any))
+  "TRUE when NUMBER, its fraction cut off, is even; TRUE or FALSE is #VALUE!."
+  (grid-calc-bool (cl-evenp (truncate (grid-calc--strict-num number)))))
 
-(grid-calc-define isodd ((number number))
-  "TRUE when NUMBER, its fraction cut off, is odd."
-  (grid-calc-bool (cl-oddp (truncate number))))
+(grid-calc-define isodd ((number any))
+  "TRUE when NUMBER, its fraction cut off, is odd; TRUE or FALSE is #VALUE!."
+  (grid-calc-bool (cl-oddp (truncate (grid-calc--strict-num number)))))
 
 (grid-calc-define isref ((value values))
   "TRUE when VALUE is a reference."

@@ -1549,6 +1549,11 @@ Blank is 0, TRUE 1 and FALSE 0; text is the number it reads as."
     (grid-calc-num (grid-calc--first value)))
    (t (grid-calc-raise "#VALUE!"))))
 
+(defun grid-calc--strict-num (value)
+  "Return VALUE as a number, or #VALUE! where TRUE or FALSE is given."
+  (when (memq value '(t :false)) (grid-calc-raise "#VALUE!"))
+  (grid-calc-num value))
+
 (defun grid-calc-int (value)
   "Return VALUE as a number with its fraction cut off."
   (let ((number (grid-calc-num value)))

@@ -244,7 +244,7 @@ out and the counts no longer agree."
 
 (grid-calc-define xnpv ((rate any) (values values) (dates values))
   "The value at the first of DATES of the cash flows VALUES on DATES."
-  (let ((rate (grid-calc--finance-number rate)))
+  (let ((rate (grid-calc--strict-num rate)))
     (when (<= rate 0) (grid-calc-raise "#NUM!"))
     (let ((sum 0.0))
       (pcase-dolist (`(,years . ,flow) (grid-calc--dated-flows values dates))
@@ -254,7 +254,7 @@ out and the counts no longer agree."
 (grid-calc-define xirr ((values values) (dates values) &optional (guess any 0.1))
   "The yearly rate at which the cash flows VALUES on DATES are worth 0."
   (let ((flows (grid-calc--dated-flows values dates t))
-        (guess (grid-calc--finance-number guess)))
+        (guess (grid-calc--strict-num guess)))
     (unless (and (cl-some (lambda (f) (> (cdr f) 0)) flows)
                  (cl-some (lambda (f) (< (cdr f) 0)) flows))
       (grid-calc-raise "#NUM!"))
@@ -271,22 +271,17 @@ out and the counts no longer agree."
       (when (< (+ 1 rate) 1e-9) (grid-calc-raise "#NUM!"))
       rate)))
 
-(defun grid-calc--finance-number (value)
-  "Return VALUE as a number, or #VALUE! where TRUE or FALSE is given."
-  (when (memq value '(t :false)) (grid-calc-raise "#VALUE!"))
-  (grid-calc-num value))
-
 (grid-calc-define effect ((nominal any) (periods any))
   "The yearly rate NOMINAL comes to, compounded PERIODS times a year."
-  (let ((nominal (grid-calc--finance-number nominal))
-        (periods (grid-calc-int (grid-calc--finance-number periods))))
+  (let ((nominal (grid-calc--strict-num nominal))
+        (periods (grid-calc-int (grid-calc--strict-num periods))))
     (when (or (<= nominal 0) (< periods 1)) (grid-calc-raise "#NUM!"))
     (- (expt (+ 1.0 (/ nominal (float periods))) periods) 1)))
 
 (grid-calc-define nominal ((effective any) (periods any))
   "The yearly rate that, compounded PERIODS times a year, comes to EFFECTIVE."
-  (let ((effective (grid-calc--finance-number effective))
-        (periods (grid-calc-int (grid-calc--finance-number periods))))
+  (let ((effective (grid-calc--strict-num effective))
+        (periods (grid-calc-int (grid-calc--strict-num periods))))
     (when (or (<= effective 0) (< periods 1)) (grid-calc-raise "#NUM!"))
     (* periods (- (expt (+ 1.0 effective) (/ 1.0 periods)) 1))))
 
@@ -320,10 +315,10 @@ The first period, from START to FIRST, is a fraction of a full one."
   "The depreciation in PERIOD of COST bought on START, by the French method."
   :toolpak t
   (grid-calc--finance-basis basis)
-  (let ((cost (grid-calc--finance-number cost))
-        (salvage (grid-calc--finance-number salvage))
-        (period (grid-calc--finance-number period))
-        (rate (grid-calc--finance-number rate)))
+  (let ((cost (grid-calc--strict-num cost))
+        (salvage (grid-calc--strict-num salvage))
+        (period (grid-calc--strict-num period))
+        (rate (grid-calc--strict-num rate)))
     (when (or (<= cost 0) (<= rate 0) (< salvage 0) (< period 0) (> start first))
       (grid-calc-raise "#NUM!"))
     (grid-calc--finance-amorlinc cost start first salvage (truncate period)
@@ -360,10 +355,10 @@ last of it is half of what is left."
   "The depreciation in PERIOD of COST bought on START, the French way."
   :toolpak t
   (grid-calc--finance-basis basis)
-  (let ((cost (grid-calc--finance-number cost))
-        (salvage (grid-calc--finance-number salvage))
-        (period (grid-calc--finance-number period))
-        (rate (grid-calc--finance-number rate)))
+  (let ((cost (grid-calc--strict-num cost))
+        (salvage (grid-calc--strict-num salvage))
+        (period (grid-calc--strict-num period))
+        (rate (grid-calc--strict-num rate)))
     (when (or (<= cost salvage) (<= rate 0) (< salvage 0) (< period 0)
               (> start first))
       (grid-calc-raise "#NUM!"))
