@@ -3234,6 +3234,20 @@ Excel's values for."
                   ("=ZTEST({#NUM!,#REF!},1)" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-several-values-each-give-their-first ()
+  "Where one call of several gives an array, its first value stands for it."
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=SEQUENCE({2,3})" 1 2))
+                 '((1 1))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=DROP({1,2,3;4,5,6;7,8,9},1,{1;2})" 2 1))
+                 '((5) (6))))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid
+                   "=WRAPROWS({1,2,3,4,5,6},{1,2},6)" 1 2))
+                 '((1 1)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

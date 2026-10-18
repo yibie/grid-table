@@ -2661,11 +2661,15 @@ Several values for one value make the result several values too."
                                   collect (and one (grid-calc-array-p value)))))
           (grid-calc--broadcast
            (lambda (&rest elements)
-             (grid-calc--apply-once
-              function model kinds scalar stops errors
-              (cl-loop for value in values
-                       for lifted in positions
-                       collect (if lifted (pop elements) value))))
+             ;; An array cannot hold arrays: where one call gives
+             ;; several values, its first stands for them, as
+             ;; SEQUENCE({2,3}) is {1,1}.
+             (let ((value (grid-calc--apply-once
+                           function model kinds scalar stops errors
+                           (cl-loop for value in values
+                                    for lifted in positions
+                                    collect (if lifted (pop elements) value)))))
+               (if (grid-calc-array-p value) (grid-calc-aref value 0 0) value)))
            (cl-loop for value in values
                     for lifted in positions
                     when lifted collect value)))
