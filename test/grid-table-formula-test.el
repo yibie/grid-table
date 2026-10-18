@@ -3387,6 +3387,13 @@ Excel's values for."
                   ("=DAYS360(1987,2958465,1)" . 2914041)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-weeknum-of-day-0-is-0 ()
+  "Day 0 is in the week before the first of 1900, week 0."
+  (dolist (case '(("=WEEKNUM(0,1)" . 0)
+                  ("=WEEKNUM(0.7,1)" . 0)
+                  ("=WEEKNUM(1,1)" . 1)))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-text-of-a-date-and-a-time-reads ()
   "Text with a date and a time after it is both, as Excel reads it."
   (dolist (case '(("=VALUE(\"1/1/1987 05:00 AM\")" . 31778.208333333332)

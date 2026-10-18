@@ -159,7 +159,7 @@ to Sunday; 21 counts ISO weeks."
                       (grid-calc-raise "#NUM!")))
            (first (grid-calc-date-serial (nth 0 (grid-calc-serial-date date)) 1 1))
            (offset (mod (- (grid-calc--weekday first) start) 7)))
-      (1+ (/ (+ (- date first) offset) 7)))))
+      (1+ (floor (+ (- date first) offset) 7)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Moving by months and counting days
