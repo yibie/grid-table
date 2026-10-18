@@ -1652,7 +1652,14 @@
       (grid-workbook-recalculate workbook t))
     (should (equal (grid-get-computed-value-at named 0 0) 300))
     (should (equal (grid-get-computed-value-at cycle 0 0) "#CYCLE!"))
-    (should (equal (grid-get-computed-value-at cycle 29 0) "#CYCLE!"))))
+    (should (equal (grid-get-computed-value-at cycle 29 0) "#CYCLE!"))
+    ;; A cycle longer than formulas may go on top of each other
+    (let ((long (make-default-data-source
+                 '("") (cl-loop for row from 1 to 300
+                                collect (list (format "=A%d+1"
+                                                      (1+ (% row 300))))))))
+      (dolist (row '(0 1 150 299))
+        (should (equal (grid-get-computed-value-at long row 0) "#CYCLE!"))))))
 
 (ert-deftest grid-table-formula-names-on-a-lone-sheet-are-saved ()
   (let* ((source (make-default-data-source

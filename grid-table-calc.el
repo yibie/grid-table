@@ -266,6 +266,13 @@ the ones waiting on it are computed again after it.")
 (defvar grid-calc--put-off nil
   "The depth formulas are counted from while one may be put off, or nil.")
 
+(defvar grid-calc--waiting-on nil
+  "The formulas waiting on a put off one, by it, while one may be put off.
+A hash table from (MODEL . INDEX) of the put off formula to a list of
+(MODEL . INDEX) of each formula its putting off cut short.  Those wait
+for it, and through it for every formula put off before it that is not
+done: one of them read while any is computed is on a cycle.")
+
 ;; Not an `error', so no formula takes it for a failure of its own.
 (put 'grid-calc-put-off 'error-conditions '(grid-calc-put-off))
 (put 'grid-calc-put-off 'error-message "Formula put off")
@@ -277,17 +284,19 @@ instead of stopping the recalculation."
   (if grid-calc--put-off
       (grid-calc--compute-cell-1 model index)
     (let ((grid-calc--put-off grid-calc--depth)
+          (grid-calc--waiting-on (make-hash-table :test #'equal))
           (waiting (list (cons model index))))
       (while waiting
         (condition-case put-off
-            (let ((grid-calc--deepest
-                   ;; A formula put off again while it waits is on a
-                   ;; cycle, which is found only by going round it.
-                   (if (member (car waiting) (cdr waiting))
-                       most-positive-fixnum
-                     grid-calc--deepest)))
+            (progn
               (grid-calc--compute-cell-1 (caar waiting) (cdar waiting))
-              (pop waiting))
+              ;; What waited on it is computed again as it comes.
+              (dolist (cell (gethash (car waiting) grid-calc--waiting-on))
+                (let ((pass (grid-calc--pass-of (car cell))))
+                  (when (eq (car-safe (grid-calc--pass-state pass (cdr cell)))
+                            'waiting)
+                    (grid-calc--set-pass-state pass (cdr cell) nil))))
+              (remhash (pop waiting) grid-calc--waiting-on))
           (grid-calc-put-off (push (cdr put-off) waiting)))))))
 
 (defun grid-calc--compute-cell-1 (model index)
@@ -299,6 +308,9 @@ Signal `grid-calc-put-off' when its formula would go too deep."
       ('done nil)
       ;; The signal names the cell the cycle comes back to.
       ('visiting (signal 'grid-calc-cycle (list model index)))
+      ;; It waits on the formulas being computed, which read it: a cycle
+      ;; too long to go round, closed in a formula off the stack.
+      (`(waiting . ,_) (signal 'grid-calc-cycle (list model index)))
       (_
        ;; A blank cell may show what a formula above or to the left of
        ;; it spills; that formula is computed first, and writes it.
@@ -363,15 +375,17 @@ PASS is MODEL's state in the recalculation in progress."
                 (grid-calc-cycle (grid-calc--spill-retract model index)
                                  (setq cycle-head (cdr err)) "#CYCLE!")
                 ;; Computed again once what it waits on is
-                (grid-calc-put-off (grid-calc--set-pass-state pass index nil)
-                                   (signal (car err) (cdr err)))
+                (grid-calc-put-off
+                 (grid-calc--set-pass-state pass index (cons 'waiting (cdr err)))
+                 (push (cons model index)
+                       (gethash (cdr err) grid-calc--waiting-on))
+                 (signal (car err) (cdr err)))
                 ;; Names using names can go too deep in fewer formulas:
                 ;; this formula is put off, unless nothing waits on it.
                 (recursion-error
                  (grid-calc--spill-retract model index)
                  (if (and grid-calc--put-off
-                          (> grid-calc--depth grid-calc--put-off)
-                          (< grid-calc--deepest most-positive-fixnum))
+                          (> grid-calc--depth grid-calc--put-off))
                      (progn (grid-calc--set-pass-state pass index nil)
                             (signal 'grid-calc-put-off (cons model index)))
                    (grid-calc--error-value err)))
