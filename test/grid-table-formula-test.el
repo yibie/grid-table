@@ -3380,6 +3380,13 @@ Excel's values for."
                   ("=COUPDAYSNC(DATE(2011,1,25),DATE(2011,11,15),2,1)" . 110)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-days360-refuses-the-day-after-9999 ()
+  "DAYS360 takes no day after 9999-12-31, which other functions let pass."
+  (dolist (case '(("=DAYS360(1987,2958466,1)" . "#NUM!")
+                  ("=DAYS360(2958466,0,1)" . "#NUM!")
+                  ("=DAYS360(1987,2958465,1)" . 2914041)))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-text-of-a-date-and-a-time-reads ()
   "Text with a date and a time after it is both, as Excel reads it."
   (dolist (case '(("=VALUE(\"1/1/1987 05:00 AM\")" . 31778.208333333332)

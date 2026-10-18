@@ -210,8 +210,10 @@ are the last day of February."
     (+ (* 360 (- y2 y1)) (* 30 (- m2 m1)) (- d2 d1))))
 
 (grid-calc-define days360 ((start date) (end date) &optional (european bool))
-  "The days from START to END in a year of twelve 30-day months."
-  (grid-calc--days-360 start end
+  "The days from START to END in a year of twelve 30-day months.
+The day after 9999-12-31 is #NUM! here, as in Excel."
+  (grid-calc--days-360 (grid-calc--day-checked start t)
+                       (grid-calc--day-checked end t)
                        european))
 
 (defun grid-calc--leap-year-p (year)
