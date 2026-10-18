@@ -684,7 +684,9 @@ or a reference to one cell, is #VALUE! unless it is a number."
   (grid-calc-array-from-list (grid-calc--modes (grid-calc--mode-numbers numbers))))
 
 (defun grid-calc--kth (numbers k largest)
-  "Return the Kth LARGEST, or smallest, of NUMBERS, counting from 1."
+  "Return the Kth LARGEST, or smallest, of NUMBERS, counting from 1.
+A fraction of K counts up, but K below 1 is #NUM!, as in Excel."
+  (when (< k 1) (grid-calc-raise "#NUM!"))
   (let ((k (if (floatp k) (truncate (fceiling (grid-calc--snap k))) k)))
     (unless (and numbers (<= 1 k (length numbers))) (grid-calc-raise "#NUM!"))
     (nth (1- k) (sort (copy-sequence numbers) (if largest #'> #'<)))))
@@ -754,9 +756,12 @@ EXCLUSIVE leaves out the first and last as PERCENTILE.EXC does."
   "The K percentile of NUMBERS, K between 0 and 1, the ends left out."
   (grid-calc--percentile (grid-calc-numbers (list numbers)) k t))
 
-(grid-calc-define quartile.inc ((numbers values) (quart integer))
-  "The QUART quartile of NUMBERS, 0 their smallest to 4 their largest."
-  (unless (<= 0 quart 4) (grid-calc-raise "#NUM!"))
+(grid-calc-define quartile.inc ((numbers values) (quart number))
+  "The QUART quartile of NUMBERS, 0 their smallest to 4 their largest.
+A fraction is cut off, but one below 0 is #NUM!, as in Excel."
+  (unless (<= 0 quart) (grid-calc-raise "#NUM!"))
+  (setq quart (truncate quart))
+  (unless (<= quart 4) (grid-calc-raise "#NUM!"))
   (grid-calc--percentile (grid-calc-numbers (list numbers)) (/ quart 4.0) nil))
 
 (grid-calc-alias quartile quartile.inc)

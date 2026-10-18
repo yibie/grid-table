@@ -3463,6 +3463,15 @@ Excel's values for."
                   ("=DAYS(2958465,1)" . 2958464)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-ranks-below-the-first-are-num ()
+  "QUARTILE below 0 and LARGE or SMALL below 1 are #NUM!, fractions and all."
+  (dolist (case '(("=QUARTILE({2.2,-0.1},-0.1)" . "#NUM!")
+                  ("=QUARTILE({1,2,3,4,5},4.9)" . 5)
+                  ("=LARGE({0.1,-10,0.9,2.2},0.9)" . "#NUM!")
+                  ("=LARGE({0.1,-10,0.9,2.2},1.5)" . 0.9)
+                  ("=SMALL({1,2},0.5)" . "#NUM!")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
