@@ -3102,6 +3102,14 @@ Excel's values for."
   (dolist (case '(("=COUPNCD(DATE(2000,1,1),DATE(2000,9,30),4)" . 36616)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-prices-an-odd-last-period ()
+  "ODDLPRICE and ODDLYIELD, as Microsoft's examples give them."
+  (dolist (case '(("=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.0405,100,2,0)"
+                   . 99.87828601472134)
+                  ("=ODDLYIELD(DATE(2008,4,20),DATE(2008,6,15),DATE(2007,12,24),0.0375,99.875,100,2,0)"
+                   . 0.04519223562916933)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

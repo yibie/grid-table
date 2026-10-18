@@ -899,21 +899,19 @@ for it, the interest accrued since the last coupon taken off."
 (defun grid-calc--finance-odd-last-price (settlement maturity last-interest
                                                      rate yield redemption
                                                      frequency basis)
-  "The price per 100 of a bond with an odd last period."
-  (let* ((base (grid-calc--finance-base yield frequency))
-         (coupon (/ (* 100.0 rate) frequency))
-         (count (round (grid-calc--finance-odd-units
-                        settlement maturity maturity frequency basis)))
-         (paid (grid-calc--finance-odd-units
-                last-interest maturity maturity frequency basis))
-         (accrued (grid-calc--finance-odd-units
-                   last-interest settlement maturity frequency basis)))
-    (when (< count 1) (setq count 1))
-    (- (+ (* redemption (expt base (- count)))
-          (cl-loop for k from 1 to count
-                   sum (/ coupon (expt base k)))
-          (/ (* coupon (- paid count)) (expt base count)))
-       (* coupon accrued))))
+  "The price per 100 of a bond with an odd last period.
+The last coupon covers LAST-INTEREST to MATURITY in the periods of
+FREQUENCY, the interest still to come from SETTLEMENT the same way."
+  (let* ((coupon (/ (* 100.0 rate) frequency))
+         (left (* (grid-calc--finance-years settlement maturity basis)
+                  frequency))
+         (last (* (grid-calc--finance-years last-interest maturity basis)
+                  frequency))
+         (accrued (* (grid-calc--finance-years last-interest settlement basis)
+                     frequency)))
+    (- (/ (+ redemption (* last coupon))
+          (+ 1 (* left (/ yield frequency))))
+       (* accrued coupon))))
 
 (grid-calc-define oddlprice ((settlement date) (maturity date)
                              (last-interest date) (rate number) (yield number)
