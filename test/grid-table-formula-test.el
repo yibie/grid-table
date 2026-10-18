@@ -3097,6 +3097,11 @@ Excel's values for."
                    . 2.1336010409109454)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-keeps-coupons-to-the-month-end ()
+  "A bond maturing on the last day of a month has its coupons on last days."
+  (dolist (case '(("=COUPNCD(DATE(2000,1,1),DATE(2000,9,30),4)" . 36616)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -346,14 +346,19 @@ out and the counts no longer agree."
   (nth 2 (grid-calc-serial-date (grid-calc-date-serial year (1+ month) 0))))
 
 (defun grid-calc--finance-coupon-date (maturity months)
-  "The day MONTHS months before MATURITY, its day kept where it fits."
+  "The day MONTHS months before MATURITY, its day kept where it fits.
+A MATURITY on the last day of its month keeps to the last day of a month."
   (pcase-let* ((`(,year ,month ,day) (grid-calc-serial-date maturity))
                (index (- (+ (* year 12) (1- month)) months))
                (target-year (floor (/ index 12)))
-               (target-month (1+ (% index 12))))
-    (grid-calc-date-serial
-     target-year target-month
-     (min day (grid-calc--finance-month-days target-year target-month)))))
+               (target-month (1+ (% index 12)))
+               (end (grid-calc--finance-month-days target-year target-month)))
+    ;; A coupon before the workbook's first day is that day, as Excel has it.
+    (max 0 (grid-calc-date-serial
+            target-year target-month
+            (if (= day (grid-calc--finance-month-days year month))
+                end
+              (min day end))))))
 
 (defun grid-calc--finance-months (start end)
   "The months from START to END, the days of the month left out."
