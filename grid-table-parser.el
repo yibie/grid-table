@@ -30,13 +30,14 @@ deleted cell.")
 (defconst grid-parser-sheet-prefix-regexp
   (concat "\\(?:'\\(\\(?:[^']\\|''\\)+\\)'"
           "\\(?::'\\(\\(?:[^']\\|''\\)+\\)'\\)?"
-          "\\|\\([[:alpha:]_][[:alnum:]_.]*"
+          "\\|\\(\\(?:\\[[0-9]+\\]\\)?[[:alpha:]_][[:alnum:]_.]*"
           "\\(?::\\([[:alpha:]_][[:alnum:]_.]*\\)\\)?\\)\\)!")
   "Matches the sheet a reference names, up to its exclamation mark.
 Group 1 is a name written in apostrophes, where a doubled apostrophe
 stands for one; group 3 is a name written bare.  Either may be two
 names joined by a colon, a reference through the sheets from the one to
 the other (Sheet1:Sheet3!A1); group 4 is then the second bare name.
+A bare name may follow the number of another workbook, as [1]Sheet4!A1.
 Two names each in apostrophes, as LibreOffice writes 'a b':'c d'!A1,
 put the second in group 2.")
 
@@ -55,7 +56,7 @@ END is the position after the exclamation mark.  Return nil when no
 prefix starts there."
   (let ((char (aref text pos)))
     ;; Looking for a match that starts further on would be wasted work.
-    (when (and (or (eq char ?') (eq char ?_)
+    (when (and (or (eq char ?') (eq char ?_) (eq char ?\[)
                    (eq (get-char-code-property char 'general-category) 'Lo)
                    (memq (get-char-code-property char 'general-category)
                          '(Lu Ll Lt Lm)))

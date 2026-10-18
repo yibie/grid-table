@@ -3717,6 +3717,16 @@ Excel's values for."
     (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
                (* 1e-14 (cdr case))))))
 
+(ert-deftest grid-table-formula-name-like-a-cell-and-another-book ()
+  "A name may start like a cell, and one for another workbook's cell is #REF!."
+  (let* ((one (make-default-data-source
+               '("A" "B") '(("2.1" "") ("=s2a1" "=s4a1"))))
+         (workbook (grid-workbook-create (list (cons "Sheet1" one)))))
+    (grid-workbook-define-name workbook "s2a1" "=Sheet1!$A$1")
+    (grid-workbook-define-name workbook "s4a1" "=[1]Sheet4!$A$1")
+    (should (equal (grid-get-computed-value-at one 1 0) 2.1))
+    (should (equal (grid-get-computed-value-at one 1 1) "#REF!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
