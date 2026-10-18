@@ -3645,6 +3645,19 @@ Excel's values for."
   (should (equal (grid-table-formula-test--eval "=FILTER({\"a\",2.1;\"b\",4.1},TRUE)") "#VALUE!"))
   (should (equal (grid-table-formula-test--eval "=FILTER({\"a\";2.1},FALSE)") "#CALC!")))
 
+(ert-deftest grid-table-formula-name-backslash ()
+  "A name may start with a backslash and hold backslashes and question marks."
+  (should-not (grid-calc-name-problem "\\Rate"))
+  (should-not (grid-calc-name-problem "_1234\\5678\\90"))
+  (should-not (grid-calc-name-problem "Is?Done"))
+  (should (grid-calc-name-problem "?Done"))
+  (let* ((one (make-default-data-source
+               '("A" "B") '(("1" "2") ("=_12\\34+\\x" ""))))
+         (workbook (grid-workbook-create (list (cons "Sheet1" one)))))
+    (grid-workbook-define-name workbook "_12\\34" "=Sheet1!$A$1")
+    (grid-workbook-define-name workbook "\\x" "=Sheet1!$B$1")
+    (should (equal (grid-get-computed-value-at one 1 0) 3))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

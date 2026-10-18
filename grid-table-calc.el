@@ -142,16 +142,16 @@ to the left and A1048576 the row above."
 
 (defun grid-calc-name-problem (name)
   "Return why NAME cannot be a defined name, or nil when it can.
-A name starts with a letter or an underscore and goes on with letters,
-digits, underscores and dots.  It may not read as a cell, column or row
-reference, nor start like a cell reference (Q1Sales, though Global1,
-whose column is past XFD, may), nor be TRUE or
-FALSE.  It may share a function's name, as Excel allows: RATE is the
+A name starts with a letter, an underscore or a backslash and goes on
+with those, digits, dots and question marks.  It may not read as a
+cell, column or row reference, nor start like a cell reference
+\(Q1Sales, though Global1, whose column is past XFD, may), nor be TRUE
+or FALSE.  It may share a function's name, as Excel allows: RATE is the
 name and RATE(...) the function."
   (let ((upper (and (stringp name) (upcase name))))
     (cond
-     ((not (and upper (string-match-p "\\`[A-Za-z_][A-Za-z0-9_.]*\\'" name)))
-      "A name starts with a letter or _ and holds letters, digits, _ and .")
+     ((not (and upper (string-match-p "\\`[A-Za-z_\\][A-Za-z0-9_.?\\]*\\'" name)))
+      "A name starts with a letter, _ or \\ and holds those, digits, . and ?")
      ((> (length name) 255) "A name cannot be longer than 255 characters")
      ((and (string-match "\\`\\$?\\([A-Za-z]+\\)\\$?\\([0-9]+\\)" name)
            ;; Global1 is a name: no sheet has a column GLOBAL.
