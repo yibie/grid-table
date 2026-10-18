@@ -1256,23 +1256,29 @@ others are less by 1 + RATE."
   (when (or (< cost 0) (< salvage 0) (<= life 0) (< start 0) (< end start)
             (> end life) (<= factor 0))
     (grid-calc-raise "#NUM!"))
-  (let ((rate (/ factor (float life)))
-        (value (float cost))
-        (total 0.0)
-        (i 0))
-    (while (< i (ceiling end))
+  ;; Choosing the balance or the straight line, the periods line up with
+  ;; START: from 2.5 they are 0 to 0.5, 0.5 to 1.5 and on.  Without the
+  ;; choice they are whole years.
+  (let* ((rate (/ factor (float life)))
+         (value (float cost))
+         (total 0.0)
+         (offset (if no-switch 0 (- start (floor start))))
+         (low 0.0)
+         (high (if (> offset 0) offset 1.0)))
+    (while (< low end)
       (let* ((room (max 0.0 (- value salvage)))
              (balance (min (* value rate) room))
-             (straight (if (> (- life i) 0) (/ room (- life i)) 0.0))
+             (straight (if (> (- life low) 0) (/ room (- life low)) 0.0))
              (depreciation (if no-switch
                                balance
                              (max balance straight)))
-             (from (max start i))
-             (to (min end (1+ i))))
+             (from (max start low))
+             (to (min end high)))
         (when (< from to)
           (setq total (+ total (* depreciation (- to from)))))
-        (setq value (- value depreciation)
-              i (1+ i))))
+        (setq value (- value (* depreciation (- high low)))
+              low high
+              high (1+ high))))
     total))
 
 (provide 'grid-table-calc-finance)

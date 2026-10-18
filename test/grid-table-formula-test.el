@@ -3706,6 +3706,15 @@ Excel's values for."
     (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
                (* 1e-12 (cdr case))))))
 
+(ert-deftest grid-table-formula-vdb-fractional-start ()
+  "VDB lines its periods up with a start part way through one."
+  (dolist (case '(("=VDB(1,0,14,0,0.5,1.25,FALSE)" . 0.044642857142857144)
+                  ("=VDB(1,0,14,2.5,3.5,1.25,FALSE)" . 0.07074765193864536)
+                  ("=VDB(1,0,14,3.5,4.5,1.25,FALSE)" . 0.06872629045468406)
+                  ("=VDB(1,0,14,13.5,14,1.25,FALSE)" . 0.03436314522734203)))
+    (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
+               (* 1e-14 (cdr case))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
