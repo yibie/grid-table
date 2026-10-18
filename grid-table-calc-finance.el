@@ -271,19 +271,17 @@ out and the counts no longer agree."
       (when (< (+ 1 rate) 1e-9) (grid-calc-raise "#NUM!"))
       rate)))
 
-(grid-calc-define effect ((nominal any) (periods any))
+(grid-calc-define effect ((nominal number) (periods integer))
   "The yearly rate NOMINAL comes to, compounded PERIODS times a year."
-  (let ((nominal (grid-calc--strict-num nominal))
-        (periods (grid-calc-int (grid-calc--strict-num periods))))
-    (when (or (<= nominal 0) (< periods 1)) (grid-calc-raise "#NUM!"))
-    (- (expt (+ 1.0 (/ nominal (float periods))) periods) 1)))
+  :toolpak t
+  (when (or (<= nominal 0) (< periods 1)) (grid-calc-raise "#NUM!"))
+  (- (expt (+ 1.0 (/ nominal (float periods))) periods) 1))
 
-(grid-calc-define nominal ((effective any) (periods any))
+(grid-calc-define nominal ((effective number) (periods integer))
   "The yearly rate that, compounded PERIODS times a year, comes to EFFECTIVE."
-  (let ((effective (grid-calc--strict-num effective))
-        (periods (grid-calc-int (grid-calc--strict-num periods))))
-    (when (or (<= effective 0) (< periods 1)) (grid-calc-raise "#NUM!"))
-    (* periods (- (expt (+ 1.0 effective) (/ 1.0 periods)) 1))))
+  :toolpak t
+  (when (or (<= effective 0) (< periods 1)) (grid-calc-raise "#NUM!"))
+  (* periods (- (expt (+ 1.0 effective) (/ 1.0 periods)) 1)))
 
 (grid-calc-define sln ((cost number) (salvage number) (life number))
   "The depreciation per period of COST down to SALVAGE over LIFE."
@@ -1086,6 +1084,7 @@ FREQUENCY, the interest still to come from SETTLEMENT the same way."
 
 (grid-calc-define fvschedule ((principal number) (schedule values))
   "PRINCIPAL grown by each of the rates in SCHEDULE, one after another."
+  :toolpak t
   (let ((total principal))
     (grid-calc-each-value
      schedule

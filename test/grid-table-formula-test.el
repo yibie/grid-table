@@ -3529,11 +3529,13 @@ Excel's values for."
                  "#NULL!")))
 
 (ert-deftest grid-table-formula-test-truth-not-a-number ()
-  "ISEVEN, ISODD and MROUND take TRUE and FALSE as #VALUE!."
+  "Analysis ToolPak functions take TRUE and FALSE as #VALUE!, in order."
   (mapc #'grid-table-formula-test--should-be
         '(("=ISEVEN(TRUE)" . "#VALUE!") ("=ISODD(FALSE)" . "#VALUE!")
           ("=MROUND(TRUE,1)" . "#VALUE!") ("=MROUND(5,TRUE)" . "#VALUE!")
-          ("=IF(ISEVEN(\"4\"),1,0)" . 1) ("=MROUND(7,2)" . 8))))
+          ("=IF(ISEVEN(\"4\"),1,0)" . 1) ("=MROUND(7,2)" . 8)
+          ("=NOMINAL(TRUE,NA())" . "#VALUE!") ("=EFFECT(0.1,TRUE)" . "#VALUE!")
+          ("=FVSCHEDULE(TRUE,{0.1,0.2})" . "#VALUE!"))))
 
 (provide 'grid-table-formula-test)
 

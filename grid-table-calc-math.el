@@ -79,10 +79,9 @@ toward plus and minus infinity."
                     ('down (ffloor quotient)))))
       (grid-calc--tidy-number (grid-calc--snap (* whole step))))))
 
-(grid-calc-define mround ((number any) (multiple any))
-  "NUMBER rounded to the nearest multiple of MULTIPLE; TRUE or FALSE is #VALUE!."
-  (setq number (grid-calc--strict-num number)
-        multiple (grid-calc--strict-num multiple))
+(grid-calc-define mround ((number number) (multiple number))
+  "NUMBER rounded to the nearest multiple of MULTIPLE."
+  :toolpak t
   (when (and (/= number 0) (/= multiple 0) (/= (cl-signum number) (cl-signum multiple)))
     (grid-calc-raise "#NUM!"))
   (grid-calc--to-multiple number multiple 'nearest))
