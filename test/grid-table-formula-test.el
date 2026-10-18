@@ -3545,6 +3545,12 @@ Excel's values for."
   (should (equal (grid-table-formula-test--eval "=QUARTILE(B1:C1,D1)" "#NUM!" "1" "#REF!")
                  "#REF!")))
 
+(ert-deftest grid-table-formula-test-t-dist-no-freedom ()
+  "T.DIST's density of no degrees of freedom is #DIV/0!."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=T.DIST(0,0,FALSE)" . "#DIV/0!") ("=T.DIST(0,0,TRUE)" . "#NUM!")
+          ("=T.DIST(0,-1,FALSE)" . "#NUM!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -487,7 +487,9 @@ HIGH, is P."
     (if (> x 0) (- 1 tail) tail)))
 
 (grid-calc-define t.dist ((x number) (df integer) (cumulative bool))
-  "The t distribution of DF degrees of freedom at X, or its density."
+  "The t distribution of DF degrees of freedom at X, or its density.
+The density of DF 0 is #DIV/0!, as in Excel."
+  (when (and (= df 0) (not cumulative)) (grid-calc-raise "#DIV/0!"))
   (grid-calc--require (>= df 1))
   (if cumulative (grid-calc--t-cdf x df)
     (exp (- (+ (grid-calc--log-gamma (/ (+ df 1) 2.0))
