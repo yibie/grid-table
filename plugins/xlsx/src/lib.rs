@@ -55,11 +55,19 @@ fn quote(out: &mut String, text: &str) {
     out.push('"');
 }
 
+/// TEXT from XML with its line breaks as XML reads them: a carriage
+/// return written as itself, alone or before a line feed, is a line feed.
+fn xml_lines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 /// TEXT with each _xHHHH_ escape, as OOXML writes a line break in a table
-/// column's name, taken back to its character.
+/// column's name, taken back to its character.  Its line breaks are first
+/// read as XML reads them, so only _x000D_ stays a carriage return.
 fn unescape_x(text: &str) -> String {
+    let text = xml_lines(text);
     let mut out = String::new();
-    let mut rest = text;
+    let mut rest = text.as_str();
     while let Some(at) = rest.find("_x") {
         let code = rest.get(at + 2..at + 6);
         let ok = code.filter(|c| c.chars().all(|c| c.is_ascii_hexdigit()))
@@ -150,7 +158,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
         // A data table or a spilled array has no formula of its own to
         // give, only the value it shows.
         if cell.is_formula() && !cell.formula().is_empty() {
-            quote(out, &format!("={}", cell.formula()));
+            quote(out, &format!("={}", xml_lines(cell.formula())));
             // An array formula computes over whole ranges and fills the
             // cells of its reference; a plain one takes one cell of each.
             if let Some(formula) = cell.formula_obj() {

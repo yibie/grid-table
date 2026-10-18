@@ -521,6 +521,18 @@ as CR LF."
                         (grid-workbook-sheet back "Data") 3 1)
                        5))))))
 
+(ert-deftest grid-table-xlsx-test-bare-carriage-returns ()
+  "A carriage return written as itself, not _x000D_, is read as a line feed.
+XML reads it so, as Excel does a formula's text and what it gave."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (grid-table-xlsx-write-data-source
+     (make-default-data-source '("") '(("=\"a\r\nb\rc\"")))
+     file "Data")
+    (let ((back (grid-table-xlsx-create-data-source file "Data")))
+      (should (equal (grid-get-raw-value-at back 0 0) "=\"a\nb\nc\""))
+      (should (equal (grid-get-computed-value-at back 0 0) "a\nb\nc")))))
+
 (ert-deftest grid-table-xlsx-test-tables-move-with-their-cells ()
   (skip-unless grid-table-xlsx-test--available)
   (grid-table-xlsx-test--with-file file
