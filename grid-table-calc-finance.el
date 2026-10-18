@@ -927,8 +927,12 @@ for it, the interest accrued since the last coupon taken off."
 ;;;----------------------------------------------------------------------
 
 (defun grid-calc--finance-odd-units (start end first frequency basis)
-  "The coupon periods from START to END, counted at the quasi coupons of FIRST."
+  "The coupon periods from START to END, counted at the quasi coupons of FIRST.
+The first period it reaches counts its days over the length BASIS gives
+a period, as 360 days a year for basis 2; each whole one after it
+counts as one."
   (let ((step (grid-calc--finance-step frequency))
+        (counted nil)
         (total 0.0))
     (when (< start end)
       (let ((months (nth 2 (grid-calc--finance-coupons start first frequency)))
@@ -941,9 +945,12 @@ for it, the interest accrued since the last coupon taken off."
             (when (< low high)
               (setq total
                     (+ total
-                       (/ (grid-calc--finance-days low high basis)
-                          (float (grid-calc--finance-bond-period
-                                  pcd ncd frequency basis)))))))
+                       (if (and counted (= low pcd) (= high ncd))
+                           1.0
+                         (/ (grid-calc--finance-days low high basis)
+                            (float (grid-calc--finance-period-days
+                                    pcd ncd frequency basis)))))
+                    counted t)))
           (setq months (- months step)
                 pcd ncd
                 ncd (grid-calc--finance-coupon-date first (- months step))))))

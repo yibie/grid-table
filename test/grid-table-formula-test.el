@@ -3693,6 +3693,19 @@ Excel's values for."
     (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
                (* 1e-12 (cdr case))))))
 
+(ert-deftest grid-table-formula-oddfprice-day-bases ()
+  "ODDFPRICE counts whole quasi coupon periods as one under bases 2 and 3."
+  (dolist (case '(("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.075,0.067,120,1,2)"
+                   . 115.98854775223758)
+                  ("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.075,0.067,120,2,2)"
+                   . 115.84574814124899)
+                  ("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.08,0.06,120,2,3)"
+                   . 125.74920319203889)
+                  ("=ODDFPRICE(DATE(2020,3,17),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.08,0.06,120,1,3)"
+                   . 125.80470933696785)))
+    (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
+               (* 1e-12 (cdr case))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
