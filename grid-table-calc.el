@@ -1498,8 +1498,11 @@ March 2024; `grid-calc-date-order' says which of 3/15 is the month."
         (grid-calc--parse-time text)
         (and (string-match "\\`\\(.*[0-9a-z]\\)[ T]+\\([0-9]\\{1,2\\}:.*\\)\\'"
                            text)
-             (let ((day (grid-calc--parse-day (match-string 1 text)))
-                   (time (grid-calc--parse-time (match-string 2 text))))
+             ;; Both parts are taken before reading the day, whose own
+             ;; matching would lose where the time is.
+             (let* ((time-text (match-string 2 text))
+                    (day (grid-calc--parse-day (match-string 1 text)))
+                    (time (grid-calc--parse-time time-text)))
                (and day time (+ day time)))))))
 
 (defun grid-calc-text-number (text)

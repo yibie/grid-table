@@ -3380,6 +3380,13 @@ Excel's values for."
                   ("=COUPDAYSNC(DATE(2011,1,25),DATE(2011,11,15),2,1)" . 110)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-text-of-a-date-and-a-time-reads ()
+  "Text with a date and a time after it is both, as Excel reads it."
+  (dolist (case '(("=VALUE(\"1/1/1987 05:00 AM\")" . 31778.208333333332)
+                  ("=VALUE(\"1/1/1987 13:30\")" . 31778.5625)
+                  ("=WEEKNUM(\"1/1/1987 05:00 AM\",1)" . 1)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
