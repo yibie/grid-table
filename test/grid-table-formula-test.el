@@ -1587,7 +1587,9 @@
           ;; A name can only be one that no reference takes.  It may
           ;; share a function's name, as Excel allows: Rate is one.
           (should (grid-calc-name-problem "TAX1"))
-          (should (grid-calc-name-problem "Q1Sales"))
+          ;; Only starting like a cell, as Excel's own s2a1 does, is no harm.
+          (should-not (grid-calc-name-problem "Q1Sales"))
+          (should-not (grid-calc-name-problem "s2a1"))
           ;; No sheet has a column GLOBAL, so Global1 is a name.
           (should-not (grid-calc-name-problem "Global1"))
           (should-not (grid-calc-name-problem "Sum"))
