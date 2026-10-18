@@ -3668,6 +3668,20 @@ Excel's values for."
     (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
                (* 1e-15 (abs (cdr case)))))))
 
+(ert-deftest grid-table-formula-indirect-r1c1 ()
+  "INDIRECT reads R1C1 cells, ranges, whole rows and whole columns."
+  (dolist (case '(("=INDIRECT(\"R1C2\",FALSE)" . 1)
+                  ("=INDIRECT(\"RC[2]\",FALSE)" . 2)
+                  ("=SUM(INDIRECT(\"R1C2:R1C3\",FALSE))" . 3)
+                  ("=SUM(INDIRECT(\"C2:C3\",FALSE))" . 3)
+                  ("=SUM(INDIRECT(\"C3\",FALSE))" . 2)
+                  ;; A step past the edge wraps to the sheet's last row.
+                  ("=ISBLANK(INDIRECT(\"R[-1]C\",FALSE))" . t)
+                  ("=INDIRECT(\"R0C1\",FALSE)" . "#REF!")
+                  ("=INDIRECT(\"R1C1:R2\",FALSE)" . "#REF!")))
+    (should (equal (grid-table-formula-test--eval (car case) "1" "2") (cdr case))))
+  (should (equal (grid-table-formula-test--eval "=SUM(INDIRECT(\"R1\",FALSE))") "#CYCLE!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

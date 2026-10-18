@@ -524,35 +524,73 @@ It is HEIGHT by WIDTH, by default as large as REFERENCE."
 
 (defun grid-calc--r1c1-part (text here letter)
   "Return the row or column TEXT gives after LETTER, R or C, from 0.
-TEXT is empty for HERE, [N] for N away from HERE, or N."
+TEXT is empty for HERE, [N] for N away from HERE, or N.  N away
+wraps around the sheet's edge, as R[-6]C from row 2 is its last row."
   (cond ((string-empty-p text) here)
         ((string-match "\\`\\[\\([-+]?[0-9]+\\)\\]\\'" text)
-         (and here (+ here (string-to-number (match-string 1 text)))))
-        ((string-match "\\`[0-9]+\\'" text) (1- (string-to-number text)))
-        (t (ignore letter) nil)))
+         (and here (mod (+ here (string-to-number (match-string 1 text)))
+                        (if (eq letter ?R) grid-calc--max-rows grid-calc--max-cols))))
+        ((string-match "\\`[0-9]+\\'" text) (1- (string-to-number text)))))
+
+(defun grid-calc--r1c1-side (text)
+  "Return what one side TEXT of an R1C1 reference names, or nil.
+\(cell ROW COL) for a cell, (row ROW) for a whole row, as R2, and
+\(column COL) for a whole column, as C2; ROW and COL are counted from 0
+or are relative to the formula's cell."
+  (let* ((case-fold-search t)
+         (n "\\(\\[[-+]?[0-9]+\\]\\|[0-9]*\\)")
+         (here-row (nth 1 grid-calc--here))
+         (here-col (nth 2 grid-calc--here))
+         (parts (cond ((string-match (concat "\\`R" n "C" n "\\'") text)
+                       (list 'cell (match-string 1 text) (match-string 2 text)))
+                      ((string-match (concat "\\`R" n "\\'") text)
+                       (list 'row (match-string 1 text)))
+                      ((string-match (concat "\\`C" n "\\'") text)
+                       (list 'column (match-string 1 text))))))
+    ;; The parts are read once the matching is done, as reading them
+    ;; matches again.
+    (pcase parts
+      (`(cell ,row ,col)
+       (let ((row (grid-calc--r1c1-part row here-row ?R))
+             (col (grid-calc--r1c1-part col here-col ?C)))
+         (and row col (list 'cell row col))))
+      (`(row ,row)
+       (let ((row (grid-calc--r1c1-part row here-row ?R)))
+         (and row (list 'row row))))
+      (`(column ,col)
+       (let ((col (grid-calc--r1c1-part col here-col ?C)))
+         (and col (list 'column col)))))))
 
 (defun grid-calc--r1c1-reference (text model)
-  "Return the reference R1C1-style TEXT names, from MODEL's sheet, or nil."
-  (let ((sheet nil) (case-fold-search t))
+  "Return the reference R1C1-style TEXT names, from MODEL's sheet, or nil.
+TEXT is a cell, as R2C3, a range of cells, as R1C1:R2C3, or whole rows
+or columns, as R2, C2 or R1:R3."
+  (let ((sheet nil))
     (when-let* ((prefix (and (> (length text) 0)
                              (grid-parser-sheet-prefix-at text 0))))
       (setq sheet (cdr prefix) text (substring text (car prefix))))
-    (let* ((cell "R\\(\\[[-+]?[0-9]+\\]\\|[0-9]*\\)C\\(\\[[-+]?[0-9]+\\]\\|[0-9]*\\)")
-           (here-row (nth 1 grid-calc--here))
-           (here-col (nth 2 grid-calc--here)))
-      (when (string-match (concat "\\`" cell "\\(?::" cell "\\)?\\'") text)
-        (let* ((r1 (grid-calc--r1c1-part (match-string 1 text) here-row ?R))
-               (c1 (grid-calc--r1c1-part (match-string 2 text) here-col ?C))
-               (r2 (if (match-beginning 3)
-                       (grid-calc--r1c1-part (match-string 3 text) here-row ?R)
-                     r1))
-               (c2 (if (match-beginning 4)
-                       (grid-calc--r1c1-part (match-string 4 text) here-col ?C)
-                     c1)))
-          (when (and r1 c1 r2 c2)
-            (grid-calc--checked-ref (grid-calc--sheet-model model sheet)
-                                    (min r1 r2) (min c1 c2)
-                                    (max r1 r2) (max c1 c2))))))))
+    (let* ((sides (split-string text ":"))
+           (a (and (<= 1 (length sides) 2) (grid-calc--r1c1-side (car sides))))
+           (b (if (cdr sides) (grid-calc--r1c1-side (cadr sides)) a)))
+      (when (and a b (eq (car a) (car b)))
+        (let ((model (grid-calc--sheet-model model sheet)))
+          (pcase (car a)
+            ('cell
+             (grid-calc--checked-ref model
+                                     (min (nth 1 a) (nth 1 b)) (min (nth 2 a) (nth 2 b))
+                                     (max (nth 1 a) (nth 1 b)) (max (nth 2 a) (nth 2 b))))
+            ;; Whole rows and columns stop at the sheet's cells, as 2:3 does.
+            ('row
+             (let ((top (min (nth 1 a) (nth 1 b))) (bottom (max (nth 1 a) (nth 1 b))))
+               (grid-calc--checked-ref model top 0 bottom 0)
+               (grid-calc-ref--make model top 0 bottom
+                                    (max 0 (1- (grid-data-model-cols model))) 'row)))
+            ('column
+             (let ((left (min (nth 1 a) (nth 1 b))) (right (max (nth 1 a) (nth 1 b))))
+               (grid-calc--checked-ref model 0 left 0 right)
+               (grid-calc-ref--make model 0 left
+                                    (max 0 (1- (grid-data-model-rows model))) right
+                                    'column)))))))))
 
 (grid-calc-define indirect ((text text) &optional (a1 bool t))
   "The reference TEXT names, as \"B2\", \"Sheet2!A1:C3\" or a defined name.
