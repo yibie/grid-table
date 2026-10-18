@@ -615,20 +615,32 @@ period that is over before SETTLE counts as one, whatever its days."
                            (rate number) (par number) (frequency integer)
                            &optional (basis integer 0) (method bool t))
   "The interest accrued on PAR from ISSUE to SETTLEMENT, at RATE.
-METHOD non-nil counts from ISSUE, nil from the coupon before FIRST."
+Up to FIRST, Excel counts the part of the coupon period ISSUE falls
+in, the whole periods after it and the days from the coupon before
+FIRST to SETTLEMENT.  METHOD nil leaves out those whole periods, as
+Excel does whatever its help says, which can come to less than
+nothing; METHOD non-nil past FIRST counts from ISSUE period by period."
   (grid-calc--finance-basis basis)
   (grid-calc--finance-frequency frequency)
   (grid-calc--finance-rate-check rate par)
   (when (>= issue settlement) (grid-calc-raise "#NUM!"))
-  (let* ((step (grid-calc--finance-step frequency))
-         (months (nth 2 (grid-calc--finance-coupons issue first frequency)))
-         (start (if (or method
-                        (/= issue (grid-calc--finance-coupon-date first months)))
-                    issue
-                  (grid-calc--finance-coupon-date first step))))
-    (* par (/ (float rate) frequency)
-       (grid-calc--finance-accrued start settlement first frequency basis
-                                    method))))
+  (* par (/ (float rate) frequency)
+     (if (and method (> settlement first))
+         (grid-calc--finance-accrued issue settlement first frequency basis t)
+       (pcase-let* ((step (grid-calc--finance-step frequency))
+                    (pcd (grid-calc--finance-coupon-date first step))
+                    (`(,low ,high ,months)
+                     (grid-calc--finance-coupons issue first frequency))
+                    (between (- (/ months step) (if (= low issue) 1 2))))
+         (+ (if (or (>= issue pcd) (= low issue))
+                0
+              (/ (float (grid-calc--finance-days issue high basis))
+                 (grid-calc--finance-period-days low high frequency basis)))
+            (if (and method (< issue pcd)) between 0)
+            (/ (float (grid-calc--finance-days (max issue pcd) settlement
+                                               basis))
+               (grid-calc--finance-period-days pcd first frequency
+                                               basis)))))))
 
 (grid-calc-define accrintm ((issue date) (settlement date) (rate number)
                             (par number) &optional (basis integer 0))

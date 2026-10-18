@@ -3608,6 +3608,24 @@ Excel's values for."
   (grid-table-formula-test--should-be '("=COUPDAYS(3.2,DATE(2050,12,31),1,1)" . 365))
   (grid-table-formula-test--should-be '("=COUPDAYS(DATE(2020,3,3),DATE(2050,12,31),1,1)" . 366)))
 
+(ert-deftest grid-table-formula-accrint-calc-method ()
+  "ACCRINT without its whole periods before FIRST, as Excel counts them."
+  (dolist (case '(("=ACCRINT(DATE(2000,2,14),DATE(2005,4,15),DATE(2009,7,27),1,1,4,0,0)"
+                   . 4.7027777777777775)
+                  ("=ACCRINT(DATE(2007,3,1),DATE(2008,8,31),DATE(2008,5,1),0.1,1000,2,0,FALSE)"
+                   . 66.94444444444446)
+                  ("=ACCRINT(DATE(2007,3,1),DATE(2008,8,31),DATE(2008,5,1),0.1,1000,2,0)"
+                   . 116.94444444444446)
+                  ("=ACCRINT(42736,43070,42826,0.33,3000,4,1,FALSE)"
+                   . -253.87637362637361)
+                  ("=ACCRINT(42736,43070,42826,0.33,3000,4,1)"
+                   . 241.12362637362637)
+                  ("=ACCRINT(43800,44531,44075,0.05,1000,2,2,FALSE)"
+                   . -37.916666666666664)
+                  ("=ACCRINT(43800,44531,44075,0.05,1000,2,2)"
+                   . 37.083333333333336)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
