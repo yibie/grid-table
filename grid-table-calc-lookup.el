@@ -671,31 +671,46 @@ v anything else) or \"filename\"."
   (grid-calc-array (grid-calc-array-cols array) (grid-calc-array-rows array)
                    (lambda (row col) (grid-calc-aref array col row))))
 
+(defun grid-calc--line-numbers (arguments)
+  "Return the values of ARGUMENTS read as numbers, a cell's text and TRUE too.
+A range or array of more than one row and more than one column is
+#VALUE!."
+  (let (numbers)
+    (dolist (argument arguments)
+      (when (or (and (grid-calc-ref-p argument)
+                     (> (grid-calc-ref-rows argument) 1)
+                     (> (grid-calc-ref-cols argument) 1))
+                (and (grid-calc-array-p argument)
+                     (> (grid-calc-array-rows argument) 1)
+                     (> (grid-calc-array-cols argument) 1)))
+        (grid-calc-raise "#VALUE!"))
+      (grid-calc-each-value argument
+                            (lambda (value _) (push (grid-calc-num value) numbers))))
+    (nreverse numbers)))
+
+(defun grid-calc--picked (arguments size)
+  "Return the places, from 0, that the numbers in ARGUMENTS pick of SIZE.
+A number counts from 1, or from the last when negative; they are read
+as `grid-calc--line-numbers' reads them."
+  (or (mapcar (lambda (n)
+                (let ((n (truncate n)))
+                  (cond ((<= 1 n size) (1- n))
+                        ((<= 1 (- n) size) (+ size n))
+                        (t (grid-calc-raise "#VALUE!")))))
+              (grid-calc--line-numbers arguments))
+      (grid-calc-raise "#VALUE!")))
+
 (grid-calc-define chooserows ((array array) &rest (rows values))
   "The rows of ARRAY whose numbers are ROWS, counting from 1; a negative
 number counts from the last."
-  (let* ((height (grid-calc-array-rows array))
-         (picked (mapcar (lambda (n)
-                           (let ((n (truncate n)))
-                             (cond ((<= 1 n height) (1- n))
-                                   ((<= 1 (- n) height) (+ height n))
-                                   (t (grid-calc-raise "#VALUE!")))))
-                         (grid-calc-numbers rows))))
-    (unless picked (grid-calc-raise "#VALUE!"))
+  (let ((picked (grid-calc--picked rows (grid-calc-array-rows array))))
     (grid-calc-array (length picked) (grid-calc-array-cols array)
                      (lambda (row col) (grid-calc-aref array (nth row picked) col)))))
 
 (grid-calc-define choosecols ((array array) &rest (cols values))
   "The columns of ARRAY whose numbers are COLS, counting from 1; a
 negative number counts from the last."
-  (let* ((width (grid-calc-array-cols array))
-         (picked (mapcar (lambda (n)
-                           (let ((n (truncate n)))
-                             (cond ((<= 1 n width) (1- n))
-                                   ((<= 1 (- n) width) (+ width n))
-                                   (t (grid-calc-raise "#VALUE!")))))
-                         (grid-calc-numbers cols))))
-    (unless picked (grid-calc-raise "#VALUE!"))
+  (let ((picked (grid-calc--picked cols (grid-calc-array-cols array))))
     (grid-calc-array (grid-calc-array-rows array) (length picked)
                      (lambda (row col)
                        (grid-calc-aref array row (nth col picked))))))

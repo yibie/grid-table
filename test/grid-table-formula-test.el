@@ -2530,6 +2530,19 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval "=CHOOSECOLS({1,2,3},4)")
                  "#VALUE!")))
 
+(ert-deftest grid-table-formula-choosecols-reads-places-as-values ()
+  "A cell's text and TRUE are places too; a block of places is #VALUE!."
+  (should (equal (grid-table-formula-test--eval "=CHOOSECOLS({1,2,3},B1)" "TRUE") 1))
+  (should (equal (grid-table-formula-test--eval "=CHOOSECOLS({1,2,3},B1)" "'2") 2))
+  (should (equal (grid-table-formula-test--eval "=CHOOSEROWS({1;2;3},B1)" "'3") 3))
+  (should (equal (grid-table-formula-test--values
+                  (grid-table-formula-test--grid "=CHOOSECOLS({1,2,3},{-3,1})" 1 2))
+                 '((1 1))))
+  (should (equal (grid-table-formula-test--eval "=CHOOSECOLS({1,2,3},{1,2;2,1})")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=CHOOSEROWS({1;2;3},{1;2},{1,2;2,1})")
+                 "#VALUE!")))
+
 (ert-deftest grid-table-formula-expand-fills-out-to-its-size ()
   (should (equal (grid-table-formula-test--values
                   (grid-table-formula-test--grid "=EXPAND({1,2},2,3,0)" 2 3))
