@@ -1291,8 +1291,11 @@ up to 9999, and a last field with a fraction counts as seconds, so
     (grid-calc-format-code rounded (format "$#,##0%s;($#,##0%s)" places places))))
 
 (grid-calc-define fixed ((number number) &optional (decimals integer 2) (no-commas bool))
-  "NUMBER rounded to DECIMALS places, with commas unless NO-COMMAS."
-  (let* ((rounded (grid-calc--round-to number decimals 'nearest))
+  "NUMBER rounded to DECIMALS places, with commas unless NO-COMMAS.
+DECIMALS past 127 are #VALUE!, as in Excel."
+  (when (> decimals 127) (grid-calc-raise "#VALUE!"))
+  (let* ((rounded (if (< decimals -308) 0
+                    (grid-calc--round-to number decimals 'nearest)))
          (places (if (> decimals 0) (concat "." (make-string decimals ?0)) "")))
     (grid-calc-format-code rounded (concat (if no-commas "0" "#,##0") places))))
 

@@ -3434,6 +3434,12 @@ Excel's values for."
                   ("=TEXT(99.996,\"0.00\")" . "100.00")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-fixed-bounds-its-decimals ()
+  "FIXED takes up to 127 places, and rounds far to the left to 0."
+  (dolist (case '(("=FIXED(5,128)" . "#VALUE!")
+                  ("=FIXED(5,-128000)" . "0")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
