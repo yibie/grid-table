@@ -3492,6 +3492,14 @@ Excel's values for."
                   "=SUMPRODUCT(D1:E1,D1:F1)" "1" "2" "1" "2" "3")
                  "#VALUE!")))
 
+(ert-deftest grid-table-formula-test-hypgeom-edges ()
+  "HYPGEOM.DIST takes no draws, and every item found, as Excel does."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=HYPGEOM.DIST(0,0,0,0,FALSE)" . 1.0)
+          ("=HYPGEOMDIST(0,0,4,4)" . 1.0)
+          ("=HYPGEOM.DIST(0,2,3,3,TRUE)" . 0.0)
+          ("=HYPGEOM.DIST(5,10,30,7,FALSE)" . "#NUM!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

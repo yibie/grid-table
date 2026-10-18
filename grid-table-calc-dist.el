@@ -690,15 +690,15 @@ of chance P; or of at most that many."
                                 &optional (cumulative bool))
   "The chance of K of N drawn without putting back being among the FOUND
 of TOTAL; or of at most K."
-  (grid-calc--require (>= k 0) (<= k n) (<= k found) (< 0 n total)
-                      (< 0 found total))
+  (grid-calc--require (>= k 0) (<= k n) (<= k found) (<= 0 n total)
+                      (<= 0 found total))
   (if cumulative
       (min 1.0 (cl-loop for i from 0 to k sum (grid-calc--hypergeometric i n found total)))
     (grid-calc--hypergeometric k n found total)))
 
 (grid-calc-define hypgeomdist ((k integer) (n integer) (found integer) (total integer))
   "The chance of K of N drawn being among the FOUND of TOTAL."
-  (grid-calc--require (>= k 0) (<= k n) (<= k found) (< 0 n total) (< 0 found total))
+  (grid-calc--require (>= k 0) (<= k n) (<= k found) (<= 0 n total) (<= 0 found total))
   (grid-calc--hypergeometric k n found total))
 
 (grid-calc-define poisson.dist ((x integer) (mean number) (cumulative bool))
