@@ -28,12 +28,14 @@ module:
 
 # Refresh the prebuilt module kept in plugins/ for this platform.  On macOS
 # it holds both architectures, which needs both rustup targets installed.
+# The module in target/release is built too, since it is loaded before
+# the prebuilt one and would otherwise be left stale.
 MODULE = grid-table-xlsx-module
 MODULE_LIB = libgrid_table_xlsx_module
 MAC_TARGETS = aarch64-apple-darwin x86_64-apple-darwin
 module-dist:
 ifeq ($(shell uname -s),Darwin)
-	cd plugins/xlsx && $(foreach target,$(MAC_TARGETS),cargo build --release --target $(target) &&) true
+	cd plugins/xlsx && $(foreach target,$(MAC_TARGETS),cargo build --release --target $(target) &&) cargo build --release
 	lipo -create $(foreach target,$(MAC_TARGETS),plugins/xlsx/target/$(target)/release/$(MODULE_LIB).dylib) \
 		-output plugins/$(MODULE).dylib
 else
