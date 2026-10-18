@@ -609,15 +609,19 @@ A range of several columns gives each of their numbers."
         (grid-calc-array 1 (grid-calc-ref-cols reference)
                          (lambda (_ col) (+ left col 1)))))))
 
-(grid-calc-define rows ((value values))
-  "How many rows VALUE has.  An error given for VALUE is the answer."
-  (if (grid-calc-err-p value) value
-    (car (grid-calc--count-size value))))
+(grid-calc-define rows ((value areas))
+  "How many rows VALUE has.  An error given for VALUE is the answer,
+and several areas are #REF!, as in Excel."
+  (cond ((grid-calc-err-p value) value)
+        ((eq (car-safe value) 'union) (grid-calc-err "#REF!"))
+        (t (car (grid-calc--count-size value)))))
 
-(grid-calc-define columns ((value values))
-  "How many columns VALUE has.  An error given for VALUE is the answer."
-  (if (grid-calc-err-p value) value
-    (cdr (grid-calc--count-size value))))
+(grid-calc-define columns ((value areas))
+  "How many columns VALUE has.  An error given for VALUE is the answer,
+and several areas are #REF!, as in Excel."
+  (cond ((grid-calc-err-p value) value)
+        ((eq (car-safe value) 'union) (grid-calc-err "#REF!"))
+        (t (cdr (grid-calc--count-size value)))))
 
 (grid-calc-define areas ((reference ref))
   "How many areas REFERENCE has, as (A1:B2,D4) has 2."
