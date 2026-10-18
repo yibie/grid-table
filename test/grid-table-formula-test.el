@@ -1026,6 +1026,16 @@
   (should (equal (grid-table-formula-test--eval "=MATCH(2,{0,1,2,3,4},-1)") "#N/A"))
   (should (equal (grid-table-formula-test--eval "=MATCH(3,{5,3,3,1},-1)") 3)))
 
+(ert-deftest grid-table-formula-lookup-reads-a-table-for-its-results ()
+  ;; Values of several columns are looked along the first; results of
+  ;; several rows and columns are #N/A.
+  (should (equal (grid-table-formula-test--eval
+                  "=LOOKUP(3,{1,\"a\";3,\"c\";5,\"e\"},{10;30;50})")
+                 30))
+  (should (equal (grid-table-formula-test--eval
+                  "=LOOKUP(3,{1,\"a\";3,\"c\";5,\"e\"},{10,1;30,3;50,5})")
+                 "#N/A")))
+
 (ert-deftest grid-table-formula-sorted-lookup-halves-as-excel-does ()
   ;; In values not sorted Excel's search by halves lands where a search
   ;; from the start does not; these are what Excel gave.

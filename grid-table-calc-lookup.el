@@ -398,22 +398,22 @@ See VLOOKUP."
   "The value matching WANTED in sorted VALUES, or the same place of RESULTS.
 Without RESULTS, VALUES wider than tall is looked along its first row
 and gives its last row; otherwise along its first column, giving its
-last column.  A blank WANTED is sought as 0."
+last column.  VALUES is read so with RESULTS too, which must be one row
+or column.  A blank WANTED is sought as 0."
   (when (grid-calc-blank-p wanted) (setq wanted 0))
   (pcase-let ((`(,rows . ,cols) (grid-calc--table-size values)))
-    (let* ((across (and (null results) (> cols rows)))
-           (length (cond (results (car (grid-calc--line-of values)))
-                         (across cols) (t rows)))
-           (getter (cond (results (cdr (grid-calc--line-of values)))
-                         (across (lambda (i) (grid-calc--table-at values 0 i)))
-                         (t (lambda (i) (grid-calc--table-at values i 0)))))
+    (let* ((across (> cols rows))
+           (length (if across cols rows))
+           (getter (if across (lambda (i) (grid-calc--table-at values 0 i))
+                     (lambda (i) (grid-calc--table-at values i 0))))
            (found (grid-calc--find-sorted wanted length getter)))
       (cond ((null found) (grid-calc-err "#N/A"))
             (results
              (pcase-let ((`(,r-rows . ,r-cols) (grid-calc--table-full-size results)))
-               (if (and (= r-rows 1) (> r-cols 1))
-                   (grid-calc--table-at results 0 found)
-                 (grid-calc--table-at results found 0))))
+               (cond ((and (> r-rows 1) (> r-cols 1)) (grid-calc-err "#N/A"))
+                     ((and (= r-rows 1) (> r-cols 1))
+                      (grid-calc--table-at results 0 found))
+                     (t (grid-calc--table-at results found 0)))))
             (across (grid-calc--table-at values (1- rows) found))
             (t (grid-calc--table-at values found (1- cols)))))))
 
