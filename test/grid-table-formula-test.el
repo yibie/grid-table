@@ -3682,6 +3682,17 @@ Excel's values for."
     (should (equal (grid-table-formula-test--eval (car case) "1" "2") (cdr case))))
   (should (equal (grid-table-formula-test--eval "=SUM(INDIRECT(\"R1\",FALSE))") "#CYCLE!")))
 
+(ert-deftest grid-table-formula-oddlprice-quasi-coupons ()
+  "ODDLPRICE counts a long last period in the quasi coupon periods of its frequency."
+  (dolist (case '(("=ODDLPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),0.075,0.06,120,2,1)"
+                   . 121.51937811334447)
+                  ("=ODDLPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),0.075,0.06,120,1,1)"
+                   . 121.52128858401393)
+                  ("=ODDLPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),0.08,0.0711,120,2,3)"
+                   . 116.47102012136368)))
+    (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
+               (* 1e-12 (cdr case))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -1002,19 +1002,43 @@ for it, the interest accrued since the last coupon taken off."
         price))
    0.1))
 
+(defun grid-calc--finance-odd-last-units (start end last frequency basis)
+  "The coupon periods from START to END, counted at the quasi coupons after LAST.
+Each quasi coupon period counts its days from START to END over its own
+length, as the odd last period of ODDLPRICE counts them."
+  (let* ((step (grid-calc--finance-step frequency))
+         (k 1)
+         (pcd last)
+         (ncd (grid-calc--finance-coupon-date last (- step)))
+         (total 0.0))
+    (while (< pcd end)
+      (let ((low (max pcd start))
+            (high (min ncd end)))
+        (when (< low high)
+          (setq total
+                (+ total
+                   (/ (grid-calc--finance-days low high basis)
+                      (float (grid-calc--finance-bond-period
+                              pcd ncd frequency basis)))))))
+      (setq k (1+ k)
+            pcd ncd
+            ncd (grid-calc--finance-coupon-date last (- (* k step)))))
+    total))
+
 (defun grid-calc--finance-odd-last-price (settlement maturity last-interest
                                                      rate yield redemption
                                                      frequency basis)
   "The price per 100 of a bond with an odd last period.
-The last coupon covers LAST-INTEREST to MATURITY in the periods of
-FREQUENCY, the interest still to come from SETTLEMENT the same way."
+The last coupon covers LAST-INTEREST to MATURITY, counted in the quasi
+coupon periods after LAST-INTEREST, and the interest still to come from
+SETTLEMENT the same way."
   (let* ((coupon (/ (* 100.0 rate) frequency))
-         (left (* (grid-calc--finance-years settlement maturity basis)
-                  frequency))
-         (last (* (grid-calc--finance-years last-interest maturity basis)
-                  frequency))
-         (accrued (* (grid-calc--finance-years last-interest settlement basis)
-                     frequency)))
+         (last (grid-calc--finance-odd-last-units
+                last-interest maturity last-interest frequency basis))
+         (left (grid-calc--finance-odd-last-units
+                settlement maturity last-interest frequency basis))
+         (accrued (grid-calc--finance-odd-last-units
+                   last-interest settlement last-interest frequency basis)))
     (- (/ (+ redemption (* last coupon))
           (+ 1 (* left (/ yield frequency))))
        (* accrued coupon))))
