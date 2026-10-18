@@ -3480,6 +3480,18 @@ Excel's values for."
      ("=IMSUM(\"3.1+2j\",\"-3+2i\")" . "#VALUE!")
      ("=IMPRODUCT(\"3.1+2j\",\"-3+2i\")" . "#VALUE!"))))
 
+(ert-deftest grid-table-formula-test-sumproduct-shape-error ()
+  "SUMPRODUCT of arrays of different shapes gives their first error."
+  (should (equal (grid-table-formula-test--eval
+                  "=SUMPRODUCT(B1:C1,C1:E1)" "#NUM!" "#REF!" "1" "2")
+                 "#NUM!"))
+  (should (equal (grid-table-formula-test--eval
+                  "=SUMPRODUCT(D1:E1,C1:E1)" "#NUM!" "#REF!" "1" "2")
+                 "#REF!"))
+  (should (equal (grid-table-formula-test--eval
+                  "=SUMPRODUCT(D1:E1,D1:F1)" "1" "2" "1" "2" "3")
+                 "#VALUE!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
