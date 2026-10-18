@@ -3401,6 +3401,18 @@ Excel's values for."
                   ("=WEEKNUM(\"1/1/1987 05:00 AM\",1)" . 1)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-averageif-meets-an-error-criterion ()
+  "AVERAGEIF of an error criterion averages beside the cells of that error."
+  (should (equal (grid-table-formula-test--eval
+                  "=AVERAGEIF(B1:C1,B1,D1:E1)" "=NA()" "=1/0" "=1/0" "5")
+                 "#DIV/0!"))
+  (should (equal (grid-table-formula-test--eval
+                  "=AVERAGEIF(B1:C1,C1,D1:E1)" "=NA()" "=1/0" "=1/0" "5")
+                 5))
+  (should (equal (grid-table-formula-test--eval
+                  "=INDEX(AVERAGEIF(B1:D1,{1,2}),2)" "1" "2" "1")
+                 2)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

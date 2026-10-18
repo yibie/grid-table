@@ -132,14 +132,21 @@ is given, and BINS without a number is the one bound 0, as in Excel."
   "The mean of VALUES, where text counts as 0 and TRUE as 1."
   (grid-calc--mean (grid-calc-numbers values 'a)))
 
-(grid-calc-define averageif ((range values) (criterion any) &optional (average-range values))
+(grid-calc-define averageif ((range values) (criterion values) &optional (average-range values))
   "The mean of the cells of AVERAGE-RANGE, or RANGE, beside cells of
-RANGE that meet CRITERION."
-  (let ((target (grid-calc--target range (or average-range range))))
-    (grid-calc--mean
-     (grid-calc--numbers-at target
-                            (grid-calc--matching-cells (list (cons range criterion))
-                                                       target)))))
+RANGE that meet CRITERION.  An error as CRITERION meets that error."
+  (let ((criterion (grid-calc--deref criterion))
+        (target (grid-calc--target range (or average-range range))))
+    (cl-flet ((average (one)
+                (grid-calc--mean
+                 (grid-calc--numbers-at
+                  target (grid-calc--matching-cells (list (cons range one))
+                                                    target)))))
+      (if (grid-calc-array-p criterion)
+          (grid-calc-array-map
+           (lambda (one) (grid-calc--catching (average one)))
+           criterion)
+        (average criterion)))))
 
 (grid-calc-define averageifs ((average-range values) &rest (criteria values))
   "The mean of the cells of AVERAGE-RANGE beside cells meeting every
