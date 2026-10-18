@@ -3594,6 +3594,15 @@ Excel's values for."
     (should (equal (grid-table-formula-test--eval (car case) "1" "2" "3")
                    (cdr case)))))
 
+;; XIRR leaves out a place where the cash flow and date are both empty.
+(ert-deftest grid-table-formula-test-xirr-drops-empty-places ()
+  (let ((model (grid-model-create
+                2 9 (list (list "=XIRR(B1:H1,B2:H2)" "-10" "1" "5" "0.0001" "4.5" "" "'1" "TRUE")
+                          (list "=XIRR(B1:I1,B2:I2)" "1" "99" "55" "4" "9" "" "32015" "TRUE")))))
+    (should (< (abs (- (grid-model-get-computed-value model 0 0) 0.59931975575))
+               1e-9))
+    (should (equal (grid-model-get-computed-value model 1 0) "#VALUE!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

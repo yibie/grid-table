@@ -225,11 +225,40 @@ a cell left empty is worth nothing."
          (cons value slope)))
      guess)))
 
+(defun grid-calc--values-list (argument)
+  "Return the values of ARGUMENT, in the order `grid-calc-each-value' has."
+  (let (values)
+    (grid-calc-each-value argument (lambda (value _) (push value values)))
+    (nreverse values)))
+
+(defun grid-calc--drop-unvalued (values dates)
+  "Return (VALUES . DATES) without the places where both cells are empty,
+as XIRR leaves them out."
+  (if (not (grid-calc-ref-p values))
+      (cons values dates)
+    (let ((vs (grid-calc--values-list values))
+          (ds (grid-calc--values-list dates))
+          kept-values kept-dates)
+      (if (/= (length vs) (length ds))
+          (cons values dates)
+        (cl-mapc (lambda (value date)
+                   (unless (and (eq value :blank) (eq date :blank))
+                     (push value kept-values)
+                     (push date kept-dates)))
+                 vs ds)
+        (cons (grid-calc-array--make 1 (length kept-values)
+                                     (vconcat (nreverse kept-values)))
+              (grid-calc-array--make 1 (length kept-dates)
+                                     (vconcat (nreverse kept-dates))))))))
+
 (defun grid-calc--dated-flows (values dates &optional strict)
   "Return ((DAYS . FLOW) ...) for VALUES on DATES, days from the first.
 DATES is read first, as Excel reads it.  With STRICT, text that is no
 number and a logical value are #VALUE!, where otherwise they are left
-out and the counts no longer agree."
+out and the counts no longer agree; but a place where both are empty
+cells is left out."
+  (when strict
+    (pcase-setq `(,values . ,dates) (grid-calc--drop-unvalued values dates)))
   (let ((days (mapcar #'ffloor (mapcar #'float (grid-calc--range-numbers dates))))
         (flows (if strict
                    (grid-calc--finance-flow-numbers values)
