@@ -1419,13 +1419,20 @@ In the 1904 system serial 0 is 1904-01-01."
     ("jul" . 7) ("aug" . 8) ("sep" . 9) ("oct" . 10) ("nov" . 11) ("dec" . 12))
   "Months by the first three letters of their names.")
 
+(defconst grid-calc--time-colon-regexp "[ \t]*:[ \t]*"
+  "The colon between two fields of a time, and the spaces around it.")
+
 (defun grid-calc--parse-time (text)
   "Return the fraction of a day TEXT names as a time, or nil.
-As 13:30, 1:30 PM, 13:30:15.5 or 1 PM."
+As 13:30, 1:30 PM, 13:30:15.5 or 1 PM, the spaces around a colon
+allowed.  A meridiem needs an hour of 12 or less; hours and a leap
+second of 60 carry into the next day."
   (let ((case-fold-search t))
     (when (string-match
-           (concat "\\`\\([0-9]\\{1,2\\}\\)\\(?::\\([0-9]\\{1,2\\}\\)"
-                   "\\(?::\\([0-9]\\{1,2\\}\\(?:\\.[0-9]+\\)?\\)\\)?\\)?"
+           (concat "\\`\\([0-9]\\{1,2\\}\\)"
+                   "\\(?:" grid-calc--time-colon-regexp "\\([0-9]\\{1,2\\}\\)"
+                   "\\(?:" grid-calc--time-colon-regexp
+                   "\\([0-9]\\{1,2\\}\\(?:\\.[0-9]+\\)?\\)\\)?\\)?"
                    "[ \t]*\\([ap]m?\\)?\\'")
            text)
       (let ((hour (string-to-number (match-string 1 text)))
@@ -1436,11 +1443,13 @@ As 13:30, 1:30 PM, 13:30:15.5 or 1 PM."
             (half (and (match-beginning 4)
                        (downcase (substring (match-string 4 text) 0 1)))))
         (when (or (match-beginning 2) half)
-          (when half
-            (unless (<= 1 hour 12) (setq hour 99))
-            (setq hour (+ (% hour 12) (if (equal half "p") 12 0))))
-          (when (and (< hour 24) (< minute 60) (< second 60))
-            (/ (+ (* hour 3600) (* minute 60) second) 86400.0)))))))
+          (let ((valid t))
+            (when half
+              (if (<= 1 hour 12)
+                  (setq hour (+ (% hour 12) (if (equal half "p") 12 0)))
+                (setq valid nil)))
+            (when (and valid (< minute 60) (<= second 60))
+              (/ (+ (* hour 3600) (* minute 60) second) 86400.0))))))))
 
 (defcustom grid-calc-date-order 'month-day-year
   "The order text such as 1/2/2024 names the day and the month in.

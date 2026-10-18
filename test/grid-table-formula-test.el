@@ -3776,6 +3776,26 @@ The cases are IronCalc's DAYS_DAYS360 workbook, as Excel keeps them."
                   ("=DAYS360(45658.4999999,45659.5)" . 1)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-timevalue-takes-a-rolled-over-time ()
+  "TIMEVALUE takes 24 hours, a leap second and spaces around a colon.
+The cases are IronCalc's TIMEVALUE and DATEVALUE workbooks, as Excel
+keeps them."
+  (dolist (case '(;; 24 hours and a leap second carry into the next day.
+                  ("=TIMEVALUE(\"24:00\")" . 0)
+                  ("=TIMEVALUE(\"23:59:60\")" . 0)
+                  ("=TIMEVALUE(\"0:0:86400\")" . "#VALUE!")
+                  ;; A meridiem needs an hour of 12 or less.
+                  ("=TIMEVALUE(\"13:00 PM\")" . "#VALUE!")
+                  ("=TIMEVALUE(\"12:00 AM\")" . 0)
+                  ("=TIMEVALUE(\"12:00 PM\")" . 0.5)
+                  ;; Spaces around a colon are allowed.
+                  ("=TIMEVALUE(\"4 : 35\")" . 0.1909722222222222)
+                  ("=TIMEVALUE(\"4::35\")" . "#VALUE!")
+                  ;; The hours carry into the date as well.
+                  ("=DATEVALUE(\"2026-01-01 24:00:00\")" . 46024)
+                  ("=DATEVALUE(\"2026-01-01 25:00:00\")" . 46024)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
