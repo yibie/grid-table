@@ -192,7 +192,16 @@ not sorted the answer is Excel's, not the last value not past WANTED."
         (while (< i length)
           (let ((order (grid-calc--lookup-order (funcall getter i) wanted)))
             (cond ((null order))
-                  ((>= order 0) (setq found i))
+                  ((> order 0) (setq found i))
+                  ;; One equal to it ends the search, after its run.
+                  ((= order 0)
+                   (setq found i)
+                   (while (and (< (1+ found) length)
+                               (eql (grid-calc--lookup-order
+                                     (funcall getter (1+ found)) wanted)
+                                    0))
+                     (setq found (1+ found)))
+                   (setq i length))
                   (t (setq i length))))
           (setq i (1+ i)))
         found)

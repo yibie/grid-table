@@ -1006,6 +1006,14 @@
     (should (equal (mapcar #'car (grid-table-formula-test--values rows))
                    '("mid" "#N/A" "high" "mid" "#N/A" "#REF!")))))
 
+(ert-deftest grid-table-formula-match-down-stops-at-an-equal-value ()
+  ;; Values read from the first, the search stops at the first below
+  ;; WANTED or after the run of those equal to it.
+  (should (equal (grid-table-formula-test--eval "=MATCH(0,{0,1,2,3,4},-1)") 1))
+  (should (equal (grid-table-formula-test--eval "=MATCH(-1,{0,1,2,3,4},-1)") 5))
+  (should (equal (grid-table-formula-test--eval "=MATCH(2,{0,1,2,3,4},-1)") "#N/A"))
+  (should (equal (grid-table-formula-test--eval "=MATCH(3,{5,3,3,1},-1)") 3)))
+
 (ert-deftest grid-table-formula-sorted-lookup-halves-as-excel-does ()
   ;; In values not sorted Excel's search by halves lands where a search
   ;; from the start does not; these are what Excel gave.
