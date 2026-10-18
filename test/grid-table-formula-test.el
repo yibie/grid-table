@@ -3505,6 +3505,13 @@ Excel's values for."
   (mapc #'grid-table-formula-test--should-be
         '(("=TYPE(SUM)" . 128) ("=TYPE(NOSUCHNAME)" . 16) ("=TYPE(1/0)" . 16))))
 
+(ert-deftest grid-table-formula-test-textafter-mode ()
+  "TEXTAFTER and TEXTBEFORE take only 0 or 1 as the match mode."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=TEXTAFTER(\"a,b\",\",\",1,10)" . "#VALUE!")
+          ("=TEXTBEFORE(\"a,b\",\",\",1,-1)" . "#VALUE!")
+          ("=TEXTAFTER(\"aXb\",\"x\",1,1)" . "b"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

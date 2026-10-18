@@ -318,9 +318,10 @@ WANTED may hold wildcards: * for any characters and ? for any one."
         (when (and pos (or (null best) (< pos (car best))))
           (setq best (cons pos (+ pos (length delimiter)))))))))
 
-(defun grid-calc--text-around (text delimiter instance case-fold end missing
+(defun grid-calc--text-around (text delimiter instance mode end missing
                                      after)
   "Return TEXT before the INSTANCEth DELIMITER, or AFTER it.
+MODE 1 ignores case; MODE other than 0 or 1 is #VALUE!.
 INSTANCE is 1 when nil; a negative one counts from the end, and one with
 a fraction is taken down to the whole number below it.  One given that
 counts past where the shortest DELIMITER could stand in TEXT is #VALUE!.  END 1 takes the end of TEXT
@@ -330,8 +331,9 @@ no such delimiter, an empty one as empty text; #N/A without it."
   (let* ((delimiters (grid-calc--texts (list delimiter)))
          (given instance)
          (instance (if instance (floor instance) 1))
+         (case-fold (= mode 1))
          (positions '()) (from 0))
-    (when (or (= instance 0) (not (memq end '(0 1)))
+    (when (or (= instance 0) (not (memq end '(0 1))) (not (memq mode '(0 1)))
               (and given
                    (> (abs instance)
                       (- (length text) (apply #'min (mapcar #'length delimiters))
@@ -362,7 +364,7 @@ no such delimiter, an empty one as empty text; #N/A without it."
   "TEXT before the INSTANCEth DELIMITER; MODE 1 ignores case.
 See `grid-calc--text-around' for END and MISSING."
   :empty t
-  (grid-calc--text-around text delimiter instance (= mode 1) end missing nil))
+  (grid-calc--text-around text delimiter instance mode end missing nil))
 
 (grid-calc-define textafter ((text text) (delimiter values) &optional
                              (instance number) (mode integer 0) (end integer 0)
@@ -370,7 +372,7 @@ See `grid-calc--text-around' for END and MISSING."
   "TEXT after the INSTANCEth DELIMITER; MODE 1 ignores case.
 See `grid-calc--text-around' for END and MISSING."
   :empty t
-  (grid-calc--text-around text delimiter instance (= mode 1) end missing t))
+  (grid-calc--text-around text delimiter instance mode end missing t))
 
 ;;;----------------------------------------------------------------------
 ;;; Regular expressions
