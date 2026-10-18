@@ -24,6 +24,7 @@
   (let ((base (+ 1.0 rate)))
     (when (and (< base 0) (/= periods (ftruncate (float periods))))
       (grid-calc-raise "#NUM!"))
+    (when (and (= base 0) (< periods 0)) (grid-calc-raise "#DIV/0!"))
     (expt base periods)))
 
 (defun grid-calc--annuity-fv (rate periods payment present type)
@@ -53,6 +54,7 @@ TYPE non-zero pays at the start of each period."
 (defun grid-calc--payment (rate periods present future type)
   "Return the payment per period paying PRESENT off to FUTURE."
   (cond
+   ((<= (+ 1.0 rate) 0) (grid-calc-raise "#NUM!"))
    ((zerop periods) (grid-calc-raise "#NUM!"))
    ((zerop rate) (- (/ (+ present future) (float periods))))
    (t (let ((growth (grid-calc--growth rate periods)))
@@ -119,27 +121,31 @@ FUNCTION returns (VALUE . SLOPE) at a point."
                         &optional (future number 0) (type integer 0) (guess number 0.1))
   "The rate per period at which PERIODS payments of PAYMENT pay PRESENT
 off to FUTURE."
-  (let ((type (if (zerop type) 0 1)))
+  (let ((type (if (zerop type) 0 1))
+        found)
     (when (<= periods 0) (grid-calc-raise "#NUM!"))
-    (grid-calc--newton
-     (lambda (rate)
-       (if (< (abs rate) 1e-12)
-           ;; At no interest: value and slope as the limit gives them.
-           (cons (+ present (* payment periods) future)
-                 (+ (* present periods)
-                    (* payment (/ (* periods (- periods 1)) 2.0))
-                    (* payment type periods)))
-         (when (<= (+ 1 rate) 0) (grid-calc-raise "#NUM!"))
-         (let* ((growth (expt (+ 1.0 rate) periods))
-                (growth-slope (* periods (expt (+ 1.0 rate) (1- periods))))
-                (annuity (/ (- growth 1) rate))
-                (annuity-slope (/ (- (* growth-slope rate) (- growth 1)) (* rate rate)))
-                (factor (+ 1 (* rate type))))
-           (cons (+ (* present growth) (* payment factor annuity) future)
-                 (+ (* present growth-slope)
-                    (* payment type annuity)
-                    (* payment factor annuity-slope))))))
-     guess)))
+    (setq found
+          (grid-calc--newton
+           (lambda (rate)
+             (if (< (abs rate) 1e-12)
+                 ;; At no interest: value and slope as the limit gives them.
+                 (cons (+ present (* payment periods) future)
+                       (+ (* present periods)
+                          (* payment (/ (* periods (- periods 1)) 2.0))
+                          (* payment type periods)))
+               (when (<= (+ 1 rate) 0) (grid-calc-raise "#NUM!"))
+               (let* ((growth (expt (+ 1.0 rate) periods))
+                      (growth-slope (* periods (expt (+ 1.0 rate) (1- periods))))
+                      (annuity (/ (- growth 1) rate))
+                      (annuity-slope (/ (- (* growth-slope rate) (- growth 1))
+                                        (* rate rate)))
+                      (factor (+ 1 (* rate type))))
+                 (cons (+ (* present growth) (* payment factor annuity) future)
+                       (+ (* present growth-slope)
+                          (* payment type annuity)
+                          (* payment factor annuity-slope))))))
+           guess))
+    (if (<= (+ 1 found) 0) (grid-calc-raise "#NUM!") found)))
 
 (grid-calc-define npv ((rate number) &rest (values values))
   "The value now of VALUES, one at the end of each period, at RATE."
@@ -207,15 +213,24 @@ off to FUTURE."
          (cons value slope)))
      guess)))
 
-(grid-calc-define effect ((nominal number) (periods integer))
-  "The yearly rate NOMINAL comes to, compounded PERIODS times a year."
-  (when (or (<= nominal 0) (< periods 1)) (grid-calc-raise "#NUM!"))
-  (- (expt (+ 1.0 (/ nominal (float periods))) periods) 1))
+(defun grid-calc--finance-number (value)
+  "Return VALUE as a number, or #VALUE! where TRUE or FALSE is given."
+  (when (memq value '(t :false)) (grid-calc-raise "#VALUE!"))
+  (grid-calc-num value))
 
-(grid-calc-define nominal ((effective number) (periods integer))
+(grid-calc-define effect ((nominal any) (periods any))
+  "The yearly rate NOMINAL comes to, compounded PERIODS times a year."
+  (let ((nominal (grid-calc--finance-number nominal))
+        (periods (grid-calc-int (grid-calc--finance-number periods))))
+    (when (or (<= nominal 0) (< periods 1)) (grid-calc-raise "#NUM!"))
+    (- (expt (+ 1.0 (/ nominal (float periods))) periods) 1)))
+
+(grid-calc-define nominal ((effective any) (periods any))
   "The yearly rate that, compounded PERIODS times a year, comes to EFFECTIVE."
-  (when (or (<= effective 0) (< periods 1)) (grid-calc-raise "#NUM!"))
-  (* periods (- (expt (+ 1.0 effective) (/ 1.0 periods)) 1)))
+  (let ((effective (grid-calc--finance-number effective))
+        (periods (grid-calc-int (grid-calc--finance-number periods))))
+    (when (or (<= effective 0) (< periods 1)) (grid-calc-raise "#NUM!"))
+    (* periods (- (expt (+ 1.0 effective) (/ 1.0 periods)) 1))))
 
 (grid-calc-define sln ((cost number) (salvage number) (life number))
   "The depreciation per period of COST down to SALVAGE over LIFE."

@@ -3029,6 +3029,17 @@ Excel's values for."
                   ("=VDB(10000,1000,10,0,1)" . 2000)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-refuses-what-excel-refuses ()
+  "A rate at or below -1, and a logical value where a number is wanted."
+  (dolist (case '(("=PMT(-3,5,100,300,1)" . "#NUM!")
+                  ("=FV(-1,-2,1)" . "#DIV/0!")
+                  ("=RATE(10,-1200,2000,0,1)" . "#NUM!")
+                  ("=NOMINAL(10,TRUE)" . "#VALUE!")
+                  ("=EFFECT(FALSE,2.9)" . "#VALUE!")
+                  ("=NOMINAL(0.2,12)" . 0.1837136459967743)
+                  ("=EFFECT(0.2,12)" . 0.21939108490523163)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
