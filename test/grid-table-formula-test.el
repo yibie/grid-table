@@ -3658,6 +3658,16 @@ Excel's values for."
     (grid-workbook-define-name workbook "\\x" "=Sheet1!$B$1")
     (should (equal (grid-get-computed-value-at one 1 0) 3))))
 
+(ert-deftest grid-table-formula-cumprinc-closed-form ()
+  "CUMPRINC keeps Excel's last digits where a high rate makes interests large."
+  (dolist (case '(("=CUMPRINC(26,5.5,125000,3,5,1)" . -890.9273834880278)
+                  ("=CUMPRINC(3.2,5.5,125000,3,5,1)" . -14331.658892802277)
+                  ("=CUMPRINC(9,5.7,125000,3,5,0)" . -24915.887871905983)
+                  ("=CUMPRINC(0.05,10,1000,1,3,1)" . -286.3220691224783)
+                  ("=CUMPRINC(0.05,10,1000,1,10,0)" . -1000)))
+    (should (< (abs (- (grid-table-formula-test--eval (car case)) (cdr case)))
+               (* 1e-15 (abs (cdr case)))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

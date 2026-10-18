@@ -1082,19 +1082,30 @@ FREQUENCY, the interest still to come from SETTLEMENT the same way."
 
 (grid-calc-define cumprinc ((rate number) (periods number) (present number)
                             (start number) (end number) (type number))
-  "The principal paid from payment START to END of PERIODS on PRESENT."
+  "The principal paid from payment START to END of PERIODS on PRESENT.
+It is what the loan has fallen by over those payments, from
+the balance left after N of them, PRESENT times (G - (1 + RATE)^N) over
+\(G - 1), G being (1 + RATE)^PERIODS: summed payment by payment, large
+interests nearly cancel and Excel's last digits are lost.  Paid at the
+start of each period, all of the first payment is principal and the
+others are less by 1 + RATE."
   :toolpak t
   (let* ((bounds (grid-calc--finance-periods-check
                   rate periods present start end type))
          (start (nth 0 bounds))
          (end (nth 1 bounds))
-         (sum 0.0)
          (payment (grid-calc--payment rate periods present 0 type)))
-    (dotimes (i (1+ (- end start)))
-      (setq sum (+ sum (- payment
-                          (grid-calc--interest-part
-                           rate (+ start i) periods present 0 type)))))
-    sum))
+    (let* ((base (+ 1.0 rate))
+           (growth (grid-calc--growth rate periods))
+           (fallen (lambda (from to)
+                     (if (> from to)
+                         0
+                       (- (/ (* present (- (expt base to)
+                                           (expt base (1- from))))
+                             (- growth 1)))))))
+      (cond ((= type 0) (funcall fallen start end))
+            ((= start 1) (+ payment (/ (funcall fallen 2 end) base)))
+            (t (/ (funcall fallen start end) base))))))
 
 (grid-calc-define ispmt ((rate number) (period number) (periods number)
                          (present number))
