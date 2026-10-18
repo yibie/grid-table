@@ -3796,6 +3796,17 @@ keeps them."
                   ("=DATEVALUE(\"2026-01-01 25:00:00\")" . 46024)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-datevalue-takes-spaces-around-the-separators ()
+  "DATEVALUE reads a year, month and day with spaces about the hyphens.
+The case is IronCalc's DATEVALUE_issue_1380 workbook, as Excel keeps it."
+  (dolist (case '(("=DATEVALUE(\"2026 - 01 - 01\")" . 46023)
+                  ("=DATEVALUE(\"2026 / 01 / 01\")" . 46023)
+                  ("=DATEVALUE(\" 2026 - 1 - 1 \")" . 46023)
+                  ;; A date with a field out of range is still no date.
+                  ("=DATEVALUE(\"2026 - 13 - 01\")" . "#VALUE!")
+                  ("=DATEVALUE(\"2026-02-30\")" . "#VALUE!")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

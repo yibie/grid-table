@@ -1466,10 +1466,15 @@ as 1 February, the way most of the rest of the world does."
           ((< year 30) (+ 2000 year))
           (t (+ 1900 year)))))
 
+(defconst grid-calc--date-separator-regexp "[ \t]*[-/][ \t]*"
+  "The hyphen or slash between two fields of a date, and its spaces.")
+
 (defun grid-calc--parse-day (text)
   "Return the serial number of the date TEXT names, or nil.
 As 2024-03-15, 2024/3/15, 3/15/2024, 15-Mar-2024, Mar 15, 2024 or
-March 2024; `grid-calc-date-order' says which of 3/15 is the month."
+March 2024; `grid-calc-date-order' says which of 3/15 is the month.
+The year, month and day of the first form may have spaces about the
+separators, as Excel takes them."
   (let ((case-fold-search t)
         (month-regexp "\\([a-z]\\{3\\}\\)[a-z]*\\.?")
         (month-first (if (eq grid-calc-date-order 'day-month-year) 2 1)))
@@ -1481,7 +1486,12 @@ March 2024; `grid-calc-date-order' says which of 3/15 is the month."
                   (grid-calc-date-serial year month day)))
               (month (name) (cdr (assoc (downcase name) grid-calc--month-names))))
       (cond
-       ((string-match "\\`\\([0-9]\\{4\\}\\)[-/]\\([0-9]\\{1,2\\}\\)[-/]\\([0-9]\\{1,2\\}\\)\\'" text)
+       ((string-match (concat "\\`\\([0-9]\\{4\\}\\)"
+                              grid-calc--date-separator-regexp
+                              "\\([0-9]\\{1,2\\}\\)"
+                              grid-calc--date-separator-regexp
+                              "\\([0-9]\\{1,2\\}\\)\\'")
+                      text)
         (date (string-to-number (match-string 1 text))
               (string-to-number (match-string 2 text))
               (string-to-number (match-string 3 text))))
