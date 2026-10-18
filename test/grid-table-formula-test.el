@@ -2672,6 +2672,36 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--eval "=TEXTSPLIT(\"abc\",,\"\")")
                  "#VALUE!")))
 
+(ert-deftest grid-table-formula-text-around-a-delimiter-as-excel-gives-it ()
+  (let ((text "\"123 the 456 the 891\""))
+    ;; A fraction is taken down; the end of the text may be a delimiter.
+    (should (equal (grid-table-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"the\",-1.2)" text))
+                   " 456 the 891"))
+    (should (equal (grid-table-formula-test--eval
+                    (format "=TEXTBEFORE(%s,\"x\",1,0,1)" text))
+                   "123 the 456 the 891"))
+    (should (equal (grid-table-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"x\",-1,0,1)" text))
+                   "123 the 456 the 891"))
+    (should (equal (grid-table-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"x\",2,0,1,\"no\")" text))
+                   "no"))
+    (should (equal (grid-table-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"x\",1,0,2)" text))
+                   "#VALUE!")))
+  ;; What is given when nothing is found is computed only then, and a
+  ;; blank cell is empty text.
+  (should (equal (grid-table-formula-test--eval "=TEXTAFTER(\"a-b\",\"-\",1,0,0,1/0)")
+                 "b"))
+  (should (equal (grid-table-formula-test--eval "=TEXTAFTER(\"a-b\",\"x\",1,0,0,B1)" "")
+                 ""))
+  ;; An instance given past where the delimiter could stand is #VALUE!.
+  (should (equal (grid-table-formula-test--eval "=TEXTAFTER(\"del\",\"deli\",1)")
+                 "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=TEXTAFTER(\"del\",\"deli\")")
+                 "#N/A")))
+
 (ert-deftest grid-table-formula-randarray-keeps-to-its-size-and-range ()
   (should (equal (grid-table-formula-test--eval "=ROWS(RANDARRAY(3,2))") 3))
   (should (equal (grid-table-formula-test--eval "=COLUMNS(RANDARRAY(3,2))") 2))

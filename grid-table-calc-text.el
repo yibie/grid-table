@@ -300,40 +300,59 @@ WANTED may hold wildcards: * for any characters and ? for any one."
         (when (and pos (or (null best) (< pos (car best))))
           (setq best (cons pos (+ pos (length delimiter)))))))))
 
-(defun grid-calc--text-around (text delimiter instance case-fold missing after)
+(defun grid-calc--text-around (text delimiter instance case-fold end missing
+                                     after)
   "Return TEXT before the INSTANCEth DELIMITER, or AFTER it.
-A negative INSTANCE counts from the end; MISSING is given when there is
-no such delimiter."
+INSTANCE is 1 when nil; a negative one counts from the end, and one with
+a fraction is taken down to the whole number below it.  One given that
+counts past where the shortest DELIMITER could stand in TEXT is #VALUE!.  END 1 takes the end of TEXT
+for a delimiter after the last, or its start before the first when
+INSTANCE is negative.  MISSING, a lazy argument, is given when there is
+no such delimiter, an empty one as empty text; #N/A without it."
   (let* ((delimiters (grid-calc--texts (list delimiter)))
+         (given instance)
+         (instance (if instance (floor instance) 1))
          (positions '()) (from 0))
-    (when (or (= instance 0) (> (abs instance) (max 1 (length text))))
+    (when (or (= instance 0) (not (memq end '(0 1)))
+              (and given
+                   (> (abs instance)
+                      (- (length text) (apply #'min (mapcar #'length delimiters))
+                         -1))))
       (grid-calc-raise "#VALUE!"))
     (if (cl-some #'string-empty-p delimiters)
         (setq positions (list (cons 0 0) (cons (length text) (length text))))
       (while-let ((found (grid-calc--delimiter-at text delimiters from case-fold)))
         (push found positions)
         (setq from (max (1+ (car found)) (cdr found))))
-      (setq positions (nreverse positions)))
+      (setq positions (nreverse positions))
+      (when (= end 1)
+        (setq positions (if (> instance 0)
+                            (append positions (list (cons (length text) (length text))))
+                          (cons (cons 0 0) positions)))))
     (let ((found (if (> instance 0) (nth (1- instance) positions)
                    (nth (+ (length positions) instance) positions))))
       (cond ((and found (>= (+ (length positions) instance) 0))
              (if after (substring text (cdr found)) (substring text 0 (car found))))
-            (missing missing)
+            ((and missing (not (equal missing '(MISSING))))
+             (let ((value (grid-calc-arg missing)))
+               (if (grid-calc-blank-p value) "" value)))
             (t (grid-calc-err "#N/A"))))))
 
 (grid-calc-define textbefore ((text text) (delimiter values) &optional
-                              (instance integer 1) (mode integer 0) (_end integer 0)
-                              (missing any))
-  "TEXT before the INSTANCEth DELIMITER; MODE 1 ignores case."
+                              (instance number) (mode integer 0) (end integer 0)
+                              (missing lazy))
+  "TEXT before the INSTANCEth DELIMITER; MODE 1 ignores case.
+See `grid-calc--text-around' for END and MISSING."
   :empty t
-  (grid-calc--text-around text delimiter instance (= mode 1) missing nil))
+  (grid-calc--text-around text delimiter instance (= mode 1) end missing nil))
 
 (grid-calc-define textafter ((text text) (delimiter values) &optional
-                             (instance integer 1) (mode integer 0) (_end integer 0)
-                             (missing any))
-  "TEXT after the INSTANCEth DELIMITER; MODE 1 ignores case."
+                             (instance number) (mode integer 0) (end integer 0)
+                             (missing lazy))
+  "TEXT after the INSTANCEth DELIMITER; MODE 1 ignores case.
+See `grid-calc--text-around' for END and MISSING."
   :empty t
-  (grid-calc--text-around text delimiter instance (= mode 1) missing t))
+  (grid-calc--text-around text delimiter instance (= mode 1) end missing t))
 
 ;;;----------------------------------------------------------------------
 ;;; Regular expressions
