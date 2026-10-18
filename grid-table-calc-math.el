@@ -558,13 +558,20 @@ With no such pair it is #DIV/0!, as in Excel."
                                    (grid-calc-array-values array))))
       (grid-calc-raise (grid-calc-err-code error)))))
 
-(defun grid-calc--raise-pair-error (left right)
-  "Raise the first error in arrays LEFT and RIGHT, all of LEFT first.
+(defun grid-calc--raise-pair-error (left right &optional apart)
+  "Raise the first error in arrays LEFT and RIGHT.
+They are gone through a place at a time, an error of LEFT there before
+one of RIGHT; APART, or arrays of different sizes, all of LEFT first.
 #NULL! is passed over while there is another error, as Excel does in
 functions of pairs."
-  (let ((errors (cl-remove-if-not #'grid-calc-err-p
-                                  (append (grid-calc-array-values left)
-                                          (grid-calc-array-values right)))))
+  (let* ((lefts (grid-calc-array-values left))
+         (rights (grid-calc-array-values right))
+         (errors (cl-remove-if-not
+                  #'grid-calc-err-p
+                  (if (or apart (/= (length lefts) (length rights)))
+                      (append lefts rights)
+                    (cl-mapcar (lambda (l r) (if (grid-calc-err-p l) l r))
+                               lefts rights)))))
     (when errors
       (grid-calc-raise
        (grid-calc-err-code

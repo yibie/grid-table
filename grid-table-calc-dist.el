@@ -413,7 +413,7 @@ density."
   "The chance of a chi-squared value as large as ACTUAL against EXPECTED.
 An error in either is given, those of ACTUAL first; a single value is
 #N/A, and no pair of numbers #DIV/0!, as in Excel."
-  (grid-calc--raise-pair-error actual expected)
+  (grid-calc--raise-pair-error actual expected t)
   (let ((pairs (grid-calc--number-pairs actual expected))
         (rows (grid-calc-array-rows actual))
         (cols (grid-calc-array-cols actual))
@@ -605,7 +605,7 @@ Student's t test: TYPE 1 paired, 2 of equal variance, 3 of unequal."
 (grid-calc-define f.test ((left array) (right array))
   "The two-tailed chance of the variances of LEFT and RIGHT differing as
 much, by the F test.  An error in either is given, those of LEFT first."
-  (grid-calc--raise-pair-error left right)
+  (grid-calc--raise-pair-error left right t)
   (let ((xs (cl-remove-if-not #'numberp (grid-calc-array-values left)))
         (ys (cl-remove-if-not #'numberp (grid-calc-array-values right))))
     (when (or (< (length xs) 2) (< (length ys) 2)) (grid-calc-raise "#DIV/0!"))

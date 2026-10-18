@@ -3516,20 +3516,28 @@ Excel's values for."
           ("=TEXTAFTER(\"aXb\",\"x\",1,1)" . "b"))))
 
 (ert-deftest grid-table-formula-test-pair-error-skips-null ()
-  "Functions of pairs give the first error but #NULL!, of the first array first."
+  "Functions of pairs give the first error but #NULL!."
   (dolist (f '("=PEARSON(B1:C1,D1:E1)" "=CHISQ.TEST(B1:C1,D1:E1)"
                "=F.TEST(B1:C1,D1:E1)" "=SLOPE(B1:C1,D1:E1)"))
     (should (equal (grid-table-formula-test--eval f "#NULL!" "#NUM!" "#REF!" "1")
                    "#NUM!")))
   (should (equal (grid-table-formula-test--eval
-                  "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "#REF!" "1")
+                  "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "1" "#REF!")
                  "#REF!"))
   (should (equal (grid-table-formula-test--eval
                   "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "2" "1")
                  "#NULL!"))
   (should (equal (grid-table-formula-test--eval
                   "=FREQUENCY(B1:C1,D1)" "#NULL!" "#NUM!" "1")
-                 "#NULL!")))
+                 "#NULL!"))
+  ;; Place by place, the second's error where the first has none; but
+  ;; CHISQ.TEST and F.TEST take all of the first first.
+  (should (equal (grid-table-formula-test--eval
+                  "=PEARSON(B1:C1,D1:E1)" "TRUE" "#VALUE!" "#N/A" "1")
+                 "#N/A"))
+  (dolist (f '("=CHISQ.TEST(B1:C1,D1:E1)" "=F.TEST(B1:C1,D1:E1)"))
+    (should (equal (grid-table-formula-test--eval f "TRUE" "#VALUE!" "#N/A" "1")
+                   "#VALUE!"))))
 
 (ert-deftest grid-table-formula-test-truth-not-a-number ()
   "Analysis ToolPak functions take TRUE and FALSE as #VALUE!, in order."
