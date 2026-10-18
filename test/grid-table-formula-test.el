@@ -3512,6 +3512,22 @@ Excel's values for."
           ("=TEXTBEFORE(\"a,b\",\",\",1,-1)" . "#VALUE!")
           ("=TEXTAFTER(\"aXb\",\"x\",1,1)" . "b"))))
 
+(ert-deftest grid-table-formula-test-pair-error-skips-null ()
+  "Functions of pairs give the first error but #NULL!, of the first array first."
+  (dolist (f '("=PEARSON(B1:C1,D1:E1)" "=CHISQ.TEST(B1:C1,D1:E1)"
+               "=F.TEST(B1:C1,D1:E1)" "=SLOPE(B1:C1,D1:E1)"))
+    (should (equal (grid-table-formula-test--eval f "#NULL!" "#NUM!" "#REF!" "1")
+                   "#NUM!")))
+  (should (equal (grid-table-formula-test--eval
+                  "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "#REF!" "1")
+                 "#REF!"))
+  (should (equal (grid-table-formula-test--eval
+                  "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "2" "1")
+                 "#NULL!"))
+  (should (equal (grid-table-formula-test--eval
+                  "=FREQUENCY(B1:C1,D1)" "#NULL!" "#NUM!" "1")
+                 "#NULL!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

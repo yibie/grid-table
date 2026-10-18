@@ -557,15 +557,29 @@ With no such pair it is #DIV/0!, as in Excel."
                                    (grid-calc-array-values array))))
       (grid-calc-raise (grid-calc-err-code error)))))
 
+(defun grid-calc--raise-pair-error (left right)
+  "Raise the first error in arrays LEFT and RIGHT, all of LEFT first.
+#NULL! is passed over while there is another error, as Excel does in
+functions of pairs."
+  (let ((errors (cl-remove-if-not #'grid-calc-err-p
+                                  (append (grid-calc-array-values left)
+                                          (grid-calc-array-values right)))))
+    (when errors
+      (grid-calc-raise
+       (grid-calc-err-code
+        (or (cl-find-if-not (lambda (e) (equal (grid-calc-err-code e) "#NULL!"))
+                            errors)
+            (car errors)))))))
+
 (defun grid-calc--number-pairs (left right)
-  "Return the pairs of LEFT and RIGHT that are both numbers, as (L . R)."
-  (cl-remove-if-not (lambda (pair)
-                      (when (grid-calc-err-p (car pair))
-                        (grid-calc-raise (grid-calc-err-code (car pair))))
-                      (when (grid-calc-err-p (cdr pair))
-                        (grid-calc-raise (grid-calc-err-code (cdr pair))))
-                      (and (numberp (car pair)) (numberp (cdr pair))))
-                    (grid-calc--pairs left right)))
+  "Return the pairs of LEFT and RIGHT that are both numbers, as (L . R).
+Arrays of different sizes are #N/A before an error in them is raised,
+as `grid-calc--raise-pair-error' does."
+  (let ((pairs (grid-calc--pairs left right)))
+    (grid-calc--raise-pair-error left right)
+    (cl-remove-if-not (lambda (pair)
+                        (and (numberp (car pair)) (numberp (cdr pair))))
+                      pairs)))
 
 (grid-calc-define sumproduct ((first array) &rest (others array))
   "The sum of the products of the values in one place of each array.
