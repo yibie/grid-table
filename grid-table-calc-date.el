@@ -245,8 +245,11 @@ BASIS 0 is US 30/360, 1 actual days by actual years, 2 actual/360,
                                                   (<= start (grid-calc-date-serial y 2 29) end)))
                                            (list y1 y2))))
                          366.0 365.0))
+           ;; By the average of its years, 1900 without the serials' 29
+           ;; February.
            (/ days (/ (float (- (grid-calc-date-serial (1+ y2) 1 1)
-                                (grid-calc-date-serial y1 1 1)))
+                                (grid-calc-date-serial y1 1 1)
+                                (if (= y1 1900) 1 0)))
                       (1+ (- y2 y1))))))))
     (_ (grid-calc-raise "#NUM!"))))
 

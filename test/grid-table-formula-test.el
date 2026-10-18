@@ -3626,6 +3626,10 @@ Excel's values for."
                    . 37.083333333333336)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-yearfrac-1900-average ()
+  "YEARFRAC's average year leaves out the serials' 29 February 1900."
+  (grid-table-formula-test--should-be '("=YEARFRAC(1987,345,1)" . 4.496576905522592)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
