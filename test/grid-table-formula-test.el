@@ -3339,6 +3339,19 @@ Excel's values for."
                    "=WRAPROWS({1,2,3,4,5,6},{1,2},6)" 1 2))
                  '((1 1)))))
 
+(ert-deftest grid-table-formula-tests-of-two-ranges-give-their-errors ()
+  "CHISQ.TEST, F.TEST and FREQUENCY give an error in their ranges, as Excel."
+  (dolist (case '(("=CHISQ.TEST({TRUE,#N/A},{#DIV/0!,1})" . "#N/A")
+                  ("=CHISQ.TEST({TRUE,1},{#VALUE!,#N/A})" . "#VALUE!")
+                  ("=CHISQ.TEST(3,2)" . "#N/A")
+                  ("=CHISQ.TEST({4,\"a\"},{TRUE,\"b\"})" . "#DIV/0!")
+                  ("=F.TEST({TRUE,#N/A},{#DIV/0!,1})" . "#N/A")
+                  ("=FREQUENCY({-1,#DIV/0!,3},1)" . "#DIV/0!")))
+    (grid-table-formula-test--should-be case))
+  (should (equal (grid-table-formula-test--values
+                  (cons '("=FREQUENCY({1,2,3,0,-1},B1)" "") '(("" ""))))
+                 '((2 "") (3 "")))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -410,19 +410,22 @@ density."
 (grid-calc-alias chiinv chisq.inv.rt)
 
 (grid-calc-define chisq.test ((actual array) (expected array))
-  "The chance of a chi-squared value as large as ACTUAL against EXPECTED."
-  (let ((pairs (grid-calc--pairs actual expected))
+  "The chance of a chi-squared value as large as ACTUAL against EXPECTED.
+An error in either is given, those of ACTUAL first; a single value is
+#N/A, and no pair of numbers #DIV/0!, as in Excel."
+  (grid-calc--raise-first-error actual expected)
+  (let ((pairs (grid-calc--number-pairs actual expected))
         (rows (grid-calc-array-rows actual))
         (cols (grid-calc-array-cols actual))
         (statistic 0.0))
-    (dolist (pair pairs)
-      (when (and (numberp (car pair)) (numberp (cdr pair)))
-        (when (zerop (cdr pair)) (grid-calc-raise "#DIV/0!"))
-        (setq statistic (+ statistic (/ (expt (- (car pair) (cdr pair)) 2)
-                                        (float (cdr pair)))))))
     (let ((df (if (and (> rows 1) (> cols 1)) (* (1- rows) (1- cols))
                 (1- (* rows cols)))))
-      (grid-calc--require (>= df 1))
+      (when (< df 1) (grid-calc-raise "#N/A"))
+      (unless pairs (grid-calc-raise "#DIV/0!"))
+      (dolist (pair pairs)
+        (when (zerop (cdr pair)) (grid-calc-raise "#DIV/0!"))
+        (setq statistic (+ statistic (/ (expt (- (car pair) (cdr pair)) 2)
+                                        (float (cdr pair))))))
       (grid-calc--gamma-q (/ df 2.0) (/ statistic 2)))))
 
 (grid-calc-alias chitest chisq.test)
@@ -598,7 +601,8 @@ Student's t test: TYPE 1 paired, 2 of equal variance, 3 of unequal."
 
 (grid-calc-define f.test ((left array) (right array))
   "The two-tailed chance of the variances of LEFT and RIGHT differing as
-much, by the F test."
+much, by the F test.  An error in either is given, those of LEFT first."
+  (grid-calc--raise-first-error left right)
   (let ((xs (cl-remove-if-not #'numberp (grid-calc-array-values left)))
         (ys (cl-remove-if-not #'numberp (grid-calc-array-values right))))
     (when (or (< (length xs) 2) (< (length ys) 2)) (grid-calc-raise "#DIV/0!"))

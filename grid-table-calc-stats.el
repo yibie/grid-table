@@ -86,9 +86,12 @@ CRITERIA alternate a range and the criterion its cells must meet."
 (grid-calc-define frequency ((data array) (bins array))
   "How many numbers of DATA fall in each bin BINS bound, as a column.
 A bin holds the numbers above the bin before it and not above its own
-bound; one more holds those above the last."
+bound; one more holds those above the last.  An error in DATA or BINS
+is given, and BINS without a number is the one bound 0, as in Excel."
+  (grid-calc--raise-first-error data bins)
   (let* ((numbers (cl-remove-if-not #'numberp (grid-calc-array-values data)))
-         (bounds (cl-remove-if-not #'numberp (grid-calc-array-values bins)))
+         (bounds (or (cl-remove-if-not #'numberp (grid-calc-array-values bins))
+                     (list 0)))
          (sorted (sort (copy-sequence bounds) #'<))
          (counts (make-vector (1+ (length bounds)) 0)))
     (dolist (n numbers)

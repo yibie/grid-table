@@ -550,6 +550,13 @@ With no such pair it is #DIV/0!, as in Excel."
     (unless pairs (grid-calc-raise "#DIV/0!"))
     (grid-calc--add (mapcar (lambda (p) (funcall fn (car p) (cdr p))) pairs))))
 
+(defun grid-calc--raise-first-error (&rest arrays)
+  "Raise the first error in ARRAYS, all of the first before the next."
+  (dolist (array arrays)
+    (when-let* ((error (cl-find-if #'grid-calc-err-p
+                                   (grid-calc-array-values array))))
+      (grid-calc-raise (grid-calc-err-code error)))))
+
 (defun grid-calc--number-pairs (left right)
   "Return the pairs of LEFT and RIGHT that are both numbers, as (L . R)."
   (cl-remove-if-not (lambda (pair)
