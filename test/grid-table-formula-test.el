@@ -3046,6 +3046,18 @@ Excel's values for."
                   ("=XNPV(0.1,{-20,8,8,8,8,8},{-100,1,2,3,4,5})" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-finance-takes-a-fraction-of-a-period ()
+  "DDB and IPMT take a period with a fraction, as Excel counts it."
+  (dolist (case '(("=DDB(100,10.233,4.2312,3.2,1.5)" . 13.532735530775124)
+                  ("=DDB(10000,1000,100,3.2,3)" . 280.55568287635316)
+                  ("=DDB(100,10,4,3,2.7)" . 0.5624999999999964)
+                  ("=IPMT(0.1,3.9,3,8000,10,1)" . -26.866364667656377)
+                  ("=PPMT(0.1,3.9,3,8000,10,1)" . -2900.351432640776)
+                  ("=IPMT(0.01,1.0001,36,8000,0,1)" . -79.2077378295619)
+                  ("=IPMT(0.1,4,3,8000,10,1)" . "#NUM!")
+                  ("=IPMT(0.01,1,36,8000,0,1)" . 0)))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-finance-refuses-what-excel-refuses ()
   "A rate at or below -1, and a logical value where a number is wanted."
   (dolist (case '(("=PMT(-3,5,100,300,1)" . "#NUM!")

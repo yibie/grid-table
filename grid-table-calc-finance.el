@@ -67,10 +67,13 @@ TYPE non-zero pays at the start of each period."
   (grid-calc--payment rate periods present future (if (zerop type) 0 1)))
 
 (defun grid-calc--interest-part (rate period periods present future type)
-  "Return the interest paid in PERIOD of a loan, as IPMT gives it."
-  (unless (and (>= period 1) (<= period periods)) (grid-calc-raise "#NUM!"))
+  "Return the interest paid in PERIOD of a loan, as IPMT gives it.
+PERIOD may carry a fraction, and run past the last payment by less
+than one, as Excel allows; the first payment at the start of a period
+pays no interest."
+  (unless (and (>= period 1) (< (1- period) periods)) (grid-calc-raise "#NUM!"))
   (let ((payment (grid-calc--payment rate periods present future type)))
-    (if (and (= type 1) (< period 2)) 0
+    (if (and (= type 1) (<= period 1)) 0
       (let ((interest (* (grid-calc--annuity-fv rate (1- period) payment present type)
                          rate)))
         (if (= type 1) (/ interest (+ 1 rate)) interest)))))
@@ -305,11 +308,14 @@ out and the counts no longer agree."
   (when (or (< cost 0) (< salvage 0) (<= life 0) (<= period 0) (> period life)
             (<= factor 0))
     (grid-calc-raise "#NUM!"))
-  (let ((value cost) (depreciation 0.0) (rate (/ factor (float life))))
-    (dotimes (_ (ceiling period))
-      (setq depreciation (max 0 (min (* value (min rate 1)) (- value salvage)))
-            value (- value depreciation)))
-    depreciation))
+  (let* ((rate (/ factor (float life)))
+         (value cost))
+    ;; The value a whole period before PERIOD takes it, never past SALVAGE.
+    (dotimes (_ (max 0 (1- (floor period))))
+      (setq value (- value
+                     (max 0 (min (* value (min rate 1)) (- value salvage))))))
+    (min (* cost (grid-calc--growth (- rate) (1- period)) rate)
+         (max 0 (- value salvage)))))
 
 ;;;----------------------------------------------------------------------
 ;;; Days, coupon dates and the periods they belong to
