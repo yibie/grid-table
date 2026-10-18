@@ -667,7 +667,7 @@ most that many is ALPHA or more."
                                  &optional (cumulative bool))
   "The chance of FAILURES failures before the SUCCESSESth success, each
 of chance P; or of at most that many."
-  (grid-calc--require (>= failures 0) (>= successes 1) (<= 0 p 1))
+  (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (<= p 1))
   (cl-flet ((pmf (f) (exp (+ (grid-calc--log-choose (+ f successes -1) (1- successes))
                              (* successes (log p))
                              (if (= p 1) (if (= f 0) 0 -1.0e+INF)
@@ -677,7 +677,7 @@ of chance P; or of at most that many."
 
 (grid-calc-define negbinomdist ((failures integer) (successes integer) (p number))
   "The chance of FAILURES failures before the SUCCESSESth success."
-  (grid-calc--require (>= failures 0) (>= successes 1) (<= 0 p 1))
+  (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (<= p 1))
   (exp (+ (grid-calc--log-choose (+ failures successes -1) (1- successes))
           (* successes (log p)) (* failures (log (- 1 p))))))
 

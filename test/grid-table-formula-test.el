@@ -3551,6 +3551,11 @@ Excel's values for."
         '(("=T.DIST(0,0,FALSE)" . "#DIV/0!") ("=T.DIST(0,0,TRUE)" . "#NUM!")
           ("=T.DIST(0,-1,FALSE)" . "#NUM!"))))
 
+(ert-deftest grid-table-formula-test-negbinom-chance-zero ()
+  "NEGBINOM.DIST of chance 0 is #NUM!."
+  (mapc #'grid-table-formula-test--should-be
+        '(("=NEGBINOM.DIST(1,1,0,TRUE)" . "#NUM!") ("=NEGBINOMDIST(1,1,0)" . "#NUM!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
