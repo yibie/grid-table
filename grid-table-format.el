@@ -211,6 +211,57 @@ of 0.1 and 0.2 reads 0.3."
                (t (format "%.15g" value))))
         (t (format "%s" value))))
 
+(defun grid-format--shown-scientific (number)
+  "Return NUMBER as Excel's general format writes one too long to show whole.
+The mantissa keeps up to five places, the exponent two digits: 1.23457E+11."
+  (let* ((exponent (floor (log (abs number) 10)))
+         (mantissa (/ number (expt 10.0 exponent))))
+    ;; Rounding can carry the mantissa to 10.
+    (when (>= (abs (string-to-number (format "%.5f" mantissa))) 10)
+      (setq exponent (1+ exponent)
+            mantissa (/ number (expt 10.0 exponent))))
+    (let ((text (format "%.5f" mantissa)))
+      (setq text (replace-regexp-in-string "\\.?0+\\'" "" text))
+      (format "%sE%s%02d" text (if (< exponent 0) "-" "+") (abs exponent)))))
+
+(defun grid-format-general-shown (value)
+  "Return VALUE as a cell in Excel's general format shows it.
+A number takes eleven characters at most: 1/3 shows 0.333333333, a value
+of 157.393975903614 shows 157.3939759, and one of twelve digits or more
+before the point, or below 0.0001, shows in scientific notation, as
+1.23457E+11 and 1E-05.  What the cell holds is not changed; anything
+but a number shows as `grid-format-general' writes it."
+  (if (not (and (numberp value)
+                (not (and (floatp value)
+                          (or (isnan value) (= (abs value) 1.0e+INF))))))
+      (grid-format-general value)
+    (let* ((number (float value))
+           (negative (< number 0))
+           (size (abs number)))
+      (cond
+       ((zerop size) "0")
+       ((or (>= size 99999999999.5) (< size 0.0001))
+        (grid-format--shown-scientific number))
+       (t
+        (let* ((whole-digits (if (>= size 1) (1+ (floor (log size 10))) 1))
+               ;; Eleven characters: the sign, the whole part, the point.
+               (places (max 0 (- 11 (if negative 1 0) whole-digits 1)))
+               (text (format (format "%%.%df" places) number)))
+          ;; Rounding up can add a digit to the whole part: 99.99999999999.
+          (when (> (length text) 11)
+            (setq text (format (format "%%.%df" (max 0 (1- places))) number)))
+          (when (string-search "." text)
+            (setq text (replace-regexp-in-string "\\.?0+\\'" "" text)))
+          (if (equal text "-0") "0" text)))))))
+
+(defun grid-format-shown (value format)
+  "Return the text a cell shows on screen for computed VALUE under FORMAT.
+As `grid-format-display', but a number without a format is written as
+Excel's general format shows it, in eleven characters at most; what is
+copied, pasted, found or exported keeps every digit."
+  (or (and format (grid-format-value value format))
+      (grid-format-general-shown value)))
+
 (defun grid-format-value (value format)
   "Return the text of VALUE under FORMAT, or nil when FORMAT says nothing.
 Only numbers are formatted; text keeps its own form."

@@ -4376,6 +4376,33 @@ A group and a choice, as ^(Pu|Ro), are PCRE2's, not literal text."
                   ("=XMATCH(\"(?=x)\",{\"x\"},3)" . "#VALUE!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-general-format-shows-eleven-characters ()
+  "A number without a format shows as Excel's general format shows it.
+Eleven characters at most, and scientific notation for twelve digits or
+more before the point or for less than 0.0001."
+  (dolist (case '((157.393975903614 . "157.3939759")
+                  (0.3333333333333333 . "0.333333333")
+                  (0.205078125000001 . "0.205078125")
+                  (123456789012 . "1.23457E+11")
+                  (12345678901 . "12345678901")
+                  (1e-05 . "1E-05")
+                  (0.000123456789 . "0.000123457")
+                  (0.0001 . "0.0001")
+                  (16.666666666666664 . "16.66666667")
+                  (392112 . "392112")
+                  (0.30000000000000004 . "0.3")
+                  (-2.5 . "-2.5")
+                  (0 . "0")
+                  (1.5e300 . "1.5E+300")))
+    (should (equal (cons (car case) (grid-format-general-shown (car case))) case)))
+  ;; Text and what is not a number show as before.
+  (should (equal (grid-format-general-shown "12.5") "12.5"))
+  (should (equal (grid-format-general-shown t) "TRUE"))
+  ;; A format says how a number shows; general only when there is none.
+  (should (equal (grid-format-shown 157.393975903614 '(number 2 nil)) "157.39"))
+  ;; What is copied or exported keeps every digit.
+  (should (equal (grid-format-display 157.393975903614 nil) "157.393975903614")))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with

@@ -1797,6 +1797,16 @@ cell in the way makes such a formula #SPILL!."
       (grid-table-recalculate source t)
       (should (equal (funcall size) '(4 3))))))
 
+(ert-deftest grid-table-etaf-general-numbers-show-eleven-characters ()
+  "A cell shows a number as Excel's general format does; a copy keeps it whole."
+  (grid-table-etaf-test--with-grid (4 3 100 12)
+    (grid-table-etaf-set-cell 1 1 "=1/3")
+    (should (string-match-p "0\\.333333333\\_>" (grid-table-etaf-test--text)))
+    (should-not (string-match-p "0\\.3333333333" (grid-table-etaf-test--text)))
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-copy)
+    (should (string-match-p "0\\.33333333333333" (current-kill 0)))))
+
 (ert-deftest grid-table-etaf-name-for-a-formula ()
   "A name can stand for a formula, as Excel's Refers to: does."
   (grid-table-etaf-test--with-grid (8 4 100 12)

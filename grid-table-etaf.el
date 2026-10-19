@@ -166,10 +166,14 @@ follows the window.")
                  (error "[Chart]"))
                grid-table-etaf--chart-cache)))
 
-(defun grid-table-etaf--display-text (value &optional format)
-  "Return the text shown for computed VALUE under FORMAT."
+(defun grid-table-etaf--display-text (value &optional format shown)
+  "Return the text shown for computed VALUE under FORMAT.
+With SHOWN, the text the cell paints on screen, where a number without a
+format is written as Excel's general format shows it, in eleven
+characters at most; without, every digit, for copying and finding."
   (cond ((null value) "")
         ((grid-table-etaf--chart-p value) (grid-table-etaf--chart-text value))
+        (shown (grid-format-shown value format))
         (t (grid-format-display value format))))
 
 (defconst grid-table-etaf--max-chart-width 120
@@ -180,7 +184,7 @@ follows the window.")
 A chart is drawn at its own size, so it is not held to the width limit
 of ordinary text, which wraps instead."
   (let ((width (grid-table-etaf--text-width
-                (grid-table-etaf--display-text value format))))
+                (grid-table-etaf--display-text value format t))))
     (if (grid-table-etaf--chart-p value)
         (max grid-table-etaf-min-column-width
              (min grid-table-etaf--max-chart-width width))
@@ -303,7 +307,7 @@ the sheet's last row is an empty one's."
 (defun grid-table-etaf--cell-lines (value width &optional format)
   "Estimate how many lines computed VALUE takes in a cell WIDTH wide.
 FORMAT is the format the value is shown with."
-  (let ((text (grid-table-etaf--display-text value format)))
+  (let ((text (grid-table-etaf--display-text value format t)))
     (cond ((grid-table-etaf--chart-p value)
            (length (split-string text "\n")))
           ((grid-table--extract-image-path text)
@@ -853,7 +857,7 @@ position, the node key and the paint state of the cell."
          (text (cond (editing value)
                      ((grid-table-false-value-p source row col value) "FALSE")
                      (t (grid-table-etaf--display-text
-                         value (grid-table-cell-format source row col)))))
+                         value (grid-table-cell-format source row col) t))))
          (image (and (not editing) (grid-table--extract-image-path text)))
          (face (cond ((plist-get spec :cursor) 'grid-table-etaf-cursor-face)
                      ((plist-get spec :selected)
