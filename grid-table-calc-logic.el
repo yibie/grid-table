@@ -72,6 +72,21 @@ FALLBACK at its place."
   (grid-calc--unless-error value fallback
                            (lambda (one) (eq one (grid-calc-err "#N/A")))))
 
+(defun grid-calc--switch-equal (value case)
+  "Return non-nil when VALUE matches CASE, as SWITCH takes a match.
+Blank is the number 0 there, and matches 0 and nothing else: no text,
+no TRUE and no FALSE.  Text matches text without regard to case, and
+TRUE and FALSE match only themselves, as pycel's logical workbook has
+it, where SWITCH(0,<empty>,\"match\") matches and SWITCH(<empty>,\"\")
+does not."
+  (let ((value (if (eq value :blank) 0 value))
+        (case (if (eq case :blank) 0 case)))
+    (cond ((and (numberp value) (numberp case))
+           (grid-calc--numbers-equal-p value case))
+          ((and (stringp value) (stringp case))
+           (string= (downcase value) (downcase case)))
+          (t (and (grid-calc-boolean-p value) (eq value case))))))
+
 (grid-calc-define switch ((value any) &rest (cases lazy))
   "The result after the first case equal to VALUE, or the last argument.
 Cases and results alternate; an argument left over is the default, and
@@ -81,7 +96,7 @@ without one no match is #N/A."
     (while (cdr cases)
       (let ((case (grid-calc-arg (pop cases) 'any))
             (result (pop cases)))
-        (when (grid-calc-equal-p value case)
+        (when (grid-calc--switch-equal value case)
           (throw 'found (grid-calc-arg result 'values)))))
     (if cases (grid-calc-arg (car cases) 'values) (grid-calc-err "#N/A"))))
 

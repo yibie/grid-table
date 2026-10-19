@@ -4034,6 +4034,23 @@ so is a result past 2^48-1, as BITLSHIFT(12,53) gives."
                   ("=BITLSHIFT(1,47)" . 140737488355328)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-switch-matches-a-blank-with-zero-only ()
+  "SWITCH matches a blank with the number 0, and with nothing else.
+pycel's logical workbook has SWITCH(0,<empty>,\"match\") matching, where
+SWITCH(FALSE,<empty>,\"match\"), SWITCH(<empty>,\"\") and
+SWITCH(0,\"\") are #N/A: a blank is no text and no truth value to it,
+though = reads a blank as both.  B1 here is empty."
+  (dolist (case '(("=SWITCH(0,B1,\"match\")" . "match")
+                  ("=SWITCH(B1,0,\"match\")" . "match")
+                  ("=SWITCH(FALSE,B1,\"match\")" . "#N/A")
+                  ("=SWITCH(B1,\"\",\"match\")" . "#N/A")
+                  ("=SWITCH(0,\"\",\"match\")" . "#N/A")
+                  ("=SWITCH(\"\",\"\",\"match\")" . "match")
+                  ("=SWITCH(TRUE,TRUE,\"match\")" . "match")
+                  ("=SWITCH(\"UPPER\",\"Upper\",\"match\")" . "match")
+                  ("=SWITCH(TRUE,1,\"a\",\"other\")" . "other")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
