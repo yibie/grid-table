@@ -75,14 +75,16 @@ A range gives a range, anything else an array."
 (defun grid-calc-wildcard-regexp (pattern)
   "Return a regexp matching the whole of text that PATTERN matches.
 In PATTERN * stands for any characters, ? for any one, and ~ makes the
-character after it plain."
+character after it plain; a ~ with nothing after it, as ~ alone, makes
+nothing plain and stands for nothing, which Excel matches at once."
   (let ((parts '()) (i 0) (len (length pattern)))
     (while (< i len)
       (let ((char (aref pattern i)))
         (cond
-         ((and (eq char ?~) (< (1+ i) len))
-          (setq i (1+ i))
-          (push (regexp-quote (string (aref pattern i))) parts))
+         ((eq char ?~)
+          (when (< (1+ i) len)
+            (setq i (1+ i))
+            (push (regexp-quote (string (aref pattern i))) parts)))
          ((eq char ?*) (push "\\(?:.\\|\n\\)*" parts))
          ((eq char ??) (push "\\(?:.\\|\n\\)" parts))
          (t (push (regexp-quote (string char)) parts))))

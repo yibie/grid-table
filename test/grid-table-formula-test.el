@@ -4156,6 +4156,22 @@ is #NUM! for what an odd root of a negative growth is not."
                   ("=PV(0.05,5,10)" . -43.29476670630824)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-a-tilde-with-nothing-after-it-escapes-nothing ()
+  "SEARCH reads a ~ that escapes nothing as nothing, and matches at once.
+IronCalc's FIND_SEARCH workbook has SEARCH(\"~\",\"Hello\",1) and
+SEARCH(\"~\",\"Hi ~Bang!\",1) as 1, where FIND of the same text finds
+the ~ itself at 4; ~~ and ~d still stand for a ~ and a d."
+  (dolist (case '(("=SEARCH(\"~\",\"Hello\",1)" . 1)
+                  ("=SEARCH(\"~\",\"Hi ~Bang!\",1)" . 1)
+                  ("=FIND(\"~\",\"Hi ~Bang!\",1)" . 4)
+                  ("=FIND(\"~\",\"Hello\",1)" . "#VALUE!")
+                  ("=SEARCH(\"~~\",\"Hi ~Bang!\",1)" . 4)
+                  ("=SEARCH(\"~*\",\"Ho*la\",1)" . 3)
+                  ("=SEARCH(\"~d\",\"My dear\",1)" . 4)
+                  ("=SEARCH(\"~~*\",\"Ho*la\",1)" . "#VALUE!")
+                  ("=SEARCH(\"Lat???\",\"Late\",1)" . "#VALUE!")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
