@@ -1689,6 +1689,18 @@ sheet, as one undo step."
       (should-not (plist-get (car (grid-table-charts source)) :offset))
       (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
                  x))
+      ;; Dragged far left, it stops on the first column's edge while the
+      ;; pointer moves, where letting go puts it, not over the row numbers.
+      (funcall drag 'start 0)
+      (funcall drag 'move -10000)
+      (let ((held (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)))
+        (funcall drag 'end -10000)
+        (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 0)))
+        (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                   held)))
+      (grid-table-etaf-undo)
+      (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                 x))
       ;; A cancelled drag leaves the chart and its box where they were.
       (funcall drag 'start 0)
       (funcall drag 'move (* 7 char))

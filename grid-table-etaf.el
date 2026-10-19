@@ -1550,6 +1550,11 @@ is cut off at the left and top."
   "Where the last redraw put each chart: ((INDEX . GEOMETRY) ...).
 GEOMETRY holds the :left, :top, :width and :height of the chart's box.")
 
+(defvar-local grid-table-etaf--chart-corner '(0 . 0)
+  "Where the last redraw began the cells, as (PIXELS . LINES).
+A dragged chart stops there, as it does when let go, and does not cover
+the row numbers or the column letters.")
+
 (defun grid-table-etaf--chart-nodes (state source frame cols)
   "Return the View nodes of SOURCE's floating charts for STATE's window.
 FRAME is what `grid-table-etaf--chart-frame' returns, and COLS the model
@@ -1597,7 +1602,9 @@ columns shown."
                             (list (grid-chart-svg-text drawn data columns lines))))))))))
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
-        (setq grid-table-etaf--chart-boxes boxes)))
+        (setq grid-table-etaf--chart-boxes boxes
+              grid-table-etaf--chart-corner
+              (cons (plist-get frame :x0) (plist-get frame :y0)))))
     nodes))
 
 (defun grid-table-etaf--select-chart (state index)
@@ -1683,11 +1690,13 @@ chart's new place, as one undo step, when the drag ends."
                          (delta (plist-get gesture :delta)))
                (grid-table-etaf--move-chart-box
                 index
-                (list :left (list 'px (+ (cadr (plist-get geometry :left))
-                                         (car delta)))
-                      :top (list 'lh (+ (cadr (plist-get geometry :top))
-                                        (round (cdr delta)
-                                               (grid-table-etaf--line-pixels))))))))
+                (list :left (list 'px (max (car grid-table-etaf--chart-corner)
+                                           (+ (cadr (plist-get geometry :left))
+                                              (car delta))))
+                      :top (list 'lh (max (cdr grid-table-etaf--chart-corner)
+                                          (+ (cadr (plist-get geometry :top))
+                                             (round (cdr delta)
+                                                    (grid-table-etaf--line-pixels)))))))))
             ('end
              (when start
                (let ((new (copy-tree (car start))))
