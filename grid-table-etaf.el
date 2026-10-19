@@ -3315,7 +3315,10 @@ MODE is as for `grid-table-etaf--paste-material'."
                   (push (list row col
                               (nth column (nth line styled)))
                         styles)))))
-    (let ((count (grid-table-etaf--as-one-step
+    ;; The message counts the cells pasted, as many as were copied,
+    ;; whether or not they held the same before.
+    (let ((pasted (length changes))
+          (_changed (grid-table-etaf--as-one-step
                   state
                   (lambda ()
                     (when (or (> more-rows 0) (> more-cols 0))
@@ -3353,7 +3356,7 @@ MODE is as for `grid-table-etaf--paste-material'."
       (grid-table-etaf-goto top left t)
       (if (eq mode 'formats)
           (message "Pasted formats")
-        (message "Pasted %d cell%s" count (if (= count 1) "" "s"))))))
+        (message "Pasted %d cell%s" pasted (if (= pasted 1) "" "s"))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Hiding rows and columns

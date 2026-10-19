@@ -1649,6 +1649,23 @@ to it."
       (grid-table-etaf-chart-range)
       (should (equal (plist-get (car (grid-table-charts source)) :range) "A1:C6")))))
 
+(ert-deftest grid-table-etaf-paste-counts-the-cells-pasted ()
+  "Pasting says how many cells it pasted, though some held the same."
+  (grid-table-etaf-test--with-grid (8 4 100 12)
+    (grid-table-etaf-goto 1 0)
+    (grid-table-etaf-goto 2 1 t)
+    (grid-table-etaf-copy)
+    (let ((said nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (format &rest args)
+                   (setq said (and format (apply #'format-message format args))))))
+        ;; Onto itself: nothing changes, four cells are pasted.
+        (grid-table-etaf-paste)
+        (should (equal said "Pasted 4 cells"))
+        (grid-table-etaf-goto 5 0)
+        (grid-table-etaf-paste)
+        (should (equal said "Pasted 4 cells"))))))
+
 (ert-deftest grid-table-etaf-name-for-a-formula ()
   "A name can stand for a formula, as Excel's Refers to: does."
   (grid-table-etaf-test--with-grid (8 4 100 12)
