@@ -83,26 +83,39 @@ count too."
 CRITERIA alternate a range and the criterion its cells must meet."
   (grid-calc--each-criteria criteria #'grid-calc--matching-count))
 
-(grid-calc-define frequency ((data array) (bins array))
+(grid-calc-define frequency ((data values) (bins array))
   "How many numbers of DATA fall in each bin BINS bound, as a column.
 A bin holds the numbers above the bin before it and not above its own
-bound; one more holds those above the last.  An error in DATA or BINS
-is given, and BINS without a number is the one bound 0, as in Excel."
-  (grid-calc--raise-first-error data bins)
-  (let* ((numbers (cl-remove-if-not #'numberp (grid-calc-array-values data)))
-         (bounds (or (cl-remove-if-not #'numberp (grid-calc-array-values bins))
-                     (list 0)))
-         (sorted (sort (copy-sequence bounds) #'<))
-         (counts (make-vector (1+ (length bounds)) 0)))
-    (dolist (n numbers)
-      (let ((bin (or (cl-position-if (lambda (bound) (<= n bound)) sorted)
-                     (length sorted))))
-        (cl-incf (aref counts bin))))
-    ;; Counts go in the order the bounds were written.
-    (let ((order (append (mapcar (lambda (bound) (cl-position bound sorted)) bounds)
-                         (list (length sorted)))))
-      (grid-calc-array (length order) 1
-                       (lambda (row _) (aref counts (nth row order)))))))
+bound; one more holds those above the last.  DATA is read first: one
+value that is no number, as an IF of one cell gives when it is false,
+is #VALUE!, and an error value is itself.  Text, a logical value and a
+blank are left out of a range or an array.  BINS without a number is
+the one bound 0, as in Excel."
+  (let (numbers)
+    ;; One value written directly must be a number; what a range or an
+    ;; array holds besides numbers is left out.
+    (grid-calc-each-value
+     data
+     (lambda (value direct)
+       (cond ((grid-calc-err-p value) (grid-calc-raise (grid-calc-err-code value)))
+             ((numberp value) (push value numbers))
+             ((and direct (not (grid-calc-blank-p value)))
+              (grid-calc-raise "#VALUE!")))))
+    (grid-calc--raise-first-error bins)
+    (let* ((numbers (nreverse numbers))
+           (bounds (or (cl-remove-if-not #'numberp (grid-calc-array-values bins))
+                       (list 0)))
+           (sorted (sort (copy-sequence bounds) #'<))
+           (counts (make-vector (1+ (length bounds)) 0)))
+      (dolist (n numbers)
+        (let ((bin (or (cl-position-if (lambda (bound) (<= n bound)) sorted)
+                       (length sorted))))
+          (cl-incf (aref counts bin))))
+      ;; Counts go in the order the bounds were written.
+      (let ((order (append (mapcar (lambda (bound) (cl-position bound sorted)) bounds)
+                           (list (length sorted)))))
+        (grid-calc-array (length order) 1
+                         (lambda (row _) (aref counts (nth row order))))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Averages and spread

@@ -3874,6 +3874,32 @@ The cases are IronCalc's BINOM workbook, as Excel keeps them."
                   ("=BINOM.DIST.RANGE(10,1,2,3)" . 0)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-frequency-takes-a-number-for-one-value ()
+  "FREQUENCY gives #VALUE! when its one value is no number.
+A range's or an array's text, logical values and blanks are still left
+out, and a value that is no number is seen before BINS goes wrong, as
+Excel has it in the forum-mso-en4-134670 workbook."
+  (dolist (case '(("=FREQUENCY(FALSE,{1,2})" . "#VALUE!")
+                  ("=FREQUENCY(TRUE,{1,2})" . "#VALUE!")
+                  ("=FREQUENCY(\"\",{1,2})" . "#VALUE!")
+                  ("=FREQUENCY(\"x\",{1,2})" . "#VALUE!")
+                  ;; The one value first, whatever BINS holds.
+                  ("=FREQUENCY(FALSE,#NAME?)" . "#VALUE!")
+                  ("=FREQUENCY(FALSE,{#DIV/0!,1})" . "#VALUE!")
+                  ("=FREQUENCY(#N/A,{1,2})" . "#N/A")
+                  ;; A number is counted, and an array keeps its numbers.
+                  ("=SUM(FREQUENCY(1,{1,2}))" . 1)
+                  ("=SUM(FREQUENCY({1,2,FALSE},{1,2}))" . 2)
+                  ("=SUM(FREQUENCY({FALSE,TRUE,\"\"},{1,2}))" . 0)))
+    (grid-table-formula-test--should-be case))
+  ;; What a range or a one-cell reference holds besides numbers is left out.
+  (let ((model (grid-model-create 3 2 '(("FALSE" "=SUM(FREQUENCY(A1:A3,{1,2}))")
+                                        ("1" "")
+                                        ("x" "")))))
+    (should (equal (grid-model-get-computed-value model 0 1) 1)))
+  (let ((model (grid-model-create 1 2 '(("FALSE" "=SUM(FREQUENCY(A1,{1,2}))")))))
+    (should (equal (grid-model-get-computed-value model 0 1) 0))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
