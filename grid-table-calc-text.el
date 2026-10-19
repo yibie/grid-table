@@ -1269,8 +1269,11 @@ up to 9999, and a last field with a fraction counts as seconds, so
           (grid-calc-raise "#VALUE!"))
          ((grid-calc--date-code-p tokens)
           (if (< value 0)
-              ;; A minus is written for an elapsed time only.
-              (unless (and elapsed (not dated)) (grid-calc-raise "#VALUE!"))
+              ;; A minus is written for an elapsed time only, and only one
+              ;; standing alone: [s] writes -86400, where [s].000 is
+              ;; #VALUE!, as pycel's text workbook has them.
+              (unless (and elapsed (null (cdr tokens)))
+                (grid-calc-raise "#VALUE!"))
             (unless (or (and elapsed (not dated)) (<= value grid-calc--last-serial*))
               (grid-calc-raise "#VALUE!")))
           (grid-calc--format-date value tokens))

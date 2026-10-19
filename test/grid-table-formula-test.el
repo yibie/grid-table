@@ -1826,7 +1826,7 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
     (1900 3.14159 "[h]:m:s.000" "75:23:53.376")
     (1900 0.08546296296296296 "[mm]:ss.0" "123:04.0")
     (1900 0 "\"It was \"[h]\" [yes, \"h\"] hours and \"mm:ss" "It was 0 [yes, 0] hours and 00:00")
-    (1900 -3.14159 "[s].000" "-271433.376")
+    (1900 -3.14159 "[s].000" "#VALUE!")
     (1900 1 "[<10]#\" Wow\"" "1 Wow")
     (1900 10 "[>10]#\" Big\"" "10")
     (1900 1 "[<=10]#\" Wow\"" "1 Wow")
@@ -1852,7 +1852,10 @@ test workbooks; a date's serial counts from 1904 where the workbook did."
     (1900 3.75 "|#_#/#|" "|15 /4|")))
     (pcase-let ((`(,system ,value ,code ,expected) case))
       (let ((grid-format-date-system system))
-        (should (equal (list value code (grid-calc-format-code value code))
+        (should (equal (list value code
+                             (condition-case err
+                                 (grid-calc-format-code value code)
+                               (grid-calc-error (cadr err))))
                        (list value code expected)))))))
 
 (ert-deftest grid-table-text-follows-excel-with-elapsed-times ()
@@ -1867,6 +1870,9 @@ come from pycel's text test workbook."
                   (-1 "[h]:m" "#VALUE!")
                   (0 "[h]:m" "0:0")
                   (-1 "[m]:s" "#VALUE!")
+                  ;; A minus stands alone or not at all, so a fraction of
+                  ;; a second after [s] is #VALUE! for one.
+                  (-1 "[s].000" "#VALUE!")
                   (0 "[s].000" "0.000")))
     (pcase-let ((`(,value ,code ,expected) case))
       (let ((model (grid-model-create 1 3 (list (list (number-to-string value) code
