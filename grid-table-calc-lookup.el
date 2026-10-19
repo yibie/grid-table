@@ -409,6 +409,10 @@ does.  APPROXIMATE takes the last value not above WANTED, as 0 when
 it is blank."
   (when (grid-calc-blank-p wanted)
     (if approximate (setq wanted 0) (grid-calc-raise "#N/A")))
+  ;; Text is no table at all, as VLOOKUP(3,"Nothing",1) is #VALUE! in
+  ;; IronCalc's HVLOOKUP workbook; a number or a truth value is a table
+  ;; of one cell, which then holds nothing to find.
+  (when (stringp table) (grid-calc-raise "#VALUE!"))
   (pcase-let ((`(,rows . ,cols) (grid-calc--table-size table))
               (`(,full-rows . ,full-cols) (grid-calc--table-full-size table)))
     (let* ((length (if across cols rows))

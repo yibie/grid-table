@@ -4219,6 +4219,18 @@ values than one still fill out the line, as three wrapped by five."
                      "=ROWS(WRAPCOLS({1;2;3},2))" "" "")))
                  '((nil 1 1 1 5) (nil 2 2 "" "")))))
 
+(ert-deftest grid-table-formula-a-text-table-is-no-table ()
+  "VLOOKUP and HLOOKUP given text where the table goes are #VALUE!.
+IronCalc's HVLOOKUP workbook has VLOOKUP(3,\"Nothing\",1) as #VALUE!,
+where a number or a truth value there is a table of one cell and finds
+nothing: VLOOKUP(3,3,1) and VLOOKUP(3,TRUE,1) are #N/A."
+  (dolist (case '(("=VLOOKUP(3,\"Nothing\",1)" . "#VALUE!")
+                  ("=HLOOKUP(3,\"Nothing\",1)" . "#VALUE!")
+                  ("=VLOOKUP(3,\"3\",1)" . "#VALUE!")
+                  ("=VLOOKUP(3,TRUE,1)" . "#N/A")
+                  ("=VLOOKUP(2,{1,2;3,4},2,FALSE)" . "#N/A")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
