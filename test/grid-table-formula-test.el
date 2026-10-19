@@ -3807,6 +3807,21 @@ The case is IronCalc's DATEVALUE_issue_1380 workbook, as Excel keeps it."
                   ("=DATEVALUE(\"2026-02-30\")" . "#VALUE!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-sequence-takes-an-empty-first-argument ()
+  "SEQUENCE(,12,,2.5) is one row of twelve, an empty argument being 1.
+The values are IronCalc's SEQUENCE workbook, as Excel keeps them."
+  (dolist (case '(("=ROWS(SEQUENCE(,12,,2.5))" . 1)
+                  ("=COLUMNS(SEQUENCE(,12,,2.5))" . 12)
+                  ("=INDEX(SEQUENCE(,12,,2.5),1,3)" . 6)
+                  ("=INDEX(SEQUENCE(,12,,2.5),1,12)" . 28.5)
+                  ("=SUM(SEQUENCE(3,,10))" . 33)
+                  ("=INDEX(SEQUENCE(3,,10),3,1)" . 12)
+                  ;; No row at all is an empty array, which is #CALC!.
+                  ("=SEQUENCE(0,0)" . "#CALC!")
+                  ("=SEQUENCE(-1)" . "#CALC!")
+                  ("=SEQUENCE(0.3)" . "#CALC!")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

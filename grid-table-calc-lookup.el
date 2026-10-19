@@ -798,9 +798,10 @@ negative number counts from the last."
                      (lambda (row col)
                        (grid-calc-aref array row (nth col picked))))))
 
-(grid-calc-define sequence ((rows integer) &optional (cols integer 1)
+(grid-calc-define sequence ((rows integer 1) &optional (cols integer 1)
                             (start number 1) (step number 1))
-  "ROWS by COLS numbers from START, each STEP more than the one before."
+  "ROWS by COLS numbers from START, each STEP more than the one before.
+An argument left empty is 1."
   :empty t
   (unless (and (> rows 0) (> cols 0)) (grid-calc-raise "#CALC!"))
   (grid-calc-array rows cols

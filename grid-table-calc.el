@@ -2623,10 +2623,16 @@ though an array is taken a value at a time."
                                   for index from 0
                                   collect
                                   (if (and (equal ast '(MISSING)) empty
-                                           (<= (grid-calc-function-min function)
-                                               index (1- (length empty))))
+                                           (<= 0 index (1- (length empty)))
+                                           (or (>= index
+                                                   (grid-calc-function-min function))
+                                               (nth index empty)))
                                       ;; Left empty, it is left out:
                                       ;; OFFSET(A1:B2,0,0,,1) is 2 high.
+                                      ;; A first argument that is required
+                                      ;; takes its default too, as
+                                      ;; SEQUENCE(,12) does; without one it
+                                      ;; is no argument, as before.
                                       (or (nth index empty) 'grid-calc--omitted)
                                     (grid-calc--argument
                                      model ast
