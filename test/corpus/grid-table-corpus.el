@@ -206,10 +206,10 @@ NAMES-BEFORE and NAMES-AFTER are the defined names of the two workbooks."
   (concat "\\(?:\\`\\|[^A-Za-z0-9_.]\\)"
           (regexp-opt '("NOW" "TODAY" "RAND" "RANDBETWEEN" "RANDARRAY"
                         "INFO" "CELL"))
-          "("
-          ;; A link to another workbook: [1]Sheet1!A1
-          "\\|\\[[0-9]+\\]")
-  "Matches a formula whose value need not be what it was when written.")
+          "(")
+  "Matches a formula whose value need not be what it was when written.
+A formula that reads another workbook, as [1]Sheet1!A1 does, is no such
+formula: the value it was written with is what it is to give.")
 
 (defun grid-table-corpus--functions (formula)
   "Return the names of the functions FORMULA calls, once each, in order.
