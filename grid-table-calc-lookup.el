@@ -181,6 +181,31 @@ MATCH(A1:A900,A1:A900,0) does, read it once."
           (cl-loop for i below length
                    when (funcall match (funcall getter i)) return i)))))))
 
+(defun grid-calc--find-matching (match length getter from-end)
+  "Return the first position MATCH likes among LENGTH values read by GETTER.
+FROM-END searches from the last, as XMATCH with a search mode of -1 does."
+  (if from-end
+      (cl-loop for i downfrom (1- length) to 0
+               when (funcall match (funcall getter i)) return i)
+    (cl-loop for i below length
+             when (funcall match (funcall getter i)) return i)))
+
+(defun grid-calc--regexp-matcher (wanted)
+  "Return a function telling whether a value WANTED matches as a regexp.
+It matches when it is found anywhere in the value, as REGEXTEST finds
+it, so a pattern wanting the whole value says so with ^ and $; a number
+or a truth value is read as its text, and a blank or an error matches
+nothing.  A pattern that is no regexp is #VALUE!."
+  (let ((regexp (condition-case nil
+                    (let ((regexp (grid-calc-text wanted)))
+                      (string-match-p regexp "")
+                      regexp)
+                  (invalid-regexp (grid-calc-raise "#VALUE!")))))
+    (lambda (value)
+      (and (or (stringp value) (numberp value) (memq value '(t :false)))
+           (string-match-p regexp (grid-calc-text value))
+           t))))
+
 (defun grid-calc--find-sorted (wanted length getter &optional descending)
   "Return the position of WANTED among LENGTH sorted values, or nil.
 That is the last value not past WANTED: not above it, or not below it
@@ -332,10 +357,10 @@ sorted down."
   "Return the position XMATCH and XLOOKUP find for WANTED, or nil.
 MODE and SEARCH are their match_mode and search_mode; SOURCE is as
 `grid-calc--find-exact' takes it."
-  (unless (memq mode '(0 -1 1 2)) (grid-calc-raise "#VALUE!"))
+  (unless (memq mode '(0 -1 1 2 3)) (grid-calc-raise "#VALUE!"))
   (unless (memq search '(1 -1 2 -2)) (grid-calc-raise "#VALUE!"))
-  ;; Wildcards cannot be searched for by halves.
-  (when (and (= mode 2) (memq search '(2 -2))) (grid-calc-raise "#VALUE!"))
+  ;; Wildcards and regular expressions cannot be searched for by halves.
+  (when (and (memq mode '(2 3)) (memq search '(2 -2))) (grid-calc-raise "#VALUE!"))
   (let ((from-end (memq search '(-1 -2))))
     (pcase mode
       ((guard (memq search '(2 -2)))
@@ -352,6 +377,8 @@ MODE and SEARCH are their match_mode and search_mode; SOURCE is as
                                 from-end)))
       (0 (grid-calc--find-exact wanted length getter from-end nil source))
       (2 (grid-calc--find-exact wanted length getter from-end t source))
+      (3 (grid-calc--find-matching (grid-calc--regexp-matcher wanted)
+                                   length getter from-end))
       (_ (grid-calc--find-nearest wanted length getter mode from-end)))))
 
 (defun grid-calc--x-line-of (value)
@@ -365,8 +392,8 @@ As `grid-calc--line-of', but several rows and columns are #VALUE!."
                           &optional (mode integer 0) (search integer 1))
   "The position of WANTED in VALUES, counted from 1; #N/A when not found.
 MODE 0 matches exactly, -1 takes the next smaller value too, 1 the next
-larger, 2 matches text with wildcards.  SEARCH 1 starts at the first
-value, -1 at the last."
+larger, 2 matches text with wildcards and 3 matches it as a regular
+expression.  SEARCH 1 starts at the first value, -1 at the last."
   :empty t
   (pcase-let ((`(,length . ,getter) (grid-calc--x-line-of values)))
     (let ((found (grid-calc--xfind wanted length getter mode search

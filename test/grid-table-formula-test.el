@@ -4104,6 +4104,29 @@ IronCalc's PROB workbook has PROB({\"Hi\"},{\"hi\"},1) as #DIV/0!; the
                   ("=PROB({1,2},{0.5,0.5},1,2)" . 1)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-xmatch-matches-a-regular-expression ()
+  "XMATCH with a match mode of 3 reads the wanted value as a regexp.
+IronCalc's XMATCH workbook finds the first country matching
+\"[A-Z][a-z]+y\" as Germany and the last as Francialy, and finds
+nothing for 42; a pattern is found anywhere in a value unless ^ and $
+hold it to the whole."
+  (dolist (case '(("=XMATCH(\"[A-Z][a-z]+y\",{\"Albania\";\"Indonesia\";\"India\";\"Germany\";\"Spain\";\"Venezuela\";\"Italy\";\"Francialy\"},3,1)" . 4)
+                  ("=XMATCH(\"[A-Z][a-z]+y\",{\"Albania\";\"Indonesia\";\"India\";\"Germany\";\"Spain\";\"Venezuela\";\"Italy\";\"Francialy\"},3,-1)" . 8)
+                  ("=XMATCH(42,{\"apple\";\"bannana\"},3)" . "#N/A")
+                  ("=XMATCH(\"a.e\",{\"apple\";\"axe\"},3)" . 2)
+                  ("=XMATCH(\"42\",{42},3)" . 1)
+                  ("=XMATCH(\"Ger.*\",{\"Albania\";\"Germany\"},3)" . 2)
+                  ("=XMATCH(\"many\",{\"Albania\";\"Germany\"},3)" . 2)
+                  ("=XMATCH(\"^many$\",{\"Albania\";\"Germany\"},3)" . "#N/A")
+                  ("=XLOOKUP(\"[A-Z][a-z]+y\",{\"Albania\";\"Germany\"},{\"x\";\"yz\"},,3)"
+                   . "yz")))
+    (grid-table-formula-test--should-be case))
+  ;; Neither a regular expression nor a wildcard is searched for by halves.
+  (dolist (formula '("=XMATCH(\"a\",{\"a\"\"b\"},3,2)"
+                     "=XMATCH(\"a*\",{\"a\"\"b\"},2,2)"
+                     "=XMATCH(\"a\",{\"a\"\"b\"},4)"))
+    (should (equal (grid-table-formula-test--eval formula) "#VALUE!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
