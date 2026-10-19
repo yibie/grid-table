@@ -687,7 +687,7 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-filter-column 1 ">" "10")
     (should (= (grid-table-etaf--row-count grid-table-etaf--state) 7))
     (let ((text (grid-table-etaf-test--text)))
-      (should (string-match-p "^ *1 +H0" text))
+      (should (string-match-p "^ *1[ │]+H0" text))
       (should (string-match-p "^ *7 " text))
       (should-not (string-match-p "^ *5 " text))
       (should (string-match-p "B ▼" text))
