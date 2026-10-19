@@ -4248,6 +4248,17 @@ there is #REF!, as A2 is."
     (grid-model-set-raw-value model 0 0 "=SUM(C1#)")
     (should (equal (grid-model-get-computed-value model 0 0) "#REF!"))))
 
+(ert-deftest grid-table-formula-sumsq-past-what-a-float-holds-is-num ()
+  "A SUMSQ whose total a float cannot hold is #NUM!.
+IronCalc's SUMSQ workbook has the square of 2E+154 as #NUM!, where
+1E+154 squared is 1E+308 and still a number."
+  (dolist (case '(("=SUMSQ(2.0000000000000001E+154)" . "#NUM!")
+                  ("=SUMSQ(1E+154)" . 1e+308)
+                  ("=SUMSQ(9999999999999)" . 9.9999999999980007E+25)
+                  ("=SUMSQ(3,4)" . 25)
+                  ("=SUMSQ(-3,4)" . 25)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

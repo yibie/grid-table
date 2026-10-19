@@ -555,8 +555,14 @@ Only numbers count, and an error value in either is #NUM!."
     (if numbers (grid-calc--finite (grid-calc--snap (apply #'* 1 numbers))) 0)))
 
 (grid-calc-define sumsq (&rest (numbers values))
-  "The sum of the squares of NUMBERS."
-  (grid-calc--add (mapcar (lambda (n) (* n n)) (grid-calc-numbers numbers))))
+  "The sum of the squares of NUMBERS.
+A sum too big for a float to hold is #NUM!, as IronCalc's SUMSQ
+workbook has the square of 2E+154."
+  (let ((total (grid-calc--add (mapcar (lambda (n) (* n n))
+                                       (grid-calc-numbers numbers)))))
+    (if (> (abs total) 1.7976931348623157e308)
+        (grid-calc-raise "#NUM!")
+      total)))
 
 (defun grid-calc--pairs (left right)
   "Return the values of arrays LEFT and RIGHT, which must hold as many.
