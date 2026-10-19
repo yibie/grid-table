@@ -3919,6 +3919,29 @@ so what they gave before stays exact."
            (sum (cl-loop for i from 0 to k sum (grid-calc--binomial-pmf i n p))))
       (should (< (abs (- sum (grid-calc--binomial-cdf k n p))) (* 1e-10 sum))))))
 
+(ert-deftest grid-table-formula-base-places-are-read-before-the-number ()
+  "DEC2BIN and its kin read PLACES before NUMBER, as Excel does.
+A PLACES below one or above ten is #NUM! however NUMBER reads, as \"E\"
+written in base 2 is; IronCalc's BASES workbook keeps that in its
+places sheet, where every one of them is a shared string."
+  (dolist (case '(("=DEC2BIN(\"E\",0)" . "#NUM!")
+                  ("=DEC2BIN(\"E\",11)" . "#NUM!")
+                  ("=DEC2OCT(\"E\",0)" . "#NUM!")
+                  ("=DEC2OCT(\"E\",11)" . "#NUM!")
+                  ("=DEC2HEX(\"E\",0)" . "#NUM!")
+                  ("=DEC2HEX(\"E\",11)" . "#NUM!")
+                  ;; A PLACES that is only too short leaves NUMBER to fail
+                  ;; as it reads, and one that fits pads NUMBER instead.
+                  ("=DEC2BIN(\"E\",1)" . "#VALUE!")
+                  ("=DEC2BIN(\"E\")" . "#VALUE!")
+                  ("=DEC2BIN(27,1)" . "#NUM!")
+                  ("=DEC2BIN(27,5)" . "11011")
+                  ("=DEC2BIN(5,10)" . "0000000101")
+                  ("=DEC2BIN(-25,10)" . "1111100111")
+                  ("=DEC2BIN(-25,0)" . "#NUM!")
+                  ("=DEC2BIN(5,0)" . "#NUM!")))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

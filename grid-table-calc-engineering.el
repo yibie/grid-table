@@ -36,23 +36,22 @@
       (if (>= number (ash 1 (1- bits))) (- number (ash 1 bits)) number))))
 
 (defun grid-calc--to-base (number base places)
-  "Return NUMBER written in BASE, at least PLACES digits when given."
-  (let* ((bits (cdr (assq base grid-calc--bases)))
-         (number (truncate number)))
-    (unless (and (>= number (- (ash 1 (1- bits)))) (< number (ash 1 (1- bits))))
+  "Return NUMBER written in BASE, at least PLACES digits when given.
+PLACES is read before NUMBER: Excel gives #NUM! for one below one or
+above ten whatever NUMBER reads, as in \"E\" written in base 2."
+  (let ((bits (cdr (assq base grid-calc--bases))))
+    (when (and places (or (> places 10) (< places 1)))
       (grid-calc-raise "#NUM!"))
-    (when (and places (> places 10)) (grid-calc-raise "#NUM!"))
-    (if (< number 0)
-        ;; A negative number is always ten digits, PLACES or not, but it
-        ;; wants a PLACES from one to ten and writes no digits for none.
-        (progn
-          (when (and places (< places 1)) (grid-calc-raise "#NUM!"))
-          (grid-calc--base-digits (+ number (ash 1 bits)) base))
-      (let ((text (grid-calc--base-digits number base)))
-        (cond ((null places) text)
-              ((or (< places 0) (< places (length text)))
-               (grid-calc-raise "#NUM!"))
-              (t (concat (make-string (- places (length text)) ?0) text)))))))
+    (let ((number (truncate (grid-calc-num number))))
+      (unless (and (>= number (- (ash 1 (1- bits)))) (< number (ash 1 (1- bits))))
+        (grid-calc-raise "#NUM!"))
+      (if (< number 0)
+          ;; A negative number is always ten digits, PLACES or not.
+          (grid-calc--base-digits (+ number (ash 1 bits)) base)
+        (let ((text (grid-calc--base-digits number base)))
+          (cond ((null places) text)
+                ((< places (length text)) (grid-calc-raise "#NUM!"))
+                (t (concat (make-string (- places (length text)) ?0) text))))))))
 
 (defun grid-calc--base-digits (number base)
   "Return NUMBER, not negative, as digits in BASE."
@@ -75,8 +74,10 @@ Each pair is (NAME BASE), as (bin 2)."
                   ,(format "The number TEXT, in base %d, stands for." from-base)
                   :toolpak t
                   (grid-calc--from-base text ,from-base))
+               ;; NUMBER is read after PLACES: Excel gives #NUM! for a
+               ;; PLACES out of range whatever NUMBER reads.
                `(grid-calc-define ,(intern (format "dec2%s" from))
-                    ((number number) &optional (places integer))
+                    ((number any) &optional (places integer))
                   ,(format "NUMBER in base %d, at least PLACES digits long." from-base)
                   :toolpak t
                   (grid-calc--to-base number ,from-base places)))
