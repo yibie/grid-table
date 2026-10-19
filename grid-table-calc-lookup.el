@@ -600,7 +600,10 @@ With A1 false TEXT is in R1C1 style, as \"R2C3\" or \"R[-1]C\"."
             (let ((ast (ignore-errors (grid-parser-parse text))))
               (pcase (car-safe ast)
                 ((or 'CELL-REF 'RANGE 'NAME 'RANGE-OP)
-                 (let ((value (grid-calc--eval grid-calc--model ast)))
+                 ;; A reference into another workbook is #REF!: Excel
+                 ;; does not read one whose file is not open.
+                 (let* ((grid-calc-externals nil)
+                        (value (grid-calc--eval grid-calc--model ast)))
                    (and (grid-calc-ref-p value) value)))))
           (grid-calc--r1c1-reference text grid-calc--model))
         (grid-calc-err "#REF!"))))

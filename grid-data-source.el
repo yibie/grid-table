@@ -242,8 +242,10 @@ TABLES holds the tables a workbook file has, for references such as
 Table1[Qty]: each is (NAME SHEET TOP LEFT BOTTOM RIGHT HEADERS TOTALS
 COLUMNS), as `grid-calc-tables' describes.  DATE-SYSTEM is 1904 when
 its dates count from 1904, as `grid-format-date-system' says.  FILE is
-the file it was read from, or nil, for CELL(\"filename\")."
-  sheets names local-names tables date-system file)
+the file it was read from, or nil, for CELL(\"filename\").  EXTERNALS is
+the function that reads a sheet of another workbook the file links to,
+or nil when it links to none; see `grid-workbook-external-model'."
+  sheets names local-names tables date-system file externals)
 
 (defvar grid-workbook--parsed-names (make-hash-table :test 'equal)
   "Definitions of names already parsed, from their text.")
@@ -417,14 +419,32 @@ the characters that keep it from being one."
   (delq nil (mapcar (lambda (source) (gethash :model source))
                     (grid-workbook-sheets workbook))))
 
+(defconst grid-workbook--external-sheet-regexp "\\`\\[\\([0-9]+\\)\\]\\(.+\\)\\'"
+  "Matches the name of a sheet of another workbook, as in [1]Sheet1.")
+
+(defun grid-workbook-external-model (workbook link sheet)
+  "Return the model of SHEET of the LINKth workbook WORKBOOK links to, or nil.
+LINKS are counted from 1 as the workbook's formulas count them; the model
+is read-only, holding what the link cached and blanks for the rest."
+  (when-let* ((externals (grid-workbook-externals workbook)))
+    (funcall externals link sheet)))
+
 (defun grid-workbook--resolver (workbook)
   "Return the function that finds the model of a sheet of WORKBOOK by name.
-Called with :names, it returns the names of the sheets in order."
+Called with :names, it returns the names of the sheets in order.  A name
+such as [1]Sheet1 is a sheet of the workbook WORKBOOK links to, which is
+read, never written."
   (lambda (name)
-    (if (eq name :names)
-        (grid-workbook-sheet-names workbook)
-      (when-let* ((source (grid-workbook-sheet workbook name)))
-        (gethash :model source)))))
+    (cond
+     ((eq name :names) (grid-workbook-sheet-names workbook))
+     ((when-let* ((source (grid-workbook-sheet workbook name)))
+        (gethash :model source)))
+     ;; A reference into another workbook reads what it cached, unless
+     ;; INDIRECT names it: Excel then gives #REF!, the file not open.
+     ((and grid-calc-externals
+           (string-match grid-workbook--external-sheet-regexp name))
+      (grid-workbook-external-model
+       workbook (string-to-number (match-string 1 name)) (match-string 2 name))))))
 
 (defun grid-workbook--file-name-resolver (workbook)
   "Return the function that names the file and sheet of a model of WORKBOOK.

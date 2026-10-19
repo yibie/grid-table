@@ -14,9 +14,13 @@
 ;;
 ;; test/fixtures/links.xlsx is a hand-written package with one external
 ;; link, xl/externalLinks/externalLink1.xml and its relationship to
-;; other.xlsx, a formula [1]Sheet1!$A$1 that reads it and a name
-;; [1]!MonthNames: what a write must give back, as umya has no model for
-;; any of it.
+;; other.xlsx.  That link caches a small sheet, A1:B3 numbers, C1 text,
+;; D1 TRUE and E1 #N/A, lists two more sheets, one whose refresh failed
+;; and one it read as empty, and the workbook's Sheet1 holds in A1 to A16
+;; the formulas that read them: a cell, a range, a whole column, a
+;; VLOOKUP, a name pointing into it, sheets and a link it has not, one
+;; INDIRECT naming it, and what it cached as text, TRUE, an error and a
+;; blank.
 ;;
 ;; test/fixtures/compat.xlsx began as a workbook grid-table wrote and was
 ;; then edited by hand into shapes other writers produce and umya used to
@@ -898,9 +902,11 @@ write began with, numbered among those the write made itself."
     (let* ((workbook (grid-table-xlsx-create-workbook file))
            (sheet (grid-workbook-sheet workbook "Sheet1")))
       (should (equal (grid-get-raw-value-at sheet 0 0) "=[1]Sheet1!$A$1"))
-      (should (equal (grid-get-raw-value-at sheet 1 0) "7"))
+      (should (equal (grid-get-computed-value-at sheet 0 0) 2))
       (should (equal (cdr (assoc-string "othername" (grid-workbook-names workbook) t))
-                     "=[1]!MonthNames")))
+                     "=[1]!MonthNames"))
+      (should (equal (cdr (assoc-string "named_cell" (grid-workbook-names workbook) t))
+                     "=[1]Sheet1!$B$3")))
     ;; Saving a sheet of it, and writing only its names, keep the link too.
     (let ((source (grid-table-xlsx-create-data-source file "Sheet1")))
       (grid-set-raw-value-at source 1 1 "8")
@@ -923,6 +929,46 @@ write began with, numbered among those the write made itself."
                                 rels))
         (should (string-match-p "/xl/externalLinks/externalLink1.xml" types))
         (should (string-match-p "<externalBook" part))))))
+
+(ert-deftest grid-table-xlsx-test-reads-what-another-workbook-cached ()
+  "A formula that reads another workbook reads the values the file cached.
+That workbook is not open: the values are the ones the linking file holds,
+and a cell it holds no value for is blank."
+  (skip-unless grid-table-xlsx-test--available)
+  (let* ((workbook (grid-table-xlsx-create-workbook grid-table-xlsx-test--links))
+         (sheet (grid-workbook-sheet workbook "Sheet1"))
+         (value (lambda (row) (grid-get-computed-value-at sheet (1- row) 0))))
+    ;; A cell, a range and a whole column of it.
+    (should (equal (funcall value 1) 2))
+    (should (equal (funcall value 2) 35))
+    (should (equal (funcall value 3) 9))
+    ;; VLOOKUP over what it cached, a range with text in it, and a name
+    ;; of this workbook that points into the other one.
+    (should (equal (funcall value 7) 20))
+    (should (equal (funcall value 12) 30))
+    (should (equal (funcall value 13) 69))
+    ;; A number, text, TRUE, an error and a blank, as it cached them.
+    (should (equal (funcall value 8) t))
+    (should (equal (funcall value 9) "x"))
+    (should (equal (funcall value 10) "#N/A"))
+    (should (equal (funcall value 11) 0))
+    ;; A sheet or a link it has not is #REF!, one whose refresh failed and
+    ;; cached nothing too, and INDIRECT finds none of them: Excel does not
+    ;; read a workbook that is not open.
+    (should (equal (funcall value 4) "#REF!"))
+    (should (equal (funcall value 5) "#REF!"))
+    (should (equal (funcall value 6) "#REF!"))
+    (should (equal (funcall value 15) "#REF!"))
+    ;; A sheet it cached no cell for but did read holds nothing to find.
+    (should (equal (funcall value 16) 0))
+    ;; What it reads is no sheet of this workbook.
+    (should (equal (grid-workbook-sheet-names workbook) '("Sheet1")))))
+
+(ert-deftest grid-table-xlsx-test-external-raw-keeps-false ()
+  "A cached FALSE stays FALSE, and a cached text stays text."
+  (should (equal (grid-table-xlsx--external-raw 'b :false) "FALSE"))
+  (should (equal (grid-table-xlsx--external-raw 'b :true) "TRUE"))
+  (should (equal (grid-table-xlsx--external-raw 's "=1") "'=1")))
 
 (provide 'grid-table-xlsx-test)
 

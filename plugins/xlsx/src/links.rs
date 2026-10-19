@@ -20,6 +20,9 @@ use std::path::{Path, PathBuf};
 
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use umya_spreadsheet::helper::coordinate::index_from_coordinate;
+
+use crate::quote;
 
 const WORKBOOK: &str = "xl/workbook.xml";
 const WORKBOOK_RELS: &str = "xl/_rels/workbook.xml.rels";
@@ -455,4 +458,246 @@ fn xml_escape(text: &str) -> String {
         }
     }
     out
+}
+
+//;----------------------------------------------------------------------
+//; What the links hold, for reading their cached values
+//;----------------------------------------------------------------------
+
+/// A cell of a link's cached data: its row and column, zero-based, and
+/// its kind, n for a number, s for a string, b for a boolean and e for an
+/// error, with the value as the link writes it.
+struct Cached {
+    row: usize,
+    col: usize,
+    kind: char,
+    value: String,
+}
+
+/// The cached sheets of one external link, in the order it names them.
+struct CachedSheets {
+    sheets: Vec<(String, Vec<Cached>)>,
+}
+
+/// The links of a workbook as a Lisp form: (:links ((1 "target") ...)),
+/// in the order the workbook counts them from 1.
+pub(crate) fn link_list(path: &Path) -> Result<String, String> {
+    let file = File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|error| format!("{path:?}: {error}"))?;
+    let mut out = String::from("(:links (");
+    for (index, part) in referenced_parts(&mut zip, path)?.iter().enumerate() {
+        // The file it points at is the first target of its own relationships.
+        let target = entry(&mut zip, &relationship_part(part))?
+            .map(|bytes| relationships(&bytes))
+            .and_then(|found| found.into_iter().next().map(|(_, _, target)| target))
+            .unwrap_or_default();
+        if index > 0 {
+            out.push(' ');
+        }
+        let _ = write!(out, "({} ", index + 1);
+        quote(&mut out, &target);
+        out.push(')');
+    }
+    out.push_str("))");
+    Ok(out)
+}
+
+/// The cached sheets of the link numbered ORDER of the workbook at PATH, as
+/// a Lisp form: (:sheets (("Sheet1" ((0 0 n 2.0) ...)) ...)).  A cell is
+/// its row and column, zero-based, its kind and its value; a sheet is left
+/// out whose refresh failed and that cached no cell, as `cached_sheets`
+/// says.
+pub(crate) fn link_sheets(path: &Path, order: usize) -> Result<String, String> {
+    let file = File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|error| format!("{path:?}: {error}"))?;
+    let parts = referenced_parts(&mut zip, path)?;
+    let part = order
+        .checked_sub(1)
+        .and_then(|at| parts.get(at))
+        .ok_or_else(|| format!("{path:?}: no external link {order}"))?;
+    let bytes = entry(&mut zip, part)?.ok_or_else(|| format!("{path:?}: no part {part}"))?;
+    let cached = cached_sheets(&bytes);
+    let mut out = String::from("(:sheets (");
+    for (index, (name, cells)) in cached.sheets.iter().enumerate() {
+        if index > 0 {
+            out.push(' ');
+        }
+        out.push('(');
+        quote(&mut out, name);
+        out.push_str(" (");
+        for (at, cell) in cells.iter().enumerate() {
+            if at > 0 {
+                out.push(' ');
+            }
+            let _ = write!(out, "({} {} {} ", cell.row, cell.col, cell.kind);
+            match cell.kind {
+                'n' => match cell.value.parse::<f64>() {
+                    Ok(number) => {
+                        let _ = write!(out, "{number:?}");
+                    }
+                    Err(_) => quote(&mut out, &cell.value),
+                },
+                'b' => out.push_str(if cell.value == "1" { ":true" } else { ":false" }),
+                _ => quote(&mut out, &cell.value),
+            }
+            out.push(')');
+        }
+        out.push_str("))");
+    }
+    out.push_str("))");
+    Ok(out)
+}
+
+/// Return the parts of the external links of ZIP, in the order it names them.
+fn referenced_parts<R: Read + std::io::Seek>(
+    zip: &mut zip::ZipArchive<R>,
+    path: &Path,
+) -> Result<Vec<String>, String> {
+    let workbook = match entry(zip, WORKBOOK)? {
+        Some(workbook) => workbook,
+        None => return Ok(Vec::new()),
+    };
+    let ids = external_reference_ids(&workbook);
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rels = match entry(zip, WORKBOOK_RELS)? {
+        Some(rels) => rels,
+        None => return Err(format!("{path:?}: no {WORKBOOK_RELS}")),
+    };
+    let relationships = relationships(&rels);
+    ids.iter()
+        .map(|id| {
+            relationships
+                .iter()
+                .find(|(other, kind, _)| other == id && kind == EXTERNAL_LINK_RELATIONSHIP)
+                .map(|(_, _, target)| part_name(target))
+                .ok_or_else(|| format!("{path:?}: no external link for {id}"))
+        })
+        .collect()
+}
+
+/// Return the cached sheets of one external link part.
+///
+/// A sheet's cells stand in a `<sheetData sheetId="N">` of the link's
+/// `<sheetDataSet>`, N counting the `<sheetName>`s from zero, and each is a
+/// `<cell r="C3" t="str"><v>TEXT</v></cell>`, no t meaning a number.  The
+/// link holds the cells it was last told of, the ones read by formulas, and
+/// none of the rest: those are blank here.  A sheet whose `refreshError`
+/// says the refresh failed, and that cached no cell at all, is a sheet the
+/// workbook no longer has, and is left out: Excel reads it as #REF!.
+fn cached_sheets(xml: &[u8]) -> CachedSheets {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut names: Vec<String> = Vec::new();
+    let mut cells: Vec<Vec<Cached>> = Vec::new();
+    // A sheet whose refresh failed and that cached no cell is one the
+    // workbook no longer has: Excel reads it as #REF!.
+    let mut failed: Vec<bool> = Vec::new();
+    let mut sheet: Option<usize> = None;
+    let mut row = 0;
+    let mut col = 0;
+    let mut kind = 'n';
+    let mut text: Option<String> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref event)) | Ok(Event::Empty(ref event)) => {
+                match event.local_name().as_ref() {
+                    b"sheetName" => {
+                        names.push(attribute(event, b"val").unwrap_or_default());
+                    }
+                    b"sheetData" => {
+                        let id = attribute(event, b"sheetId")
+                            .and_then(|id| id.parse().ok())
+                            .unwrap_or(names.len());
+                        sheet = Some(id);
+                        while cells.len() <= id {
+                            cells.push(Vec::new());
+                            failed.push(false);
+                        }
+                        if attribute(event, b"refreshError").as_deref() == Some("1") {
+                            failed[id] = true;
+                        }
+                    }
+                    b"row" => {
+                        row = attribute(event, b"r")
+                            .and_then(|r| r.parse::<usize>().ok())
+                            .map(|r| r.saturating_sub(1))
+                            .unwrap_or(row + 1);
+                        if row == 0 {
+                            row = 1;
+                        }
+                        col = 0;
+                    }
+                    b"cell" => {
+                        if let Some(at) = attribute(event, b"r") {
+                            let (column, number, _, _) = index_from_coordinate(&at);
+                            if let (Some(column), Some(number)) = (column, number) {
+                                col = column as usize - 1;
+                                row = number as usize - 1;
+                            }
+                        }
+                        kind = match attribute(event, b"t").as_deref() {
+                            Some("str") => 's',
+                            Some("b") => 'b',
+                            Some("e") => 'e',
+                            _ => 'n',
+                        };
+                        text = Some(String::new());
+                    }
+                    b"v" => {}
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(ref event)) => {
+                if let Some(value) = text.as_mut() {
+                    if let Ok(decoded) = event.decode() {
+                        match quick_xml::escape::unescape(&decoded) {
+                            Ok(unescaped) => value.push_str(&unescaped),
+                            Err(_) => value.push_str(&decoded),
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(ref event)) => {
+                match event.local_name().as_ref() {
+                    b"cell" => {
+                        let value = text.take().unwrap_or_default();
+                        if let Some(id) = sheet {
+                            if (!value.is_empty() || kind != 'n') && id < cells.len() {
+                                cells[id].push(Cached {
+                                    row,
+                                    col,
+                                    kind,
+                                    value,
+                                });
+                            }
+                        }
+                        col += 1;
+                    }
+                    b"sheetData" => sheet = None,
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    while cells.len() < names.len() {
+        cells.push(Vec::new());
+    }
+    while failed.len() < names.len() {
+        failed.push(false);
+    }
+    CachedSheets {
+        sheets: names
+            .into_iter()
+            .zip(cells)
+            .zip(failed)
+            .filter(|((_, cells), failed)| !(*failed && cells.is_empty()))
+            .map(|((name, cells), _)| (name, cells))
+            .collect(),
+    }
 }

@@ -61,6 +61,12 @@ sheets in order, for a reference through several of them such as
 Sheet1:Sheet3!A1.  Bound by whoever keeps several sheets together;
 without it a reference into another sheet is #REF!.")
 
+(defvar grid-calc-externals t
+  "Non-nil makes a reference into another workbook read what it cached.
+A workbook a sheet is not open from has its values cached in the file
+that reads it.  INDIRECT is the exception: Excel gives #REF! for a
+reference into a workbook that is not open, whatever the file caches.")
+
 (defvar grid-calc-names nil
   "Function that returns the parsed definition of a defined name, or nil.
 A definition is a formula, most often a cell or range reference such as

@@ -26,6 +26,8 @@
 (declare-function grid-table-xlsx-module-prune "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-names "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-links "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-externals "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-external-sheets "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-set-names "grid-table-xlsx-module")
 
 (defcustom grid-table-xlsx-module-file nil
@@ -512,8 +514,15 @@ belong to one sheet, and names grid-table cannot take, are left out."
 A name that belongs to one sheet is kept with that sheet, and the tables
 of its sheets are kept for the formulas that name them; both are read,
 not written, as the file keeps them.  WORKBOOK keeps FILE too, which
-CELL(\"filename\") names."
+CELL(\"filename\") names.  The workbooks FILE links to are read
+from what FILE cached of them, when a formula first reads one."
   (setf (grid-workbook-file workbook) (expand-file-name file))
+  (when-let* ((text (ignore-errors
+                      (grid-table-xlsx-module-externals (expand-file-name file)))))
+    ;; A formula's [N] counts the links as the workbook names them.
+    (when (plist-get (car (read-from-string text)) :links)
+      (setf (grid-workbook-externals workbook)
+            (grid-table-xlsx--external-reader (expand-file-name file)))))
   (let (global local tables)
     (pcase-dolist (`(,name ,definition ,sheet) (grid-table-xlsx--all-names file))
       (if sheet
@@ -525,7 +534,7 @@ CELL(\"filename\") names."
               tables)))
     (setf (grid-workbook-local-names workbook) (nreverse local))
     (setf (grid-workbook-tables workbook) (nreverse tables))
-    (when (or global local tables)
+    (when (or global local tables (grid-workbook-externals workbook))
       (grid-workbook-set-names workbook (nreverse global)))))
 
 (defun grid-table-xlsx--write-names (file names &optional keep)
@@ -799,6 +808,57 @@ the header row."
         (puthash :xlsx-sheet sheet source)
         (puthash :xlsx-skipped-conditionals (cdr rules) source)
         source))))
+
+(defun grid-table-xlsx--external-reader (file)
+  "Return the function that reads the cached sheets of FILE's other workbooks.
+It takes a link number, counted from 1 as the workbook's formulas count
+them, and a sheet name, and returns the read-only model of that sheet, or
+nil when the file has no such link or sheet.  Caches are read when a
+formula first asks for one: a link may hold thousands of cells no formula
+reads."
+  (let ((links (make-hash-table :test 'eql))
+        (models (make-hash-table :test 'equal)))
+    (lambda (link sheet)
+      (let ((cached (if (gethash link links)
+                        (gethash link links)
+                      (puthash link
+                               (condition-case nil
+                                   (when-let* ((text (grid-table-xlsx-module-external-sheets
+                                                      file link)))
+                                     (plist-get (car (read-from-string text))
+                                                :sheets))
+                                 (error nil))
+                               links))))
+        (when-let* ((pair (assoc-string sheet cached t)))
+          (or (gethash (cons link sheet) models)
+              (puthash (cons link sheet)
+                       (grid-table-xlsx--external-model (delq nil (cadr pair)))
+                       models)))))))
+
+(defun grid-table-xlsx--external-model (cells)
+  "Return the model of a sheet of another workbook, of the cached CELLS.
+A cell is (ROW COL KIND VALUE), KIND n a number, s a string, b a boolean
+or e an error, and CELLS is empty when the link cached none of the sheet.
+A cell the link holds no value for is blank."
+  (let ((rows 1) (cols 1))
+    (dolist (cell cells)
+      (setq rows (max rows (1+ (nth 0 cell)))
+            cols (max cols (1+ (nth 1 cell)))))
+    (let ((model (grid-model-create rows cols)))
+      (dolist (cell cells)
+        (when-let* ((entry (grid-model-get-cell model (nth 0 cell) (nth 1 cell))))
+          (set-grid-cell-raw-input
+           entry (grid-table-xlsx--external-raw (nth 2 cell) (nth 3 cell)))))
+      model)))
+
+(defun grid-table-xlsx--external-raw (kind value)
+  "Return the raw input a cached VALUE of KIND is kept as.
+Text is marked with an apostrophe, so that it stays text however it reads."
+  (pcase kind
+    ('n (number-to-string value))
+    ('s (concat "'" value))
+    ('b (if (eq value :true) "TRUE" "FALSE"))
+    (_ value)))
 
 ;;;###autoload
 (defun grid-table-xlsx-create-workbook (file)

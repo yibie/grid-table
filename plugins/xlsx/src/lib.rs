@@ -45,7 +45,7 @@ fn fail(what: impl std::fmt::Debug) -> emacs::Error {
     emacs::Error::msg(format!("{:?}", what))
 }
 
-fn quote(out: &mut String, text: &str) {
+pub(crate) fn quote(out: &mut String, text: &str) {
     out.push('"');
     for ch in text.chars() {
         match ch {
@@ -1215,6 +1215,23 @@ fn names(path: String) -> Result<String> {
     }
     out.push(')');
     Ok(out)
+}
+
+/// Return the links of the workbook at PATH, in the order its formulas
+/// count them from 1, as (:links ((1 "target") ...)).
+#[defun]
+fn externals(path: String) -> Result<String> {
+    links::link_list(Path::new(&path)).map_err(fail)
+}
+
+/// Return the cached sheets of the ORDERth external link of the workbook at
+/// PATH, as (:sheets (("Sheet1" ((ROW COL KIND VALUE) ...)) ...)); KIND is
+/// n, s, b or e.  A sheet holds the cells the link was last told of, and
+/// those it does not hold are blank.  One whose refresh failed and that was
+/// told of no cell at all is left out: Excel reads it as #REF!.
+#[defun]
+fn external_sheets(path: String, order: i64) -> Result<String> {
+    links::link_sheets(Path::new(&path), order.max(0) as usize).map_err(fail)
 }
 
 /// Return the parts a workbook's external links name, in the order its
