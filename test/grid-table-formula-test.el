@@ -4051,6 +4051,20 @@ though = reads a blank as both.  B1 here is empty."
                   ("=SWITCH(TRUE,1,\"a\",\"other\")" . "other")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-poisson-counts-no-event-at-no-mean ()
+  "POISSON.DIST of no mean is 1 for no event and 0 for any other.
+IronCalc's POISSON workbook has POISSON.DIST(1,0,FALSE) as 0 and
+POISSON.DIST(1,0,TRUE) as 1; a count below 0 is #NUM! however small it
+is, and a mean of a million is counted as the chi-square sums it."
+  (dolist (case '(("=POISSON.DIST(1,0,FALSE)" . 0)
+                  ("=POISSON.DIST(0,0,FALSE)" . 1)
+                  ("=POISSON.DIST(1,0,TRUE)" . 1)
+                  ("=POISSON.DIST(-0.000001,5,TRUE)" . "#NUM!")
+                  ("=POISSON.DIST(-1,5,TRUE)" . "#NUM!")
+                  ("=POISSON.DIST(2.9,5,FALSE)" . 0.08422433748856833)
+                  ("=POISSON.DIST(1000000,1000000,TRUE)" . 0.5002659614862837)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

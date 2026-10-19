@@ -43,11 +43,19 @@
 
 (defconst grid-calc--epsilon 1e-15 "When a series or fraction has converged.")
 
+(defun grid-calc--term-limit (a)
+  "Return how many terms a series or fraction of A may take.
+The terms of the incomplete gamma functions are down to nothing after
+about twice the square root of A, but the sum takes more to settle at
+the last digit: ten times that, and no more than it is worth spending
+on a number that big."
+  (min 200000 (max 1000 (ceiling (* 10.0 (sqrt (max a 1.0)))))))
+
 (defun grid-calc--gamma-series (a x)
   "Return P(A, X) by its series, for X below A + 1."
   (let ((sum (/ 1.0 a)) (term (/ 1.0 a)) (n a))
     (catch 'done
-      (dotimes (_ 1000)
+      (dotimes (_ (grid-calc--term-limit a))
         (setq n (1+ n) term (* term (/ x n)) sum (+ sum term))
         (when (< (abs term) (* (abs sum) grid-calc--epsilon)) (throw 'done nil))))
     (* sum (exp (- (* a (log x)) x (grid-calc--log-gamma a))))))
@@ -57,7 +65,7 @@
   (let* ((tiny 1e-300)
          (b (+ x 1.0 (- a))) (c (/ 1.0 tiny)) (d (/ 1.0 b)) (h d))
     (catch 'done
-      (cl-loop for i from 1 to 1000
+      (cl-loop for i from 1 to (grid-calc--term-limit a)
                do (let* ((an (* (- i) (- i a))))
                     (setq b (+ b 2.0)
                           d (+ (* an d) b))
@@ -731,12 +739,14 @@ of TOTAL; or of at most K."
   (grid-calc--require (>= k 0) (<= k n) (<= k found) (<= 0 n total) (<= 0 found total))
   (grid-calc--hypergeometric k n found total))
 
-(grid-calc-define poisson.dist ((x integer) (mean number) (cumulative bool))
-  "The chance of X events where MEAN are expected, or of at most X."
-  (grid-calc--require (>= x 0) (>= mean 0))
-  (cond ((zerop mean) 1.0)
-        (cumulative (grid-calc--gamma-q (+ x 1.0) mean))
-        (t (exp (- (* x (log mean)) mean (grid-calc--log-gamma (+ x 1.0)))))))
+(grid-calc-define poisson.dist ((value number) (mean number) (cumulative bool))
+  "The chance of VALUE events where MEAN are expected, or of at most that.
+VALUE is cut to a whole number, and one below 0 is #NUM! before it is."
+  (grid-calc--require (>= value 0) (>= mean 0))
+  (let ((x (truncate value)))
+    (cond ((zerop mean) (if (or cumulative (zerop x)) 1.0 0.0))
+          (cumulative (grid-calc--gamma-q (+ x 1.0) mean))
+          (t (exp (- (* x (log mean)) mean (grid-calc--log-gamma (+ x 1.0))))))))
 
 (grid-calc-alias poisson poisson.dist)
 
