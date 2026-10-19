@@ -690,7 +690,7 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-c :" grid-table-etaf-delete-note "Delete notes")
     ("C-c C-l" grid-table-etaf-set-link "Add or edit a link")
     ("C-c C-o" grid-table-etaf-open-link "Open the link")
-    ("C-c n d" grid-table-etaf-define-name "Name the selection")
+    ("C-c n d" grid-table-etaf-define-name "Name the selection (C-u: a formula)")
     ("C-c n l" grid-table-etaf-goto-name "Go to a name")
     ("C-c n k" grid-table-etaf-delete-name "Delete a name")
     ("C-c a p" grid-table-etaf-trace-precedents "Trace precedents")
@@ -3582,29 +3582,50 @@ filling are not checked."
                                          (copy-tree names)))
     (grid-table-etaf--bump state)))
 
-(defun grid-table-etaf-define-name (name)
+(defun grid-table-etaf--selection-reference ()
+  "Return the selection as an absolute reference with its sheet, after =."
+  (let* ((source (grid-table-etaf--source (grid-table-etaf--state-or-error)))
+         (range (grid-table-etaf-selection))
+         (cell (lambda (row col)
+                 (format "$%s$%d" (grid-calc-col-number-to-letter col) (1+ row)))))
+    (concat "=" (grid-calc-sheet-prefix (grid-workbook-sheet-name source))
+            (funcall cell (nth 0 range) (nth 1 range))
+            (unless (and (= (nth 0 range) (nth 2 range))
+                         (= (nth 1 range) (nth 3 range)))
+              (concat ":" (funcall cell (nth 2 range) (nth 3 range)))))))
+
+(defun grid-table-etaf-define-name (name &optional definition)
   "Give the selected cell or range the defined NAME.
 Formulas then read it by name, as =SUM(Sales) or =Price*Rate; the name
 follows its cells when lines are inserted or deleted, and a name already
-defined is moved to the selection."
+defined is moved to the selection.
+With a prefix argument, or DEFINITION, the name stands for that formula
+instead, as Excel's Refers to: =Net*(1+Rate) or =LAMBDA(x,x*2); the
+selection is offered as the formula to start from."
   (interactive
-   (list (string-trim (read-string "Name for the selection: "))))
+   (let ((name (string-trim (read-string (if current-prefix-arg "Name: "
+                                           "Name for the selection: ")))))
+     (list name
+           (and current-prefix-arg
+                (read-string (format "%s refers to: " name)
+                             (grid-table-etaf--selection-reference))))))
   (let* ((state (grid-table-etaf--state-or-error))
-         (source (grid-table-etaf--source state))
          (workbook (grid-table--workbook))
-         (range (grid-table-etaf-selection))
-         (cell (lambda (row col)
-                 (format "$%s$%d" (grid-calc-col-number-to-letter col) (1+ row))))
          (reference
-          (concat "=" (grid-calc-sheet-prefix (grid-workbook-sheet-name source))
-                  (funcall cell (nth 0 range) (nth 1 range))
-                  (unless (and (= (nth 0 range) (nth 2 range))
-                               (= (nth 1 range) (nth 3 range)))
-                    (concat ":" (funcall cell (nth 2 range) (nth 3 range))))))
+          (if definition
+              (let ((text (string-trim definition)))
+                (concat "=" (string-remove-prefix "=" text)))
+            (grid-table-etaf--selection-reference)))
          (names (copy-tree (grid-workbook-names workbook)))
          (entry (assoc-string name names t)))
     (when-let* ((problem (grid-calc-name-problem name)))
       (user-error "%s" problem))
+    (when definition
+      (when (string= reference "=")
+        (user-error "A name needs a formula to stand for"))
+      (condition-case err
+          (grid-parser-parse (substring reference 1))
+        (error (user-error "Not a formula: %s" (error-message-string err)))))
     (if entry
         (setcdr entry reference)
       (setq names (append names (list (cons name reference)))))

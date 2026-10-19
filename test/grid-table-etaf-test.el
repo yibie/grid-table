@@ -1649,6 +1649,29 @@ to it."
       (grid-table-etaf-chart-range)
       (should (equal (plist-get (car (grid-table-charts source)) :range) "A1:C6")))))
 
+(ert-deftest grid-table-etaf-name-for-a-formula ()
+  "A name can stand for a formula, as Excel's Refers to: does."
+  (grid-table-etaf-test--with-grid (8 4 100 12)
+    ;; B2 holds 2.
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-define-name "Net")
+    (grid-table-etaf-define-name "Gross" "Net*10")
+    (should (equal (grid-workbook-name-definition (grid-workbook-of source) "Gross")
+                   "=Net*10"))
+    (grid-table-etaf-set-cell 6 0 "=Gross")
+    (grid-table-etaf-set-cell 6 1 "=Twice(Net)")
+    (should (equal (grid-get-computed-value-at source 6 0) 20))
+    (should (equal (grid-get-computed-value-at source 6 1) "#NAME?"))
+    (grid-table-etaf-define-name "Twice" "=LAMBDA(x,x*2)")
+    (should (equal (grid-get-computed-value-at source 6 1) 4))
+    ;; What does not read as a formula is refused, and nothing changes.
+    (should-error (grid-table-etaf-define-name "Broken" "=SUM(") :type 'user-error)
+    (should-error (grid-table-etaf-define-name "Empty" "=") :type 'user-error)
+    (should-not (grid-workbook-name-definition (grid-workbook-of source) "Broken"))
+    ;; Defining it is a step undo takes back.
+    (grid-table-etaf-undo)
+    (should (equal (grid-get-computed-value-at source 6 1) "#NAME?"))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
