@@ -3942,6 +3942,21 @@ places sheet, where every one of them is a shared string."
                   ("=DEC2BIN(5,0)" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-trunc-at-places-a-float-cannot-hold ()
+  "TRUNC cuts a number off at places a float cannot count to.
+IronCalc's MROUND_TRUNC_INT workbook cuts 123456789 off at 1000 places,
+1E+100 at 1E+50 and 5 at 9.99999E+307: none of them moves.  Cutting 5
+that far left of the point leaves none of it."
+  (dolist (case '(("=TRUNC(123456789,1000)" . 123456789)
+                  ("=TRUNC(1E+100,1E+50)" . 1e+100)
+                  ("=TRUNC(9.99999E+307,5)" . 9.99999e+307)
+                  ("=TRUNC(5,9.99999E+307)" . 5)
+                  ("=TRUNC(5,-9.99999E+307)" . 0)
+                  ("=TRUNC(2.55,1)" . 2.5)
+                  ("=TRUNC(-2.55,1)" . -2.5)
+                  ("=TRUNC(1.9,1.9)" . 1.9)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

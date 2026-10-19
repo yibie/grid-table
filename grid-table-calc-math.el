@@ -35,16 +35,24 @@ sees what was written rather than the nearest binary fraction."
 HOW is `nearest', halves going away from zero, `up', away from zero, or
 `down', toward zero.  Negative DIGITS rounds left of the point."
   (let* ((scale (expt 10.0 (abs digits)))
-         (scaled (grid-calc--snap (if (>= digits 0) (* number scale)
-                                     (/ number scale))))
-         (magnitude (abs scaled))
-         (rounded (pcase how
-                    ('nearest (ffloor (+ magnitude 0.5)))
-                    ('up (fceiling magnitude))
-                    ('down (ffloor magnitude))))
-         (signed (if (< scaled 0) (- rounded) rounded)))
-    (grid-calc--tidy-number
-     (grid-calc--snap (if (>= digits 0) (/ signed scale) (* signed scale))))))
+         (scaled (if (>= digits 0) (* number scale) (/ number scale))))
+    (cond
+     ;; DIGITS past what a float holds: to the right of the point the
+     ;; number has no digits to cut off, to the left it has none left.
+     ((not (< (abs scale) 1.0e+INF)) (if (< digits 0) 0 number))
+     ;; The same for a number too big to scale: it has no digits at the
+     ;; places wanted either.
+     ((not (< (abs scaled) 1.0e+INF)) number)
+     (t (let* ((scaled (grid-calc--snap scaled))
+               (magnitude (abs scaled))
+               (rounded (pcase how
+                          ('nearest (ffloor (+ magnitude 0.5)))
+                          ('up (fceiling magnitude))
+                          ('down (ffloor magnitude))))
+               (signed (if (< scaled 0) (- rounded) rounded)))
+          (grid-calc--tidy-number
+           (grid-calc--snap (if (>= digits 0) (/ signed scale)
+                              (* signed scale)))))))))
 
 (grid-calc-define round ((number number) &optional (digits integer 0))
   "NUMBER rounded to DIGITS places, halves away from zero."
@@ -58,9 +66,11 @@ HOW is `nearest', halves going away from zero, `up', away from zero, or
   "NUMBER rounded toward zero to DIGITS places."
   (grid-calc--round-to number digits 'down))
 
-(grid-calc-define trunc ((number number) &optional (digits integer 0))
-  "NUMBER with its digits past DIGITS places cut off."
-  (grid-calc--round-to number digits 'down))
+(grid-calc-define trunc ((number number) &optional (digits number 0))
+  "NUMBER with its digits past DIGITS places cut off.
+DIGITS is cut to a whole number, as ROUND cuts it, and one too big for
+a float to count leaves the number as it is."
+  (grid-calc--round-to number (truncate digits) 'down))
 
 (grid-calc-define int ((number number))
   "NUMBER rounded down to a whole number."
