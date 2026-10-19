@@ -4276,6 +4276,16 @@ Excel writes 19 October 2026 under \"mmm d, yyyy\" as Oct 19, 2026."
                   ("=TEXT(0.5,\"h \"\"h\"\", m \"\"min\"\"\")" . "12 h, 0 min")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-text-scales-by-each-comma-after-the-point ()
+  "Each comma at the end of a number code's fraction divides by a thousand.
+Excel writes 1234567 under \"0.0,, \"\"M\"\"\" as 1.2 M, in millions."
+  (dolist (case '(("=TEXT(1234567,\"0.0,,\")" . "1.2")
+                  ("=TEXT(1234567,\"0.0,, \"\"M\"\"\")" . "1.2 M")
+                  ("=TEXT(1234567890,\"0.00,,,\")" . "1.23")
+                  ("=TEXT(1234567,\"0.0,\")" . "1234.6")
+                  ("=TEXT(1234567,\"#,##0,,\")" . "1")))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with

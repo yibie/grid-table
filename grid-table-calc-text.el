@@ -1011,7 +1011,8 @@ the whole number divides by a thousand; any other is written as one."
                          -1)))
     (cl-loop for tok in tokens
              for i from 0
-             collect
+             for role = nil then this
+             for this =
              (when (eq (car tok) 'comma)
                (let ((before (and (> i 0) (nth (1- i) tokens)))
                      (after (nth (1+ i) tokens))
@@ -1027,10 +1028,15 @@ the whole number divides by a thousand; any other is written as one."
                   ((and (< i whole-end) (> i last-place)
                         (cl-some #'grid-calc--digit-p (cl-subseq tokens 0 i)))
                    'scale)
+                  ;; So does one right after such a comma past the point,
+                  ;; as 0.0,, does.
+                  ((and (eq role 'scale) (>= i whole-end) (not digit-after-in-part))
+                   'scale)
                   ((not (and before (grid-calc--digit-p before))) 'literal)
                   ((and (< i whole-end) (grid-calc--digit-p after)) 'group)
                   ((and (>= i whole-end) (not digit-after-in-part)) 'scale)
-                  (t 'ignore)))))))
+                  (t 'ignore))))
+             collect this)))
 
 (defun grid-calc--fifteen-digits (number decimals)
   "Return NUMBER written with DECIMALS places, as Excel writes it.
