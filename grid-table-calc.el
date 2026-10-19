@@ -1788,12 +1788,16 @@ of one row or column stands for each row or column."
       (grid-calc-array
        rows cols
        (lambda (row col)
-         (apply function
-                (mapcar (lambda (value)
-                          (if (grid-calc-array-p value)
-                              (grid-calc-aref value row col)
-                            value))
-                        values)))))))
+         ;; A loop, not mapcar over a lambda: that would make a closure
+         ;; for each element, which over a whole column is most of what
+         ;; an edit allocates.
+         (let ((arguments '()))
+           (dolist (value values)
+             (push (if (grid-calc-array-p value)
+                       (grid-calc-aref value row col)
+                     value)
+                   arguments))
+           (apply function (nreverse arguments))))))))
 
 (defmacro grid-calc--catching (&rest body)
   "Run BODY and return its value, or the error value it signaled."
