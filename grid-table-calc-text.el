@@ -743,8 +743,9 @@ A token is (lit TEXT), (digit CHAR), (point), (comma), (percent),
      do
      (pcase token
        (`(lit ,text) (push text out))
-       ;; In a date a slash is only a slash.
+       ;; In a date a slash is only a slash, and a comma only a comma.
        ('(slash) (push "/" out))
+       ('(comma) (push "," out))
        (`(point)
         (if fraction-digits
             (progn

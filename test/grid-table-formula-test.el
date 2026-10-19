@@ -4265,6 +4265,17 @@ IronCalc's SUMSQ workbook has the square of 2E+154 as #NUM!, where
                   ("=SUMSQ(-3,4)" . 25)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-text-writes-a-date-code-comma ()
+  "A comma in a date or time code is written as it is, as Excel does.
+Excel writes 19 October 2026 under \"mmm d, yyyy\" as Oct 19, 2026."
+  (dolist (case '(("=TEXT(DATE(2026,10,19),\"mmm d, yyyy\")" . "Oct 19, 2026")
+                  ("=TEXT(DATE(2026,10,19),\"dddd, mmmm d, yyyy\")"
+                   . "Monday, October 19, 2026")
+                  ("=TEXT(DATE(2026,10,19),\"[$-409]mmmm d, yyyy\")"
+                   . "October 19, 2026")
+                  ("=TEXT(0.5,\"h \"\"h\"\", m \"\"min\"\"\")" . "12 h, 0 min")))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with
