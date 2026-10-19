@@ -18,12 +18,14 @@
 ;; small sheet, A1:B3 numbers, C1 text, D1 TRUE and E1 #N/A, lists two
 ;; more sheets, one whose refresh failed and one it read as empty, and
 ;; keeps five names, one of a cell, one of a range, one of a sheet, one
-;; defined as #REF! and one with no definition at all.  The workbook's
+;; defined as #REF! and one with no definition at all, and the workbook
+;; itself a name of two cells added together.  The workbook's
 ;; Sheet1 holds in A1 to A25 the formulas that read all of it: cells,
 ;; ranges, a whole column, a VLOOKUP, a name of this workbook pointing
 ;; into it, sheets and links it has not, INDIRECT naming it, what it
 ;; cached as text, TRUE, an error and a blank, and those names, read
-;; through [1]!Name, [1]Sheet1!Name, [0]!Name and a table of it.
+;; through [1]!Name, [1]Sheet1!Name, [0]!Name and a table of it, and in
+;; A26 the name pair the workbook keeps.
 ;;
 ;; test/fixtures/compat.xlsx began as a workbook grid-table wrote and was
 ;; then edited by hand into shapes other writers produce and umya used to
@@ -997,6 +999,28 @@ and a cell it holds no value for is blank."
   (should (equal (grid-table-xlsx--external-raw 'b :false) "FALSE"))
   (should (equal (grid-table-xlsx--external-raw 'b :true) "TRUE"))
   (should (equal (grid-table-xlsx--external-raw 's "=1") "'=1")))
+
+(ert-deftest grid-table-xlsx-test-keeps-a-name-of-two-references ()
+  "A name working two references out is read and written as it stands.
+It is kept whole rather than parsed into one address, which would read
+Sheet1!$A$1+Sheet1!$A$2 as pointing into a sheet named
+\"Sheet1!$A$1+Sheet1\"; the test/fixtures/links.xlsx name pair is
+Sheet1!$A$1+Sheet1!$A$2 and A26 is 37 by it."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (copy-file grid-table-xlsx-test--links file)
+    (let ((workbook (grid-table-xlsx-create-workbook file)))
+      (should (equal (cdr (assoc-string "pair" (grid-workbook-names workbook) t))
+                     "=Sheet1!$A$1+Sheet1!$A$2"))
+      (should (equal (grid-get-computed-value-at
+                      (grid-workbook-sheet workbook "Sheet1") 25 0)
+                     37)))
+    ;; Written back, the name is still the same two references.
+    (grid-table-xlsx-write-workbook (grid-table-xlsx-create-workbook file) file)
+    (should (equal (cdr (assoc-string "pair" (grid-workbook-names
+                                              (grid-table-xlsx-create-workbook file))
+                                      t))
+                   "=Sheet1!$A$1+Sheet1!$A$2"))))
 
 (provide 'grid-table-xlsx-test)
 

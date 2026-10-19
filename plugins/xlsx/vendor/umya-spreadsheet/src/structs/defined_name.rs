@@ -77,7 +77,11 @@ impl DefinedName {
         let list = Self::split_str(value.as_str());
         // Only a list of addresses is kept as addresses; anything else,
         // as {1,2;3,4} or IF(A1,"a","b"), is kept whole, as written.
-        if !list.is_empty() && list.iter().all(|v| is_address(v)) {
+        // grid-table: an address names one sheet and works nothing out,
+        // where Sheet1!$H$5+Sheet1!$J$1 does; kept as an address, that
+        // would be read back as one pointing into the sheet
+        // "Sheet1!$H$5+Sheet1".
+        if !list.is_empty() && list.iter().all(|v| is_address(v) && Self::one_address(v)) {
             for v in &list {
                 self.add_address(v);
             }
@@ -152,6 +156,24 @@ impl DefinedName {
     #[inline]
     pub fn set_hidden(&mut self, value: bool) {
         self.hidden.set_value(value);
+    }
+
+    /// Return true when TEXT names one address, of one sheet, working
+    /// nothing out: at most one !, and no operator or literal of its own.
+    fn one_address(text: &str) -> bool {
+        let mut quoted = false;
+        let mut bangs = 0;
+        for ch in text.chars() {
+            match ch {
+                '\'' => quoted = !quoted,
+                '!' if !quoted => bangs += 1,
+                '+' | '-' | '*' | '/' | '(' | ')' | '&' | '<' | '>' | '=' | '"' if !quoted => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        bangs <= 1
     }
 
     fn split_str<S: Into<String>>(value: S) -> Vec<String> {
