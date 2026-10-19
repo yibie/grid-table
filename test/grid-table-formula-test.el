@@ -3900,6 +3900,25 @@ Excel has it in the forum-mso-en4-134670 workbook."
   (let ((model (grid-model-create 1 2 '(("FALSE" "=SUM(FREQUENCY(A1,{1,2}))")))))
     (should (equal (grid-model-get-computed-value model 0 1) 0))))
 
+(ert-deftest grid-table-formula-binomial-chances-come-from-the-beta-function ()
+  "Over a thousand chances, BINOM.DIST counts them with the incomplete beta function.
+The chances of 0 to K successes are I_{1-P}(N-K, K+1); summing a chance
+at a time took too long there.  A thousand or fewer are still summed,
+so what they gave before stays exact."
+  (dolist (case '(("=BINOM.DIST(5,10,0.5,TRUE)" . 0.623046875)
+                  ("=BINOM.DIST.RANGE(10,0.5,2,3)" . 0.1611328125)
+                  ("=NEGBINOM.DIST(4,3,0.5,TRUE)" . 0.7734375)
+                  ("=NEGBINOM.DIST(0,1,0.5,TRUE)" . 0.5)
+                  ("=BINOM.INV(10,0.5,0.5)" . 5)
+                  ("=BINOM.INV(1000000,0.5,0.5)" . 500000)
+                  ("=BINOM.INV(1000,0.1,0.000000001)" . 48)))
+    (grid-table-formula-test--should-be case))
+  ;; Past a thousand, the closed form gives what summing gives.
+  (dolist (case '((1500 3000 0.5) (2000 100000 0.02) (5000 6000 0.83)))
+    (let* ((k (nth 0 case)) (n (nth 1 case)) (p (nth 2 case))
+           (sum (cl-loop for i from 0 to k sum (grid-calc--binomial-pmf i n p))))
+      (should (< (abs (- sum (grid-calc--binomial-cdf k n p))) (* 1e-10 sum))))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

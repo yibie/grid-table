@@ -628,10 +628,24 @@ much, by the F test.  An error in either is given, those of LEFT first."
                    (* (- n k) (log (- 1 p))))))))
 
 (defun grid-calc--binomial-cdf (k n p)
-  "Return the chance of at most K successes in N tries of chance P."
+  "Return the chance of at most K successes in N tries of chance P.
+The chances of 0 to K successes are the regularized incomplete beta
+function I_{1-P}(N-K, K+1), the same sum closed.  Its front is the chance
+of exactly K successes times P, which is what it is worked out from: a
+difference of log gamma functions of N would lose digits where N is large."
   (cond ((>= k n) 1.0)
         ((< k 0) 0.0)
-        (t (min 1.0 (cl-loop for i from 0 to k sum (grid-calc--binomial-pmf i n p))))))
+        ((= p 0) 1.0)
+        ;; A thousand chances or fewer are summed, as exact as before;
+        ;; the closed form is for more, which summing takes too long over.
+        ((<= k 1000)
+         (min 1.0 (cl-loop for i from 0 to k sum (grid-calc--binomial-pmf i n p))))
+        (t (let* ((a (- n k)) (b (1+ k)) (x (- 1.0 p))
+                  (pmf (grid-calc--binomial-pmf k n p)))
+             (if (< x (/ (+ a 1.0) (+ a b 2.0)))
+                 (min 1.0 (* pmf p (grid-calc--beta-fraction a b x)))
+               (max 0.0 (- 1.0 (/ (* pmf p a (grid-calc--beta-fraction b a p))
+                                   b))))))))
 
 (grid-calc-define binom.dist ((successes integer) (trials integer) (p number)
                               (cumulative bool))
@@ -648,18 +662,29 @@ that many."
   "The chance of LOW to HIGH successes in TRIALS tries of chance P."
   (let ((high (or high low)))
     (grid-calc--require (<= 0 low high trials) (<= 0 p 1))
-    (cl-loop for k from low to high sum (grid-calc--binomial-pmf k trials p))))
+    ;; The chances of up to HIGH successes less those of up to LOW-1 are
+    ;; the chances of LOW to HIGH.  A few chances, or a range that runs
+    ;; into either end, are summed instead: the two then stand so close
+    ;; that taking one from the other loses digits.
+    (if (or (<= (- high low) 1000) (< low 32) (>= high (- trials 32)))
+        (cl-loop for k from low to high sum (grid-calc--binomial-pmf k trials p))
+      (- (grid-calc--binomial-cdf high trials p)
+         (grid-calc--binomial-cdf (1- low) trials p)))))
 
 (grid-calc-define binom.inv ((trials integer) (p number) (alpha number))
   "The fewest successes in TRIALS tries of chance P whose chance of at
 most that many is ALPHA or more."
   (grid-calc--require (>= trials 0) (<= 0 p) (< p 1) (< 0 alpha 1))
-  (let ((sum 0.0) (k 0))
-    (while (and (<= k trials)
-                (< (setq sum (+ sum (grid-calc--binomial-pmf k trials p)))
-                   (- alpha 1e-15)))
-      (setq k (1+ k)))
-    (min k trials)))
+  ;; The chance of at most K successes only grows with K, so the fewest K
+  ;; whose chance is ALPHA or more is what bisecting finds, in as many
+  ;; steps as TRIALS has digits.
+  (let ((low 0) (high trials))
+    (while (< low high)
+      (let ((middle (/ (+ low high) 2)))
+        (if (>= (grid-calc--binomial-cdf middle trials p) (- alpha 1e-15))
+            (setq high middle)
+          (setq low (1+ middle)))))
+    low))
 
 (grid-calc-alias critbinom binom.inv)
 
@@ -670,7 +695,12 @@ of chance P; or of at most that many."
   (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (< p 1))
   (cl-flet ((pmf (f) (exp (+ (grid-calc--log-choose (+ f successes -1) (1- successes))
                              (* successes (log p)) (* f (log (- 1 p)))))))
-    (if cumulative (cl-loop for f from 0 to failures sum (pmf f))
+    ;; The chances of 0 to FAILURES failures are the regularized incomplete
+    ;; beta function I_P(SUCCESSES, FAILURES+1), the same sum closed.  A
+    ;; thousand or fewer are summed, as exact as before.
+    (if cumulative (if (<= failures 1000)
+                       (cl-loop for f from 0 to failures sum (pmf f))
+                     (grid-calc--beta-i p successes (1+ failures)))
       (pmf failures))))
 
 (grid-calc-define negbinomdist ((failures integer) (successes integer) (p number))
