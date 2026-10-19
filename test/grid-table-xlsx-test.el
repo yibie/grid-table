@@ -682,7 +682,9 @@ XML reads it so, as Excel does a formula's text and what it gave."
            (workbook (grid-workbook-create (list (cons "My Data" data))))
            (charts (list (list :anchor '(4 . 0) :size '(51 . 15) :type 'column
                                :range "A1:E3" :by 'rows :title "Sales")
-                         (list :anchor '(4 . 7) :size '(42 . 12) :type 'line
+                         ;; Within its cell a chart keeps its place.
+                         (list :anchor '(4 . 7) :offset '(3.25 . 0)
+                               :size '(42 . 12) :type 'line
                                :range "A1:E3" :by 'columns :title nil)
                          (list :anchor '(20 . 0) :size '(42 . 12) :type 'pie
                                :range "A1:E2" :by 'rows :title "North")))
@@ -695,6 +697,12 @@ XML reads it so, as Excel does a formula's text and what it gave."
       (let ((back (grid-workbook-sheet (grid-table-xlsx-create-workbook file)
                                        "My Data")))
         (should (equal (grid-table-charts back) written))
+        ;; In the file it stands as far into its column, in EMU.
+        (should (string-match-p
+                 "<xdr:colOff>216694</xdr:colOff>"
+                 (shell-command-to-string
+                  (format "unzip -p %s 'xl/drawings/*.xml'"
+                          (shell-quote-argument file)))))
         (should (equal (mapcar (lambda (chart) (grid-table-chart-data back chart))
                                written)
                        (mapcar (lambda (chart) (grid-table-chart-data data chart))

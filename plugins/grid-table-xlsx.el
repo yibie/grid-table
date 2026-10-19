@@ -57,6 +57,11 @@ prebuilt grid-table-xlsx-module file next to this plugin."
 (defconst grid-table-xlsx--default-width 8.43
   "Width in characters of a column a workbook has not sized.")
 
+(defconst grid-table-xlsx--emu-per-char 66675
+  "EMU in a character of a column's width.
+A workbook measures a drawing's place within a cell in EMU, 9525 to a
+pixel, and a character of the default font is 7 pixels wide.")
+
 (defconst grid-table-xlsx--number-regexp
   "\\`[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
   "Matches the text of a number.")
@@ -565,7 +570,9 @@ With KEEP, the names FILE has besides are kept; otherwise they go."
 
 (defun grid-table-xlsx--chart (source entry)
   "Return the floating chart of SOURCE that ENTRY, read from a workbook, is.
-ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL REFS NAMES), each
+ENTRY is (TYPE TITLE FROM-ROW FROM-COL TO-ROW TO-COL REFS NAMES
+FROM-OFFSET TO-OFFSET), the offsets how far into their columns the
+corners sit in EMU, each
 of REFS (ROLE RANGE) with ROLE v for values, x for x values, c for
 categories and n for a series name, and NAMES each series' name: nil,
 its cells or (text TEXT).  The chart draws the block covering the
@@ -580,7 +587,18 @@ Return nil for an ENTRY that reads no cells."
                                            (cons (car ref) box)))
                                        refs)))
                (boxes (mapcar #'cdr refs))
-               (widths (grid-get-column-widths source)))
+               (widths (grid-get-column-widths source))
+               (width (lambda (col)
+                        (or (and widths (gethash col widths))
+                            grid-table-xlsx--default-width)))
+               (chars (lambda (emu)
+                        (/ (or (and (natnump emu) emu) 0)
+                           (float grid-table-xlsx--emu-per-char))))
+               (to-offset (funcall chars (nth 2 given)))
+               (offset (/ (round (* 100 (min (funcall chars (nth 1 given))
+                                             (funcall width left))))
+                          100.0))
+               (offset (if (< offset (funcall width left)) offset 0)))
     (when (and boxes (assq (intern type) grid-chart-svg-types))
       (let* ((first (or (cdr (assq 'v refs)) (car boxes)))
              (box (list (apply #'min (mapcar (lambda (b) (nth 0 b)) boxes))
@@ -632,18 +650,26 @@ Return nil for an ENTRY that reads no cells."
                   (chart (grid-table-xlsx--chart
                           source
                           (list type title top left bottom right
-                                (cl-remove 'n (nth 6 entry) :key #'car))))
+                                (cl-remove 'n (nth 6 entry) :key #'car)
+                                nil (nth 1 given) (nth 2 given))))
                   ;; One for each series the block gives, or the chart
                   ;; holds series of its own that the block cannot.
                   ((= (length (car given)) (grid-table-xlsx--series-count chart))))
             (append chart (list :series-names (car given)))
         (append
-         (list :anchor (cons top left)
+         (list :anchor (cons top left))
+         ;; Within its first column, to a hundredth of a character.
+         (and (> offset 0) (list :offset (cons offset 0)))
+         (list
                ;; Columns count their width in characters; a row is a line.
-               :size (cons (max 8 (min 999 (round (cl-loop
-                                                   for col from left below (max right (1+ left))
-                                                   sum (or (and widths (gethash col widths))
-                                                           grid-table-xlsx--default-width)))))
+               :size (cons (max 8 (min 999 (round (if (> right left)
+                                                       (- (+ (cl-loop for col from left below right
+                                                                      sum (funcall width col))
+                                                             to-offset)
+                                                          offset)
+                                                     (if (> to-offset offset)
+                                                         (- to-offset offset)
+                                                       (funcall width left))))))
                            (max 4 (min 999 (- bottom top))))
                :type (intern type)
                :range (apply #'grid-chart-svg-range-text box)
@@ -1095,7 +1121,8 @@ is its record kind, as `grid-table-xlsx--array-kind' gives it."
   "Return the record for floating CHART of SOURCE, written as sheet SHEET.
 Its data ranges name SHEET, so the workbook's chart reads the cells it
 was drawn from; its size in characters and lines becomes the columns
-and rows it covers."
+and rows it covers, and its :offset how far into its first column it
+starts."
   (let* ((data (grid-table-chart-data source chart))
          (type (plist-get chart :type))
          (prefix (grid-calc-sheet-prefix sheet))
@@ -1109,16 +1136,22 @@ and rows it covers."
          (anchor (plist-get chart :anchor))
          (size (plist-get chart :size))
          (widths (grid-get-column-widths source))
-         ;; The columns the chart covers, to the nearest whole one, so
-         ;; that reading it back gives the same columns again.
-         (right (let ((col (cdr anchor)) (room (car size)))
+         (offset (or (car (plist-get chart :offset)) 0))
+         ;; The column the chart's right edge reaches and how far into
+         ;; it, in EMU, from where it starts within its first column.
+         (right (let ((col (cdr anchor)) (room (+ offset (car size))))
                   (while (let ((width (or (and widths (gethash col widths))
                                           grid-table-xlsx--default-width)))
-                           (when (> room (/ width 2.0))
+                           (when (and (> width 0) (>= room width))
                              (setq room (- room width)
                                    col (1+ col))))
                     nil)
-                  (max col (1+ (cdr anchor)))))
+                  (cons col (round (* room grid-table-xlsx--emu-per-char)))))
+         (corner (lambda (row col emu)
+                   (let ((cell (grid-table-xlsx--cell-name row col)))
+                     (if (> emu 0)
+                         (format "%s%s%d" cell grid-table-xlsx--item emu)
+                       cell))))
          (refs (pcase type
                  ;; Labels and values in turn; with no labels the values
                  ;; stand in for them.
@@ -1135,8 +1168,9 @@ and rows it covers."
        #'identity
        (append
         (list "G" (symbol-name type)
-              (grid-table-xlsx--cell-name (car anchor) (cdr anchor))
-              (grid-table-xlsx--cell-name (+ (car anchor) (cdr size)) right)
+              (funcall corner (car anchor) (cdr anchor)
+                       (round (* offset grid-table-xlsx--emu-per-char)))
+              (funcall corner (+ (car anchor) (cdr size)) (car right) (cdr right))
               (grid-table-xlsx--clean (or (plist-get chart :title) ""))
               (let ((given (plist-get chart :series-names)))
                 (if (and given (= (length given) (length ranges)))

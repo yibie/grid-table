@@ -325,7 +325,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
                 }
                 out.push(' ');
             }
-            out.push_str("))");
+            write!(out, ") {} {})", info.from_off, info.to_off)?;
         }
     }
     out.push(')');
@@ -883,6 +883,9 @@ struct ChartInfo {
     /// The zero-based (ROW, COL) of the cells the chart's corners sit on
     from: (u32, u32),
     to: (u32, u32),
+    /// How far into those cells' columns the corners sit, in EMU
+    from_off: i32,
+    to_off: i32,
     /// The ranges the chart reads, each with what it holds: v values,
     /// x the x values of a scatter chart, c categories, n a series name
     refs: Vec<(char, String)>,
@@ -1005,6 +1008,8 @@ fn chart_info(chart: &Chart, sheet: &str) -> Option<ChartInfo> {
         title,
         from: (anchor.from_marker().row(), anchor.from_marker().col()),
         to: (anchor.to_marker().row(), anchor.to_marker().col()),
+        from_off: anchor.from_marker().col_off(),
+        to_off: anchor.to_marker().col_off(),
         refs,
         names,
     })
@@ -1048,7 +1053,8 @@ fn chart_sheets(chart: &Chart) -> Vec<String> {
 /// Build the chart a G record describes.
 ///
 /// FIELDS are: G, the grid-table type, the cells its top left and bottom
-/// right corners sit on, its title, the cells naming the series (items
+/// right corners sit on, each with how far into its column the corner
+/// sits in EMU as a second item when it is not on the edge, its title, the cells naming the series (items
 /// of a list) and the range of the category labels, then the data ranges as the
 /// chart type takes
 /// them: one per series, or x and y ranges in turn for a scatter chart,
@@ -1064,10 +1070,17 @@ fn chart(fields: &[&str]) -> Result<Chart> {
         "scatter" => ChartType::ScatterChart,
         other => return Err(fail(format!("unknown chart type {}", other))),
     };
-    let mut from = MarkerType::default();
-    from.set_coordinate(fields[2]);
-    let mut to = MarkerType::default();
-    to.set_coordinate(fields[3]);
+    let marker = |field: &str| -> Result<MarkerType> {
+        let mut items = field.split(ITEM);
+        let mut marker = MarkerType::default();
+        marker.set_coordinate(items.next().unwrap_or(""));
+        if let Some(offset) = items.next() {
+            marker.set_col_off(offset.parse()?);
+        }
+        Ok(marker)
+    };
+    let from = marker(fields[2])?;
+    let to = marker(fields[3])?;
     let mut chart = Chart::default();
     chart.new_chart(&chart_type, from, to, fields[7..].to_vec());
     let stacked = kind.ends_with("stacked");
