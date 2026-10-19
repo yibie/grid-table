@@ -363,10 +363,12 @@ SIGMA is the standard deviation, by default that of the sample."
                         value)))))
 
 (defun grid-calc--gamma-density (x alpha beta)
-  "Return the gamma density of ALPHA and BETA at X."
+  "Return the gamma density of ALPHA and BETA at X.
+At X 0 it is endless when ALPHA is below 1, which Excel gives as #NUM!."
   (cond ((> x 0)
          (exp (- (* (- alpha 1) (log x)) (/ x (float beta)) (grid-calc--log-gamma alpha)
                  (* alpha (log beta)))))
+        ((and (= x 0) (< alpha 1)) (grid-calc-raise "#NUM!"))
         ((and (= x 0) (= alpha 1)) (/ 1.0 beta))
         (t 0.0)))
 

@@ -4065,6 +4065,16 @@ is, and a mean of a million is counted as the chi-square sums it."
                   ("=POISSON.DIST(1000000,1000000,TRUE)" . 0.5002659614862837)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-gamma-density-ends-at-zero ()
+  "A gamma density endless at 0 is #NUM!, as Excel has it.
+IronCalc's GAMMA workbook has GAMMA.DIST(0,0.5,1,FALSE) as #NUM!, and
+the GAMMA.INV of that error follows it."
+  (dolist (case '(("=GAMMA.DIST(0,0.5,1,FALSE)" . "#NUM!")
+                  ("=GAMMA.DIST(0,1,1,FALSE)" . 1)
+                  ("=GAMMA.DIST(0,2,1,FALSE)" . 0)
+                  ("=GAMMA.INV(0,0.5,1)" . 0)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
