@@ -236,8 +236,25 @@ Covered cells and horizontally merged anchors do not widen a column."
     (setf (grid-table-etaf--state-widths state) widths)))
 
 (defun grid-table-etaf--row-header-width (source)
-  "Return the content width of SOURCE's row number column."
-  (max 3 (1+ (length (number-to-string (grid-get-row-count source))))))
+  "Return the content width of SOURCE's row number column.
+It holds the number of the last row the window can reach, which past
+the sheet's last row is an empty one's."
+  (let ((reach (grid-get-row-count source)))
+    (when-let* ((state grid-table-etaf--state)
+                ((eq (grid-table-etaf--source state) source)))
+      (setq reach (max reach
+                       (1+ (car (etaf-value (grid-table-etaf--state-cursor state))))
+                       (+ (etaf-value (grid-table-etaf--state-top state))
+                          (cdr (grid-table-etaf--viewport state))))))
+    (max 3 (1+ (length (number-to-string reach))))))
+
+(defun grid-table-etaf--max-rows ()
+  "Return the most rows a sheet may have, as Excel's."
+  (car grid-calc-sheet-limit))
+
+(defun grid-table-etaf--max-cols ()
+  "Return the most columns a sheet may have, as Excel's."
+  (cdr grid-calc-sheet-limit))
 
 (defun grid-table-etaf--visible-cols (state left)
   "Return the model columns STATE shows when the first one is LEFT."
@@ -268,9 +285,12 @@ Covered cells and horizontally merged anchors do not widen a column."
         (when (grid-table-etaf--col-shown-p state kept)
           (push kept result))
         (setq kept (1+ kept))))
-    (while (and (< col cols)
+    ;; Past the last column the window goes on over empty columns, as a
+    ;; spreadsheet's does.
+    (while (and (< col (grid-table-etaf--max-cols))
                 (or (not (grid-table-etaf--col-shown-p state col))
-                    (let ((need (1+ (* char (+ 2 (aref widths col))))))
+                    (let ((need (1+ (* char (+ 2 (grid-table-etaf--col-chars
+                                                  state col))))))
                       (when (or (not scrolled) (<= need budget))
                         (setq budget (- budget need))
                         t))))
@@ -302,7 +322,7 @@ FORMAT is the format the value is shown with."
               (max lines
                    (grid-table-etaf--cell-lines
                     (grid-get-computed-value-at source row col)
-                    (aref widths col)
+                    (grid-table-etaf--col-chars state col)
                     (grid-table-cell-format source row col))))))
     lines))
 
@@ -321,30 +341,43 @@ FORMAT is the format the value is shown with."
 
 (defun grid-table-etaf--row-at (state position)
   "Return the model row at POSITION among the rows STATE shows.
-POSITION is clamped to the shown rows."
+Past the shown rows come the empty rows below the sheet's last row, up
+to the most a sheet may have; POSITION is clamped to those."
   (let* ((shown (grid-table-etaf--state-shown state))
-         (position (max 0 (min (1- (grid-table-etaf--row-count state))
+         (count (grid-table-etaf--row-count state))
+         (rows (grid-get-row-count (grid-table-etaf--source state)))
+         (position (max 0 (min (+ count (- (grid-table-etaf--max-rows) rows) -1)
                                position))))
-    (if shown (aref shown position) position)))
+    (cond ((>= position count) (+ rows (- position count)))
+          (shown (aref shown position))
+          (t position))))
 
 (defun grid-table-etaf--row-position (state row)
   "Return the position of model ROW among the rows STATE shows.
 A filtered-out row gives the position of the next shown row, or of the
 last one when none follows."
-  (let ((shown (grid-table-etaf--state-shown state)))
-    (if (null shown)
-        (max 0 (min (1- (grid-table-etaf--row-count state)) row))
+  (let ((shown (grid-table-etaf--state-shown state))
+        (rows (grid-get-row-count (grid-table-etaf--source state))))
+    (cond
+     ;; A row below the sheet's last comes after every shown row.
+     ((>= row rows)
+      (+ (grid-table-etaf--row-count state)
+         (- (min row (1- (grid-table-etaf--max-rows))) rows)))
+     ((null shown) (max 0 row))
+     (t
       (let ((low 0) (high (length shown)))
         (while (< low high)
           (let ((middle (/ (+ low high) 2)))
             (if (< (aref shown middle) row)
                 (setq low (1+ middle))
               (setq high middle))))
-        (min low (1- (length shown)))))))
+        (min low (1- (length shown))))))))
 
 (defun grid-table-etaf--row-shown-p (state row)
-  "Return non-nil when model ROW passes STATE's filters."
+  "Return non-nil when model ROW passes STATE's filters.
+An empty row below the sheet's last is shown."
   (or (null (grid-table-etaf--state-shown state))
+      (>= row (grid-get-row-count (grid-table-etaf--source state)))
       (= (grid-table-etaf--row-at
           state (grid-table-etaf--row-position state row))
          row)))
@@ -387,7 +420,7 @@ hides it."
 (defun grid-table-etaf--shown-col (state col &optional backward)
   "Return the shown column nearest model column COL of STATE.
 Look right of COL first, or left of it when BACKWARD, then the other way."
-  (let* ((cols (grid-get-column-count (grid-table-etaf--source state)))
+  (let* ((cols (grid-table-etaf--max-cols))
          (col (max 0 (min (1- cols) col)))
          (step (if backward -1 1)))
     (or (cl-loop for c = col then (+ c step)
@@ -400,8 +433,9 @@ Look right of COL first, or left of it when BACKWARD, then the other way."
 
 (defun grid-table-etaf--step-col (state col count)
   "Return the shown column COUNT shown columns right of COL in STATE.
-A negative COUNT goes left; the walk stops at the edge of the sheet."
-  (let ((cols (grid-get-column-count (grid-table-etaf--source state)))
+A negative COUNT goes left; the walk goes on past the last column, over
+empty ones, and stops at the most columns a sheet may have."
+  (let ((cols (grid-table-etaf--max-cols))
         (step (if (< count 0) -1 1))
         (left (abs count))
         (at col))
@@ -414,7 +448,10 @@ A negative COUNT goes left; the walk stops at the edge of the sheet."
 (defun grid-table-etaf--visible-rows (state top cols)
   "Return the model rows STATE shows over COLS when the first one is TOP."
   (let* ((source (grid-table-etaf--source state))
-         (count (grid-table-etaf--row-count state))
+         ;; Past the shown rows the window goes on over empty rows, as a
+         ;; spreadsheet's does.
+         (count (+ (grid-table-etaf--row-count state)
+                   (- (grid-table-etaf--max-rows) (grid-get-row-count source))))
          (merges (grid-get-merges source))
          ;; The letter row, the formula bar and the status bar take a line each.
          (budget (- (cdr (grid-table-etaf--viewport state))
@@ -1174,7 +1211,9 @@ LINE, the grid line border."
             (and (<= sel-left col) (<= col sel-right)) line
             (grid-table-etaf--drag-header
              buffer (lambda () (grid-table-etaf-select-column col)))
-            (grid-table-etaf--drag-resize buffer col)
+            ;; An empty column past the edge has no width of its own.
+            (and (< col (length widths))
+                 (grid-table-etaf--drag-resize buffer col))
             (and (eql col edge-col) edge))
            children))
     (cl-loop
@@ -1263,7 +1302,8 @@ LINE, the grid line border."
                     (cons (list 'ch (+ 2 (grid-table-etaf--row-header-width
                                           source)))
                           (mapcar (lambda (col)
-                                    `(calc (+ (ch ,(+ 2 (aref widths col)))
+                                    `(calc (+ (ch ,(+ 2 (grid-table-etaf--col-chars
+                                                          state col)))
                                               (px 1))))
                                   cols)))
               (nreverse children)))
@@ -1367,6 +1407,14 @@ VIEW is (LEFT TOP SHOWN-COLUMNS SHOWN-LINES) in characters and lines."
 (defconst grid-table-etaf--blank-col-chars 8
   "Width in characters of a column past the sheet's right edge.
 Charts may stand there, as on a spreadsheet's empty cells.")
+
+(defun grid-table-etaf--col-chars (state col)
+  "Return the width of column COL of STATE, in characters.
+A column past the sheet's right edge has the width of an empty one."
+  (let ((widths (grid-table-etaf--state-widths state)))
+    (if (< col (length widths))
+        (aref widths col)
+      grid-table-etaf--blank-col-chars)))
 
 (defun grid-table-etaf--col-pixels (state col)
   "Return the pixel width column COL takes in STATE's grid.
@@ -1988,9 +2036,12 @@ spreadsheet does."
     (let* ((source grid-table--data-source)
            (rows (grid-get-row-count source))
            (cols (grid-get-column-count source)))
-      (when (or (and top (>= top rows)) (and left (>= left cols)))
-        (user-error "%s is outside the sheet, which has %d rows and %d columns"
-                    address rows cols))
+      ;; Past the last row or column are empty cells, as in a
+      ;; spreadsheet; only past the most a sheet may have is nothing.
+      (when (or (and bottom (>= bottom (grid-table-etaf--max-rows)))
+                (and right (>= right (grid-table-etaf--max-cols))))
+        (user-error "%s is past the last row or column a sheet may have"
+                    address))
       (grid-table-etaf-goto (or bottom (1- rows)) (or right (1- cols)))
       (let ((range (or (not (eql top bottom)) (not (eql left right))
                        (null top) (null left))))
@@ -2040,8 +2091,10 @@ DIRECTION is 1 or -1.  Movement wraps at both ends of the sheet."
          (position (grid-table-etaf--row-position state (car cursor)))
          (edge (if (> direction 0) (nth 3 extent) (nth 1 extent)))
          (col (grid-table-etaf--step-col state edge direction)))
-    ;; Stepping off either end of the row wraps to the next or previous row.
-    (when (= col edge)
+    ;; Stepping off either end of the row wraps to the next or previous
+    ;; row; the last column is the sheet's, past which only a cursor
+    ;; already there goes on over empty ones.
+    (when (or (= col edge) (and (< edge cols) (>= col cols)))
       (setq position (mod (+ position direction) rows)
             col (grid-table-etaf--shown-col
                  state (if (> direction 0) 0 (1- cols)) (< direction 0))))
@@ -2291,7 +2344,8 @@ Columns only shrink on `grid-table-refresh'."
     (dolist (row rows)
       (dolist (col cols)
         (let ((merge (and merges (grid-table--merge-at merges row col))))
-          (unless (or (and manual (gethash col manual))
+          (unless (or (>= col (length widths))
+                      (and manual (gethash col manual))
                       (and merge
                            (or (/= (nth 1 merge) (nth 3 merge))
                                (/= row (nth 0 merge)))))
@@ -2539,7 +2593,8 @@ that reject the value, such as the covered part of a merge, are skipped."
     (cl-flet ((write ()
                 (pcase-dolist (`(,row ,col ,value) changes)
                   (let ((old (or (grid-get-raw-value-at source row col) "")))
-                    (unless (equal old value)
+                    (unless (or (equal old value)
+                                (grid-table-outside-p source row col))
                       (condition-case nil
                           (progn
                             (grid-set-raw-value-at source row col value)
@@ -2626,7 +2681,8 @@ source stores no styles.  Return the number of cells that changed."
     (when (gethash :set-style-at source)
       (pcase-dolist (`(,row ,col ,style) changes)
         (let ((old (grid-get-style-at source row col)))
-          (unless (equal old style)
+          (unless (or (equal old style)
+                      (grid-table-outside-p source row col))
             (grid-set-style-at source row col style)
             (push (list row col old style) applied)))))
     (when applied

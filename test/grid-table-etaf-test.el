@@ -1240,7 +1240,11 @@ recalculation, so a recalculation per cell made a long fill quadratic."
     (should (equal (grid-table-etaf-selection) '(1 1 3 2)))
     (grid-table-etaf-goto-address "5:6")
     (should (equal (grid-table-etaf-selection) '(4 0 5 5)))
-    (should-error (grid-table-etaf-goto-address "A99") :type 'user-error)
+    ;; Past the last row are empty cells, as in a spreadsheet; past the
+    ;; most rows a sheet may have is nothing.
+    (grid-table-etaf-goto-address "A99")
+    (should (equal (grid-table-etaf--cursor) '(98 . 0)))
+    (should-error (grid-table-etaf-goto-address "A1048577") :type 'user-error)
     (should-error (grid-table-etaf-goto-address "nonsense") :type 'user-error)
     ;; Another sheet is shown first.
     (grid-table-sheet-new "Totals")
@@ -1665,6 +1669,53 @@ to it."
         (grid-table-etaf-goto 5 0)
         (grid-table-etaf-paste)
         (should (equal said "Pasted 4 cells"))))))
+
+(defun grid-table-etaf-test--cursor-shown-p ()
+  "Return non-nil when the window shows the cursor's row and column.
+An empty cell paints no text, so the cursor there has no text to mark."
+  (let ((cursor (grid-table-etaf--cursor))
+        (window (grid-table-etaf-test--window)))
+    (and (memq (car cursor) (car window)) (memq (cdr cursor) (cdr window)) t)))
+
+(ert-deftest grid-table-etaf-cursor-goes-past-the-edge ()
+  "The cursor goes past the last row and column onto empty cells.
+The window shows them, with their letters and numbers, as a
+spreadsheet's does; moving there changes nothing."
+  (grid-table-etaf-test--with-grid (4 3 100 12)
+    (let ((size (lambda ()
+                  (list (grid-get-row-count source) (grid-get-column-count source)))))
+      (set-buffer-modified-p nil)
+      ;; The window goes on past the last column and row.
+      (should (memq 4 (cdr (grid-table-etaf-test--window))))
+      (should (memq 6 (car (grid-table-etaf-test--window))))
+      (should (string-match-p "\\_<E\\_>" (grid-table-etaf-test--text)))
+      ;; Right past the last column, down past the last row.
+      (grid-table-etaf-goto 0 2)
+      (grid-table-cell-right)
+      (grid-table-cell-right)
+      (should (equal (grid-table-etaf--cursor) '(0 . 4)))
+      (should (grid-table-etaf-test--cursor-shown-p))
+      (grid-table-etaf-goto 3 0)
+      (grid-table-next-line)
+      (grid-table-next-line)
+      (should (equal (grid-table-etaf--cursor) '(5 . 0)))
+      (should (grid-table-etaf-test--cursor-shown-p))
+      (should (string-match-p "^ *6 " (grid-table-etaf-test--text)))
+      ;; The name box goes there too, far down, and the window follows.
+      (grid-table-etaf-goto-address "H200")
+      (should (equal (grid-table-etaf--cursor) '(199 . 7)))
+      (should (grid-table-etaf-test--cursor-shown-p))
+      (should (string-match-p "200" (grid-table-etaf-test--text)))
+      ;; A range there selects, and its cells read as empty.
+      (grid-table-etaf-goto-address "F10:G12")
+      (should (equal (grid-table-etaf-selection) '(9 5 11 6)))
+      ;; Nothing of that changed the sheet or made an undo step.
+      (should (equal (funcall size) '(4 3)))
+      (should-not (buffer-modified-p))
+      (should-not (grid-table-etaf--state-undo grid-table-etaf--state))
+      ;; Back up and left to the cells the sheet has.
+      (grid-table-etaf-first-cell)
+      (should (equal (grid-table-etaf--cursor) '(0 . 0))))))
 
 (ert-deftest grid-table-etaf-spill-past-the-edge-grows-the-sheet ()
   "A typed formula spilling past the sheet's edge makes the sheet grow.
