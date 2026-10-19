@@ -1588,10 +1588,12 @@ Blank is 0, TRUE 1 and FALSE 0; text is the number it reads as."
   (grid-calc-num value))
 
 (defun grid-calc-int (value)
-  "Return VALUE as a number with its fraction cut off."
+  "Return VALUE as a number with its fraction cut off.
+A number past 1e18 is #NUM!, a whole one as much as a fractional."
   (let ((number (grid-calc-num value)))
-    (if (integerp number) number
-      (if (> (abs number) 1e18) (grid-calc-raise "#NUM!") (truncate number)))))
+    (if (> (abs number) 1e18)
+        (grid-calc-raise "#NUM!")
+      (if (integerp number) number (truncate number)))))
 
 (defun grid-calc-number-text (number)
   "Return NUMBER written as Excel writes it into text: up to 15 digits."

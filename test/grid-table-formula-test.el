@@ -3831,6 +3831,21 @@ A count of 1E+15 working days used to walk for ever; Excel gives #NUM!."
                   ("=WORKDAY(DATE(2025,1,1),1)" . 45659)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-a-whole-number-past-1e18-is-num ()
+  "A whole number past 1e18 is #NUM! where a whole one is wanted.
+BINOM.DIST(1E+10,1E+30,0.3,TRUE) summed a billion terms before: its
+1E+30 was read as a whole number, which the check for a float missed."
+  (dolist (case '(("=BINOM.DIST(1E+10,1E+30,0.3,TRUE)" . "#NUM!")
+                  ("=BINOM.DIST(1E+30,10,0.3,TRUE)" . "#NUM!")
+                  ("=BINOM.DIST(3,10,0.3,TRUE)" . 0.6496107183999984)))
+    (grid-table-formula-test--should-be case))
+  (dolist (number (list 1e30 (expt 2 100) (float (expt 2 100))))
+    (should (equal (condition-case err (grid-calc-int number)
+                     (grid-calc-error (cadr err)))
+                   "#NUM!")))
+  (should (equal (grid-calc-int 1e15) 1000000000000000))
+  (should (equal (grid-calc-int 5.7) 5)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
