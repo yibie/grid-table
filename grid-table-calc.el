@@ -1151,14 +1151,22 @@ the value is #N/A."
   "Return the values of ARRAY as a list, row after row."
   (append (grid-calc-array-data array) nil))
 
+(defun grid-calc-array-row-list (array row)
+  "Return row ROW of ARRAY as a list of values.
+The values are read from ARRAY's data, without copying the row first."
+  (let* ((cols (grid-calc-array-cols array))
+         (data (grid-calc-array-data array))
+         (start (* row cols))
+         (values '()))
+    (cl-loop for i from (+ start cols -1) downto start
+             do (push (aref data i) values))
+    values))
+
 (defun grid-calc-array-rows-list (array)
   "Return the rows of ARRAY, each a list of values."
-  (let ((cols (grid-calc-array-cols array)) rows)
+  (let (rows)
     (dotimes (row (grid-calc-array-rows array))
-      (push (append (cl-subseq (grid-calc-array-data array)
-                               (* row cols) (* (1+ row) cols))
-                    nil)
-            rows))
+      (push (grid-calc-array-row-list array row) rows))
     (nreverse rows)))
 
 (defun grid-calc-array-map (function array)

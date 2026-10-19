@@ -950,12 +950,20 @@ INCLUDE is a row.  EMPTY is given when none is; without it #CALC!."
                       ;; One value is a row for an ARRAY of one column.
                       (or (> (grid-calc-array-cols include) 1)
                           (= (grid-calc-array-cols array) 1))))
-         (lines (grid-calc--lines array by-col))
          (keep (grid-calc-array-values include)))
-    (unless (= (length keep) (length lines)) (grid-calc-raise "#VALUE!"))
-    (let ((kept (cl-loop for line in lines
-                         for flag in keep
-                         when (grid-calc-truth flag) collect line)))
+    (unless (= (length keep) (if by-col (grid-calc-array-cols array)
+                               (grid-calc-array-rows array)))
+      (grid-calc-raise "#VALUE!"))
+    ;; Rows are made into lists only when they are kept: a FILTER of a
+    ;; whole column keeps a few of thousands.
+    (let ((kept (if by-col
+                    (cl-loop for line in (grid-calc--lines array t)
+                             for flag in keep
+                             when (grid-calc-truth flag) collect line)
+                  (cl-loop for flag in keep
+                           for row from 0
+                           when (grid-calc-truth flag)
+                           collect (grid-calc-array-row-list array row)))))
       (cond (kept (grid-calc--from-lines kept by-col))
             ((and empty (not (equal empty '(MISSING))))
              ;; A reference given is read: FILTER gives an array, never a

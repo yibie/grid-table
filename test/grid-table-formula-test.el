@@ -4315,6 +4315,23 @@ The order is that of `downcase' of each whole text, as it always was."
   (should (= (grid-calc-compare "apple" "Banana") -1))
   (should (= (grid-calc-compare "abc" "ab") 1)))
 
+(ert-deftest grid-table-formula-filter-keeps-whole-rows-and-columns ()
+  "FILTER keeps the rows, or the columns, its flags mark, whole and in order."
+  (should (equal (grid-table-formula-test--eval
+                  "=TEXTJOIN(\",\",,FILTER({1,2;3,4;5,6},{TRUE;FALSE;TRUE}))")
+                 "1,2,5,6"))
+  (should (equal (grid-table-formula-test--eval
+                  "=TEXTJOIN(\",\",,FILTER({1,2,3;4,5,6},{FALSE,TRUE,TRUE}))")
+                 "2,3,5,6"))
+  (should (equal (grid-table-formula-test--eval
+                  "=ROWS(FILTER({1,2;3,4;5,6},{TRUE;FALSE;TRUE}))")
+                 2))
+  (should (equal (grid-calc-array-row-list
+                  (grid-calc-array-from-rows '((1 2 3) (4 5 6))) 1)
+                 '(4 5 6)))
+  (should (equal (grid-table-formula-test--eval "=FILTER({1;2;3},{TRUE;FALSE})")
+                 "#VALUE!")))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with
