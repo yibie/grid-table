@@ -1046,11 +1046,13 @@ column with SCAN-BY-COLUMN.  IGNORE 1 leaves out blanks, 2 error values,
 
 (defun grid-calc--wrapped (values wrap-count rows-first pad)
   "Return VALUES in lines of WRAP-COUNT, the last filled out with PAD.
-Lines are rows when ROWS-FIRST, else columns."
+Lines are rows when ROWS-FIRST, else columns.  One value alone is a
+line of one, as Excel has WRAPCOLS(FALSE,2)."
   (let* ((count (length values))
          (lines (ceiling (max count 1) wrap-count))
-         (height (if rows-first lines wrap-count))
-         (width (if rows-first wrap-count lines)))
+         (across (if (<= count 1) 1 wrap-count))
+         (height (if rows-first lines across))
+         (width (if rows-first across lines)))
     (grid-calc-array height width
                      (lambda (row col)
                        (let ((at (if rows-first

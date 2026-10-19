@@ -2553,9 +2553,11 @@ come from pycel's and IronCalc's TEXT test workbooks."
   (should (equal (grid-table-formula-test--values
                   (grid-table-formula-test--grid "=WRAPCOLS({1,2,3,4,5},2)" 2 3))
                  '((1 3 5) (2 4 "#N/A"))))
+  ;; One value wrapped by two is one row, and the pad it was given with
+  ;; is never asked for: see the WRAPCOLS_ROWS workbook.
   (should (equal (grid-table-formula-test--values
                   (grid-table-formula-test--grid "=WRAPCOLS({1},2,0)" 2 1))
-                 '((1) (0))))
+                 '((1) (""))))
   ;; Not a vector, or no count to wrap by.
   (should (equal (grid-table-formula-test--eval "=WRAPROWS({1,2;3,4},2)")
                  "#VALUE!"))
@@ -4203,6 +4205,19 @@ IronCalc's POWER workbook has POWER(-8,1/3) and (-8)^(1/3) as -2, where
                   ("=(-8)^(2/3)" . "#NUM!")
                   ("=(-8)^(5/3)" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
+
+(ert-deftest grid-table-formula-wrapping-fewer-values-than-a-line-holds ()
+  "WRAPCOLS and WRAPROWS make one value alone a line of one.
+IronCalc's WRAPCOLS_ROWS workbook has WRAPCOLS(IF(1=0,{1,2,3}),2) as
+FALSE, one cell, where two rows would have held a #N/A beside it.  More
+values than one still fill out the line, as three wrapped by five."
+  (should (equal (grid-table-formula-test--values
+                  '(("=WRAPCOLS(FALSE,2)" "=ROWS(WRAPCOLS({1},2))"
+                     "=COLUMNS(WRAPCOLS({1},2))" "=ROWS(WRAPROWS({1;2;3},5))"
+                     "=COLUMNS(WRAPROWS({1;2;3},5))")
+                    ("=WRAPROWS(FALSE,2)" "=COLUMNS(WRAPCOLS({1;2;3},2))"
+                     "=ROWS(WRAPCOLS({1;2;3},2))" "" "")))
+                 '((nil 1 1 1 5) (nil 2 2 "" "")))))
 
 (provide 'grid-table-formula-test)
 
