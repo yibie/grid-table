@@ -908,7 +908,10 @@ INCLUDE is a row.  EMPTY is given when none is; without it #CALC!."
                          when (grid-calc-truth flag) collect line)))
       (cond (kept (grid-calc--from-lines kept by-col))
             ((and empty (not (equal empty '(MISSING))))
-             (grid-calc-arg empty 'values))
+             ;; A reference given is read: FILTER gives an array, never a
+             ;; reference, so ISREF(FILTER(...)) is FALSE.
+             (let ((value (grid-calc-arg empty 'values)))
+               (if (grid-calc-ref-p value) (grid-calc-arg-array value) value)))
             (t (grid-calc-err "#CALC!"))))))
 
 ;;;----------------------------------------------------------------------

@@ -3991,6 +3991,17 @@ it did, and text that is no number is still #VALUE!."
                   ("=EXP(\"100€\")" . 2.6881171418161356e+43)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-filter-answers-with-an-array-not-a-reference ()
+  "FILTER gives an array, even when it gives what EMPTY holds.
+A reference given for EMPTY is read, as Excel reads it, so
+ISREF(FILTER(A1:A2,A1:A2>10,A1:A2)) is FALSE; with none, and nothing
+kept, the answer is #CALC!, as Excel 365 has it where IronCalc's ISREF
+workbook keeps the #VALUE! of an older one."
+  (should (equal (grid-table-formula-test--eval "=ISREF(B1:C1)") t))
+  (should-not (grid-table-formula-test--eval
+               "=ISREF(FILTER(B1:C1,B1:C1>10,B1:C1))"))
+  (should-not (grid-table-formula-test--eval "=ISREF(FILTER(B1:C1,B1:C1>10))")))
+
 (ert-deftest grid-table-formula-max-reads-its-arguments-in-order ()
   "MAX and MIN give the error of the first argument that is one or no number.
 IronCalc's MAX_MIN workbook has MAX(\"abc\",NA()) as #VALUE! and
