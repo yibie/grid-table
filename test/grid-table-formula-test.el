@@ -2282,7 +2282,8 @@ come from pycel's and IronCalc's TEXT test workbooks."
         (progn
           (grid-table-set-charts
            source (list (list :anchor '(1 . 2) :size '(30 . 10) :type 'column
-                              :range "A1:C4" :by nil :title "T")))
+                              :range "A1:C4" :by nil :title "T"
+                              :offset '(2.5 . 0))))
           ;; A row added above the anchor pushes it and the range down.
           (funcall (gethash :add-row source) source 0)
           (should (equal (plist-get (funcall chart) :anchor) '(2 . 2)))
@@ -2290,6 +2291,8 @@ come from pycel's and IronCalc's TEXT test workbooks."
           (funcall (gethash :add-column source) source 0)
           (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
           (should (equal (plist-get (funcall chart) :range) "B1:D5"))
+          ;; Within its cell it keeps its place.
+          (should (equal (plist-get (funcall chart) :offset) '(2.5 . 0)))
           ;; Deleting the anchor's row leaves the chart where it was.
           (funcall (gethash :delete-row source) source 1)
           (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
@@ -2307,6 +2310,9 @@ come from pycel's and IronCalc's TEXT test workbooks."
             (prin1 '(grid-table-file :version 4 :headers ("A") :rows (("1"))
                                      :charts ((:anchor (0 . 0) :size (9 . 9)
                                                :type nonsense :range "A1")
+                                              (:anchor (0 . 0) :size (9 . 9)
+                                               :type bar :range "A1"
+                                               :offset ("2" . 0))
                                               (:anchor (0 . 0) :size (9 . 9)
                                                :type pie :range "A1")))
                    (current-buffer)))

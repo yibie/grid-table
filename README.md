@@ -196,7 +196,7 @@ As in Excel, select a block of data (or put the cursor in it), press `C-c i` and
 - **Reading the data**: a first row of text names the series and a first column of text names the categories; the series run down the columns when the data is taller than wide, along the rows otherwise. `C-c k s` switches.
 - **Following the sheet**: inserting or deleting lines moves a chart and its data range with the cells; a sort leaves charts in place. Charts are saved in the `.grid` file and every change undoes.
 - **Scrolling**: a chart scrolls with its anchor cell and shows whatever part of it is still in the window; one anchored in frozen rows or columns stays put along that axis.
-- **Selecting**: click a chart to select it (blue frame) and drag it to move it. With none selected, chart commands act on the only chart or ask which.
+- **Selecting**: click a chart to select it (blue frame) and drag it to move it; it stands where it is let go, to the pixel across and to the line down. With none selected, chart commands act on the only chart or ask which.
 - **Terminal**: where images cannot be shown, a chart is a text sketch (title and bars of the first series).
 
 | Action | Keys |

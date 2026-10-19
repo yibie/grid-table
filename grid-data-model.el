@@ -346,7 +346,8 @@ with the lines.  Sorting leaves them in place."
 (defun grid-data-model-charts (model)
   "Return MODEL's floating charts, a list of chart plists.
 Each holds :anchor (ROW . COL), :size (COLUMNS . LINES), :type, :range
-\(text such as A1:D7), :by and :title."
+\(text such as A1:D7), :by and :title, and may hold an :offset (X . 0),
+X characters right of the anchor cell's left edge."
   (and (> (length model) 10) (aref model 10)))
 
 (defun grid-model-set-charts (model charts)
