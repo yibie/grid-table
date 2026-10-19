@@ -3974,6 +3974,23 @@ The cells B1 to D1 hold 0, 1 and 2."
                                                  "0" "1" "2")
                  "#REF!")))
 
+(ert-deftest grid-table-formula-value-takes-a-currency-sign-after-the-number ()
+  "VALUE reads a currency sign after the number, as \"23€\" has it.
+IronCalc's T_VALUE_VALUETOTEXT workbook keeps 23€ as 23 and 12€ as 12,
+and its EXP_SIGN keeps 100€ as 100; a sign before the number works as
+it did, and text that is no number is still #VALUE!."
+  (dolist (case '(("=VALUE(\"23€\")" . 23)
+                  ("=VALUE(\"12€\")" . 12)
+                  ("=VALUE(\"100€\")" . 100)
+                  ("=VALUE(\"23$\")" . 23)
+                  ("=VALUE(\"€23\")" . 23)
+                  ("=VALUE(\"23€ \")" . 23)
+                  ("=VALUE(\"-23€\")" . -23)
+                  ("=VALUE(\"23q\")" . "#VALUE!")
+                  ("=VALUE(\"€23€\")" . "#VALUE!")
+                  ("=EXP(\"100€\")" . 2.6881171418161356e+43)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

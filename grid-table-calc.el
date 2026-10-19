@@ -1586,8 +1586,12 @@ serial number, but only with no spaces around it."
             (when (string-match "\\`\\([-+]\\)[ ]*" body)
               (when (equal (match-string 1 body) "-") (setq sign (- sign)))
               (setq body (substring body (match-end 0))))
-            (when (string-match "\\`[$€£¥][ ]*" body)
-              (setq body (substring body (match-end 0))))
+            ;; The currency sign stands before the number or after it, as
+            ;; "23€", but not both.
+            (cond ((string-match "\\`[$€£¥][ ]*" body)
+                   (setq body (substring body (match-end 0))))
+                  ((string-match "[ ]*[$€£¥]\\'" body)
+                   (setq body (substring body 0 (match-beginning 0)))))
             (when (string-match "[ ]*%\\'" body)
               (setq scale 0.01 body (substring body 0 (match-beginning 0))))
             (when (string-match-p
