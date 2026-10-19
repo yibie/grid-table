@@ -3822,6 +3822,15 @@ The values are IronCalc's SEQUENCE workbook, as Excel keeps them."
                   ("=SEQUENCE(0.3)" . "#CALC!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-workday-stops-at-the-edge-of-the-sheet ()
+  "WORKDAY gives #NUM! at once for a walk off the end of the sheet.
+A count of 1E+15 working days used to walk for ever; Excel gives #NUM!."
+  (dolist (case '(("=WORKDAY(DATE(2025,1,1),1E+15)" . "#NUM!")
+                  ("=WORKDAY.INTL(DATE(2025,1,1),-1E+15)" . "#NUM!")
+                  ("=WORKDAY(DATE(9999,12,31),1)" . "#NUM!")
+                  ("=WORKDAY(DATE(2025,1,1),1)" . 45659)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

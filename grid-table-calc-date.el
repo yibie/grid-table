@@ -356,6 +356,10 @@ number that is no date #NUM!."
   (let ((serial start) (step (if (< days 0) -1 1)) (left (abs days)))
     (while (> left 0)
       (setq serial (+ serial step))
+      ;; The walk only goes one way, so a day off the sheet is #NUM! now
+      ;; rather than after a walk that would never end.
+      (when (or (< serial 0) (> serial grid-calc--last-serial))
+        (grid-calc-raise "#NUM!"))
       (when (grid-calc--work-day-p serial weekend holidays) (setq left (1- left))))
     (grid-calc--checked-serial serial)))
 
