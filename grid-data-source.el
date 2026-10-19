@@ -28,7 +28,8 @@ TITLE is an optional string for the grid title."
              source)
     (puthash :get-raw-value-at
              (lambda (s row col)
-               (grid-cell-raw-input (grid-model-get-cell (gethash :model s) row col)))
+               (let ((cell (grid-model-get-cell (gethash :model s) row col)))
+                 (if cell (grid-cell-raw-input cell) "")))
              source)
     (puthash :get-computed-value-at
              (lambda (s row col)

@@ -39,13 +39,27 @@
   "Get header value from data source."
   (funcall (gethash :get-header-value source) source col))
 
+(defun grid-table-outside-p (source row col)
+  "Return non-nil when ROW and COL lie outside the cells SOURCE has.
+Such a cell is one of the empty cells past a sheet's last row or column,
+where a spreadsheet's cursor may go: it reads as empty."
+  (or (< row 0) (< col 0)
+      (>= row (grid-get-row-count source))
+      (>= col (grid-get-column-count source))))
+
 (defun grid-get-raw-value-at (source row col)
-  "Get raw value from data source."
-  (funcall (gethash :get-raw-value-at source) source row col))
+  "Get raw value from data source.
+A cell outside the sheet's cells is empty, \"\"."
+  (if (grid-table-outside-p source row col)
+      ""
+    (funcall (gethash :get-raw-value-at source) source row col)))
 
 (defun grid-get-computed-value-at (source row col)
-  "Get computed value from data source."
-  (funcall (gethash :get-computed-value-at source) source row col))
+  "Get computed value from data source.
+A cell outside the sheet's cells is empty, \"\"."
+  (if (grid-table-outside-p source row col)
+      ""
+    (funcall (gethash :get-computed-value-at source) source row col)))
 
 (defun grid-set-raw-value-at (source row col value)
   "Set raw value in data source."
@@ -64,8 +78,10 @@ When RIGHT is nil, use the legacy horizontal TOP LEFT BOTTOM call."
 
 (defun grid-get-style-at (source row col)
   "Return the style plist of the cell at ROW and COL in SOURCE.
-Sources that do not store styles give nil."
-  (when-let* ((function (gethash :get-style-at source)))
+Sources that do not store styles give nil, as does a cell outside the
+sheet's cells."
+  (when-let* ((function (gethash :get-style-at source))
+              ((not (grid-table-outside-p source row col))))
     (funcall function source row col)))
 
 (defun grid-set-style-at (source row col style)

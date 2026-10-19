@@ -4347,6 +4347,24 @@ The order is that of `downcase' of each whole text, as it always was."
   (let ((model (grid-model-create 3 1 '(("=SEQUENCE(3)") ("") ("")))))
     (should-not (grid-calc-spill-overflow model 0 0))))
 
+(ert-deftest grid-table-formula-cells-outside-the-sheet-read-empty ()
+  "A cell past a sheet's last row or column reads as an empty cell.
+The cursor may stand there, as on a spreadsheet's empty cells."
+  (let ((source (make-default-data-source '("a" "b") '(("1" "=A1*2")))))
+    (dolist (place '((5 0) (0 5) (9 9) (-1 0) (0 -1)))
+      (pcase-let ((`(,row ,col) place))
+        (should (equal (grid-get-raw-value-at source row col) ""))
+        (should (equal (grid-get-computed-value-at source row col) ""))
+        (should (equal (grid-get-display-value-at source row col) ""))
+        (should-not (grid-get-style-at source row col))
+        (should-not (grid-table-cell-format source row col))
+        (should (equal (grid-table-edit-text source row col) ""))
+        (should-not (grid-table-false-value-p
+                     source row col (grid-get-computed-value-at source row col)))))
+    ;; The cells the sheet has read as before.
+    (should (equal (grid-get-raw-value-at source 0 1) "=A1*2"))
+    (should (equal (grid-get-computed-value-at source 0 1) 2))))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with
