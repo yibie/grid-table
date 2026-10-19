@@ -1666,6 +1666,44 @@ to it."
         (grid-table-etaf-paste)
         (should (equal said "Pasted 4 cells"))))))
 
+(ert-deftest grid-table-etaf-spill-past-the-edge-grows-the-sheet ()
+  "A typed formula spilling past the sheet's edge makes the sheet grow.
+Excel's sheet has no edge short of its last row and column, so only a
+cell in the way makes such a formula #SPILL!."
+  (grid-table-etaf-test--with-grid (4 3 100 12)
+    (let ((size (lambda ()
+                  (list (grid-get-row-count source) (grid-get-column-count source)))))
+      ;; Down past the last row: six rows from row 3 need nine.
+      (grid-table-etaf-set-cell 2 0 "")
+      (grid-table-etaf-set-cell 3 0 "=SEQUENCE(6)")
+      (should (equal (funcall size) '(9 3)))
+      (should (equal (grid-get-computed-value-at source 8 0) 6))
+      ;; One undo takes back the formula and the rows it made.
+      (grid-table-etaf-undo)
+      (should (equal (funcall size) '(4 3)))
+      (should-not (string-prefix-p "=" (grid-get-raw-value-at source 3 0)))
+      ;; Right past the last column.
+      (grid-table-etaf-set-cell 0 2 "=SEQUENCE(1,4)")
+      (should (equal (funcall size) '(4 6)))
+      (should (equal (grid-get-computed-value-at source 0 5) 4))
+      (grid-table-etaf-undo)
+      (should (equal (funcall size) '(4 3)))
+      ;; A cell in the way keeps it #SPILL!, and nothing grows.
+      (grid-table-etaf-set-cell 3 1 "=SEQUENCE(1,2)")
+      (should (equal (funcall size) '(4 3)))
+      (should (equal (grid-get-computed-value-at source 3 1) "#SPILL!"))
+      ;; A formula that comes to spill past the edge when another cell
+      ;; changes does not make the sheet grow, nor does recalculating.
+      (grid-table-etaf-set-cell 3 1 "")
+      (grid-table-etaf-set-cell 1 0 "1")
+      (grid-table-etaf-set-cell 1 1 "=SEQUENCE(A2)")
+      (should (equal (funcall size) '(4 3)))
+      (grid-table-etaf-set-cell 1 0 "5")
+      (should (equal (funcall size) '(4 3)))
+      (should (equal (grid-get-computed-value-at source 1 1) "#SPILL!"))
+      (grid-table-recalculate source t)
+      (should (equal (funcall size) '(4 3))))))
+
 (ert-deftest grid-table-etaf-name-for-a-formula ()
   "A name can stand for a formula, as Excel's Refers to: does."
   (grid-table-etaf-test--with-grid (8 4 100 12)

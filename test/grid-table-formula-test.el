@@ -4332,6 +4332,21 @@ The order is that of `downcase' of each whole text, as it always was."
   (should (equal (grid-table-formula-test--eval "=FILTER({1;2;3},{TRUE;FALSE})")
                  "#VALUE!")))
 
+(ert-deftest grid-table-formula-spill-overflow-is-the-edge-alone ()
+  "A spill blocked by the sheet's edge alone says how far past it runs."
+  (let ((model (grid-model-create 2 2 '(("=SEQUENCE(3,3)" "") ("" "")))))
+    (should (equal (grid-model-get-computed-value model 0 0) "#SPILL!"))
+    (should (equal (grid-calc-spill-overflow model 0 0) '(1 . 1))))
+  ;; A cell in the way: no growing helps.
+  (let ((model (grid-model-create 2 2 '(("=SEQUENCE(3)" "") ("x" "")))))
+    (should-not (grid-calc-spill-overflow model 0 0)))
+  ;; Past the most columns a sheet may have.
+  (let ((model (grid-model-create 1 2 '(("=SEQUENCE(1,16385)" "")))))
+    (should-not (grid-calc-spill-overflow model 0 0)))
+  ;; One that spills, or one value, runs past nothing.
+  (let ((model (grid-model-create 3 1 '(("=SEQUENCE(3)") ("") ("")))))
+    (should-not (grid-calc-spill-overflow model 0 0))))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with

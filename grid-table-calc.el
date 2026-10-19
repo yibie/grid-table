@@ -621,6 +621,46 @@ across, and a cell past the values shows #N/A, as in a spreadsheet."
                   (grid-calc-err "#N/A"))))))
     (grid-calc-array--make rows cols data)))
 
+(defun grid-calc--spill-taken-p (model index cells state)
+  "Return non-nil when a spill from INDEX of MODEL over CELLS is in the way.
+A cell holding something, one another formula spills into, or a merged
+cell is; so is a merge at INDEX itself.  STATE is MODEL's spill state."
+  (let ((width (grid-data-model-cols model))
+        (all-cells (grid-data-model-cells model)))
+    (or (cl-some (lambda (at)
+                   (or (not (equal (grid-cell-raw-input (aref all-cells at)) ""))
+                       (let ((source (gethash at (aref state 1))))
+                         (and source (/= source index)))
+                       (grid-model-find-merge model (/ at width) (% at width))))
+                 cells)
+        (and (grid-model-find-merge model (/ index width) (% index width)) t))))
+
+(defconst grid-calc-sheet-limit '(1048576 . 16384)
+  "The most rows and columns a sheet may have, as Excel's.")
+
+(defun grid-calc-spill-overflow (model row col)
+  "Return how far the formula at ROW and COL of MODEL spills past the sheet.
+When its #SPILL! is only for the sheet's edge, nothing on the sheet being
+in the way, return (MORE-ROWS . MORE-COLS), the rows and columns the
+sheet needs to hold it; nil when it spills, is blocked by a cell, or
+would go past the most rows or columns a sheet may have."
+  (let* ((width (grid-data-model-cols model))
+         (index (+ (* row width) col))
+         (state (gethash model grid-calc--spills))
+         (spill (and state (gethash index (aref state 0)))))
+    (pcase spill
+      (`(,rows ,cols t)
+       (let ((more-rows (max 0 (- (+ row rows) (grid-data-model-rows model))))
+             (more-cols (max 0 (- (+ col cols) width))))
+         (when (and (or (> more-rows 0) (> more-cols 0))
+                    (<= (+ row rows) (car grid-calc-sheet-limit))
+                    (<= (+ col cols) (cdr grid-calc-sheet-limit))
+                    (not (grid-calc--spill-taken-p
+                          model index
+                          (grid-calc--spill-cells model index rows cols)
+                          state)))
+           (cons more-rows more-cols)))))))
+
 (defun grid-calc--spill (model index array &optional fixed)
   "Spill ARRAY, the values of the formula at INDEX of MODEL.
 Return the value the formula's own cell shows: the first of them, or
@@ -640,13 +680,7 @@ the cells of ARRAY's size that hold nothing and is never blocked."
            (not fixed)
            (or (> (+ top rows) (grid-data-model-rows model))
               (> (+ left cols) width)
-              (cl-some (lambda (at)
-                         (or (not (equal (grid-cell-raw-input (aref all-cells at)) ""))
-                             (let ((source (gethash at (aref state 1))))
-                               (and source (/= source index)))
-                             (grid-model-find-merge model (/ at width) (% at width))))
-                       cells)
-              (and (grid-model-find-merge model top left) t))))
+              (grid-calc--spill-taken-p model index cells state))))
          (new (list rows cols (and blocked t))))
     (if (and (= rows 1) (= cols 1) (not fixed))
         (progn (grid-calc--spill-retract model index)

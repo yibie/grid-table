@@ -2558,15 +2558,44 @@ that reject the value, such as the covered part of a merge, are skipped."
 
 (defun grid-table-etaf--set-cells (state changes)
   "Store CHANGES, a list of (ROW COL VALUE), as one undoable step in STATE.
-Return the number of cells that changed."
-  (let ((applied (grid-table-etaf--write-cells state changes)))
-    (when applied
-      (setq grid-table-etaf--traces nil)
-      (grid-table-etaf--record state (cons 'cells applied)))
-    (grid-table-etaf--widen-visible state)
-    (grid-table-etaf--bump state)
-    (grid-table-etaf--settle state)
-    (length applied)))
+A formula among them whose values run past the sheet's last row or
+column, with nothing on the sheet in the way, makes the sheet grow to
+hold them, in the same step.  Return the number of cells that changed."
+  (grid-table-etaf--as-one-step
+   state
+   (lambda ()
+     (let ((applied (grid-table-etaf--write-cells state changes)))
+       (when applied
+         (setq grid-table-etaf--traces nil)
+         (grid-table-etaf--record state (cons 'cells applied))
+         (grid-table-etaf--grow-for-spills state applied))
+       (grid-table-etaf--widen-visible state)
+       (grid-table-etaf--bump state)
+       (grid-table-etaf--settle state)
+       (length applied)))))
+
+(defun grid-table-etaf--grow-for-spills (state applied)
+  "Grow STATE's sheet for the formulas APPLIED wrote that spill past it.
+APPLIED is a list of (ROW COL OLD NEW).  Only a formula whose #SPILL! is
+for the sheet's edge alone counts, as Excel's sheet has no such edge
+short of its last row and column; one blocked by a cell stays #SPILL!.
+Return non-nil when the sheet grew."
+  (let* ((source (grid-table-etaf--source state))
+         (model (gethash :model source))
+         (grow (gethash :grow source))
+         (rows 0) (cols 0))
+    (when (and model grow)
+      (pcase-dolist (`(,row ,col ,_old ,new) applied)
+        (when (and (stringp new) (string-prefix-p "=" new))
+          (when-let* ((more (grid-calc-spill-overflow model row col)))
+            (setq rows (max rows (car more))
+                  cols (max cols (cdr more))))))
+      (when (or (> rows 0) (> cols 0))
+        (funcall grow source rows cols)
+        (grid-table-etaf--track-model state)
+        (grid-table-etaf--apply-filters state)
+        (grid-table-etaf--fit-widths state)
+        t))))
 
 (defun grid-table-etaf--enter-cells (state changes)
   "Store CHANGES, a list of (ROW COL TEXT), as a user types them.
