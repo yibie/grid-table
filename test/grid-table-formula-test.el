@@ -4127,6 +4127,23 @@ hold it to the whole."
                      "=XMATCH(\"a\",{\"a\"\"b\"},4)"))
     (should (equal (grid-table-formula-test--eval formula) "#VALUE!"))))
 
+(ert-deftest grid-table-formula-text-too-big-for-a-float-is-no-number ()
+  "Text that reads as more than a float holds is no number: #VALUE!.
+IronCalc's arithmetic workbook has VALUE(\"1e400\") and a cell of text
+\"1e400\" added to 1 as #VALUE!, where a number of that size is #NUM!;
+text under flow, as \"1e-400\", is 0 as Excel has it."
+  (dolist (case '(("=VALUE(\"1e400\")" . "#VALUE!")
+                  ("=VALUE(\"1e309\")" . "#VALUE!")
+                  ("=VALUE(\"1e400%\")" . "#VALUE!")
+                  ("=VALUE(\"1e308\")" . 1e308)
+                  ("=VALUE(\"1e-400\")" . 0)
+                  ("=VALUE(\"inf\")" . "#VALUE!")
+                  ("=VALUE(\"123\")" . 123)))
+    (grid-table-formula-test--should-be case))
+  ;; Text in a cell reads as no number either, so 1 added to it is #VALUE!.
+  (should (equal (grid-table-formula-test--eval "=B1+1" "'1e400") "#VALUE!"))
+  (should (equal (grid-table-formula-test--eval "=B1+1" "'1e-400") 1)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

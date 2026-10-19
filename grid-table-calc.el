@@ -1569,17 +1569,27 @@ separators, as Excel takes them."
                     (time (grid-calc--parse-time time-text)))
                (and day time (+ day time)))))))
 
+(defun grid-calc--finite-number (number)
+  "Return NUMBER, or nil when a float cannot hold it.
+Text that reads as a number too big for a float is no number to Excel:
+VALUE(\"1e400\") is #VALUE!, and so is \"1e400\"+1."
+  (and number
+       (or (not (floatp number))
+           (and (not (isnan number)) (/= (abs number) 1.0e+INF)))
+       number))
+
 (defun grid-calc-text-number (text)
   "Return the number TEXT reads as, the way Excel reads text, or nil.
 Spaces around it, thousands separators, a currency sign, a percent sign
 and parentheses for a negative are allowed; a date or a time is its
-serial number, but only with no spaces around it."
+serial number, but only with no spaces around it.  Text that reads as
+more than a float holds is no number."
   (let* ((raw (substring-no-properties text))
          (text (string-trim raw)))
     (unless (string-empty-p text)
       (or (and (string-match-p "\\`[-+]?\\(?:[0-9]+\\.?[0-9]*\\|\\.[0-9]+\\)\\(?:[eE][-+]?[0-9]+\\)?\\'"
                                text)
-               (string-to-number text))
+               (grid-calc--finite-number (string-to-number text)))
           (let ((case-fold-search nil) (sign 1) (scale 1) (body text))
             (when (string-match "\\`(\\(.*\\))\\'" body)
               (setq sign -1 body (string-trim (match-string 1 body))))
@@ -1598,9 +1608,8 @@ serial number, but only with no spaces around it."
                    "\\`\\(?:[0-9]\\{1,3\\}\\(?:,[0-9]\\{3\\}\\)+\\|[0-9]+\\)\\(?:\\.[0-9]*\\)?\\(?:[eE][-+]?[0-9]+\\)?\\'\\|\\`\\.[0-9]+\\'"
                    body)
               (let ((number (string-to-number (string-replace "," "" body))))
-                (if (= scale 1)
-                    (* sign number)
-                  (* sign number scale)))))
+                (grid-calc--finite-number
+                 (if (= scale 1) (* sign number) (* sign number scale))))))
           (and (string= text raw) (grid-calc--parse-date-time text))))))
 
 (defun grid-calc-num (value)
