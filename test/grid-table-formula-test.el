@@ -3957,6 +3957,23 @@ that far left of the point leaves none of it."
                   ("=TRUNC(1.9,1.9)" . 1.9)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-offset-takes-a-fraction-as-one-at-least ()
+  "OFFSET cuts a fractional height or width to a whole number, at least one.
+Excel reads OFFSET(A1,0,0,1,0.9) as one column wide rather than none,
+which is #REF!, as IronCalc's ROW_COLUM workbook keeps it; 2.9 is two.
+The cells B1 to D1 hold 0, 1 and 2."
+  (dolist (case '(("=SUM(OFFSET(B1,0,0,1,0.9))" . 0)
+                  ("=SUM(OFFSET(B1,0,0,1,1.9))" . 0)
+                  ("=SUM(OFFSET(B1,0,0,1,2.9))" . 1)
+                  ("=SUM(OFFSET(B1,0,0,2.5,2))" . 1)
+                  ("=ROWS(OFFSET(B1,0,0,0.5,1))" . 1)
+                  ("=COLUMNS(OFFSET(B1,0,0,1,1.5))" . 1)))
+    (should (equal (grid-table-formula-test--eval (car case) "0" "1" "2")
+                   (cdr case))))
+  (should (equal (grid-table-formula-test--eval "=SUM(OFFSET(B1,0,0,1,0))"
+                                                 "0" "1" "2")
+                 "#REF!")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

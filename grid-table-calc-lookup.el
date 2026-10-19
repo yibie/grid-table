@@ -506,8 +506,19 @@ as A:A has 1048576 cells, though the range stops at the sheet's cells."
     (grid-calc-raise "#REF!"))
   (grid-calc-ref--make model top left bottom right))
 
+(defun grid-calc--offset-size (size)
+  "Return SIZE as a count of rows or columns, as OFFSET takes it.
+A fraction is cut to a whole number, but one that leaves none of itself
+keeps one: Excel reads OFFSET(A1,0,0,1,0.9) as one column wide, and
+only a SIZE of 0 as none at all."
+  (let ((whole (truncate size)))
+    (cond ((/= whole 0) whole)
+          ((zerop size) 0)
+          ((> size 0) 1)
+          (t -1))))
+
 (grid-calc-define offset ((reference ref) (rows integer) (cols integer)
-                          &optional (height integer) (width integer))
+                          &optional (height number) (width number))
   "The reference ROWS down and COLS across from REFERENCE.
 It is HEIGHT by WIDTH, by default as large as REFERENCE."
   :empty t
@@ -515,6 +526,8 @@ It is HEIGHT by WIDTH, by default as large as REFERENCE."
         (width (or width (grid-calc-ref-cols reference)))
         (top (+ (grid-calc-ref-top reference) rows))
         (left (+ (grid-calc-ref-left reference) cols)))
+    (setq height (grid-calc--offset-size height)
+          width (grid-calc--offset-size width))
     (when (or (= height 0) (= width 0)) (grid-calc-raise "#REF!"))
     ;; A negative size reaches up or left of the corner.
     (when (< height 0) (setq top (+ top height 1) height (- height)))
