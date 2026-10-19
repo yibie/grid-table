@@ -379,6 +379,9 @@ above 0."
 comes with the chance beside it in CHANCES."
   (let* ((pairs (grid-calc--paired xs chances))
          (total (apply #'+ (mapcar #'cdr pairs))))
+    ;; Excel shares the chances out of their sum, so none of them at all
+    ;; is #DIV/0! rather than the #NUM! of chances that come to no 1.
+    (when (zerop total) (grid-calc-raise "#DIV/0!"))
     (unless (and (cl-every (lambda (p) (< 0 (cdr p) 1.0000001)) pairs)
                  (< (abs (- total 1)) 1e-7))
       (grid-calc-raise "#NUM!"))

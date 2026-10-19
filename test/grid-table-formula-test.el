@@ -4094,6 +4094,16 @@ IronCalc's T_DIST workbook has T.INV(1.230468749943611E-56,10) as
                      -1000000.0))
              1e-6)))
 
+(ert-deftest grid-table-formula-prob-without-chances-is-div0 ()
+  "PROB whose chances are all text divides by a sum of none.
+IronCalc's PROB workbook has PROB({\"Hi\"},{\"hi\"},1) as #DIV/0!; the
+#NUM! of chances that come to no 1 is for chances that are some."
+  (dolist (case '(("=PROB({\"Hi\"},{\"hi\"},1)" . "#DIV/0!")
+                  ("=PROB({1,2},{0.5,0.4},1)" . "#NUM!")
+                  ("=PROB({1,2},{0.5,0.5},1)" . 0.5)
+                  ("=PROB({1,2},{0.5,0.5},1,2)" . 1)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
