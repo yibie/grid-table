@@ -4016,6 +4016,24 @@ MAX(NA(),\"abc\") as #N/A, as Excel reads them from the left."
                   ("=MIN(1,2)" . 1)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-a-bit-shift-reaches-53-places ()
+  "BITLSHIFT and BITRSHIFT take a shift of at most 53 places either way.
+IronCalc's BITs workbook has BITRSHIFT(12,100), BITRSHIFT(12,54),
+BITLSHIFT(12,-54) and BITRSHIFT(12,-54) as #NUM!, as Excel has them;
+so is a result past 2^48-1, as BITLSHIFT(12,53) gives."
+  (dolist (case '(("=BITRSHIFT(12,100)" . "#NUM!")
+                  ("=BITRSHIFT(12,54)" . "#NUM!")
+                  ("=BITLSHIFT(12,-54)" . "#NUM!")
+                  ("=BITRSHIFT(12,-54)" . "#NUM!")
+                  ("=BITLSHIFT(12,53)" . "#NUM!")
+                  ("=BITLSHIFT(1,48)" . "#NUM!")
+                  ("=BITLSHIFT(12,3)" . 96)
+                  ("=BITRSHIFT(12,2)" . 3)
+                  ("=BITRSHIFT(12,-3)" . 96)
+                  ("=BITRSHIFT(12,53)" . 0)
+                  ("=BITLSHIFT(1,47)" . 140737488355328)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

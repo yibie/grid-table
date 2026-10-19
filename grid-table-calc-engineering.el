@@ -150,15 +150,21 @@ Each pair is (NAME BASE), as (bin 2)."
   "The bits one of A and B has, but not both."
   (logxor (grid-calc--bit-operand a) (grid-calc--bit-operand b)))
 
-(grid-calc-define bitlshift ((number number) (shift integer))
-  "NUMBER's bits moved SHIFT places to the left."
+(defun grid-calc--bit-shift (number shift)
+  "Return NUMBER's bits moved SHIFT places, to the left when it is positive.
+A SHIFT past 53 either way is #NUM!, as is a result past 2^48-1."
+  (when (> (abs shift) 53) (grid-calc-raise "#NUM!"))
   (let ((result (ash (grid-calc--bit-operand number) shift)))
     (when (>= result (expt 2 48)) (grid-calc-raise "#NUM!"))
     result))
 
+(grid-calc-define bitlshift ((number number) (shift integer))
+  "NUMBER's bits moved SHIFT places to the left."
+  (grid-calc--bit-shift number shift))
+
 (grid-calc-define bitrshift ((number number) (shift integer))
   "NUMBER's bits moved SHIFT places to the right."
-  (ash (grid-calc--bit-operand number) (- shift)))
+  (grid-calc--bit-shift number (- shift)))
 
 (defun grid-calc--polynomial (variable coefficients)
   "Return the value at VARIABLE of a polynomial, COEFFICIENTS constant first.
