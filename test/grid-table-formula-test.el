@@ -3358,11 +3358,17 @@ Excel's values for."
                  '((2 "") (3 "")))))
 
 (ert-deftest grid-table-formula-beta-inv-takes-a-chance-above-0 ()
-  "BETA.INV of a chance of 0 is #NUM!, and of 1 the top of its range."
+  "BETA.INV takes no chance of 0 and none of 1, as Excel refuses both.
+IronCalc's BETADIST_BETAINV workbook has BETA.INV(1,1,2,0,1) and
+BETA.INV(1,2,2.5,0.234,1.2) as #NUM!, where the help page would have
+the top of the range."
   (dolist (case '(("=BETA.INV(0,4,4)" . "#NUM!")
                   ("=BETAINV(0,3,2)" . "#NUM!")
-                  ("=BETA.INV(1,2,2)" . 1)
-                  ("=BETA.INV(1,2,2,3,5)" . 5)))
+                  ("=BETA.INV(1,2,2)" . "#NUM!")
+                  ("=BETA.INV(1,2,2,3,5)" . "#NUM!")
+                  ("=BETA.INV(0.99999999999999623,2,2.5,0.234,1.2)"
+                   . 1.199999004352299)
+                  ("=BETA.INV(0.5,2,2)" . 0.5)))
     (grid-table-formula-test--should-be case)))
 
 (ert-deftest grid-table-formula-weekend-read-as-excel ()

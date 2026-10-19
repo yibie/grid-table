@@ -483,8 +483,14 @@ its density."
                             &optional (low number 0) (high number 1))
   "X where the beta distribution of ALPHA and BETA, between LOW and
 HIGH, is P."
-  (grid-calc--require (< 0 p) (<= p 1) (> alpha 0) (> beta 0) (< low high))
-  (if (= p 1) high
+  (grid-calc--require (< 0 p) (< p 1) (> alpha 0) (> beta 0) (< low high))
+  (if (< (- 1.0 p) 1e-6)
+      ;; A chance that near 1 leaves too little of the beta function to
+      ;; tell where it is: it is read as the little left of it, from the
+      ;; other end of the distribution, where its digits are.
+      (- high (* (- high low)
+                 (grid-calc--invert (lambda (y) (grid-calc--beta-i y beta alpha))
+                                    (- 1.0 p) 0.0 1.0)))
     (+ low (* (- high low)
               (grid-calc--invert (lambda (y) (grid-calc--beta-i y alpha beta))
                                  p 0.0 1.0)))))
