@@ -4259,6 +4259,19 @@ IronCalc's SUMSQ workbook has the square of 2E+154 as #NUM!, where
                   ("=SUMSQ(-3,4)" . 25)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
+  "HYPERLINK of a blank label shows 0, where one left out shows the link.
+IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with
+E21 empty as 0, and the ones with a label show it."
+  (should (equal (grid-table-formula-test--eval "=HYPERLINK(\"https://x\")")
+                 "https://x"))
+  (should (equal (grid-table-formula-test--eval
+                  "=HYPERLINK(\"https://x\",\"label\")")
+                 "label"))
+  ;; B1 is a blank cell, so the label is one.
+  (should (equal (grid-table-formula-test--eval "=HYPERLINK(\"https://\"&B1,B1)")
+                 0)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

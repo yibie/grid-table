@@ -800,8 +800,12 @@ v anything else) or \"filename\"."
       (_ (grid-calc-err "#VALUE!")))))
 
 (grid-calc-define hyperlink ((link any) &optional (label any))
-  "LABEL, or LINK without it: what a link shows."
-  (if (or (null label) (grid-calc-blank-p label)) link label))
+  "LABEL, or LINK without it: what a link shows.
+A LABEL that is a blank cell shows 0, as IronCalc's link_test workbook
+has HYPERLINK(\"https://\"&E21,E21) with E21 empty."
+  (cond ((null label) link)
+        ((grid-calc-blank-p label) 0)
+        (t label)))
 
 (grid-calc-define getpivotdata (&rest (_arguments values))
   "#REF!: grid-table has no pivot tables."
