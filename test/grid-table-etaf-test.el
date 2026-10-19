@@ -1717,6 +1717,48 @@ spreadsheet's does; moving there changes nothing."
       (grid-table-etaf-first-cell)
       (should (equal (grid-table-etaf--cursor) '(0 . 0))))))
 
+(ert-deftest grid-table-etaf-writing-past-the-edge-grows-the-sheet ()
+  "Writing on the empty cells past the edge grows the sheet to them.
+The growing is part of the step the writing is, and undoing it takes
+the new rows and columns back; clearing those cells changes nothing."
+  (grid-table-etaf-test--with-grid (4 3 100 12)
+    (let ((size (lambda ()
+                  (list (grid-get-row-count source) (grid-get-column-count source)))))
+      ;; A value typed at E7.
+      (grid-table-etaf-goto 6 4)
+      (grid-table-etaf--enter-cells grid-table-etaf--state '((6 4 "42")))
+      (should (equal (funcall size) '(7 5)))
+      (should (equal (grid-get-raw-value-at source 6 4) "42"))
+      (should (grid-table-etaf--state-undo grid-table-etaf--state))
+      (grid-table-etaf-undo)
+      (should (equal (funcall size) '(4 3)))
+      (should (equal (grid-get-raw-value-at source 6 4) ""))
+      ;; Clearing empty cells out there grows nothing.
+      (grid-table-etaf-goto 6 4)
+      (grid-table-etaf-goto 8 5 t)
+      (grid-table-etaf-clear-cells)
+      (should (equal (funcall size) '(4 3)))
+      ;; Bold on them does, in one step.
+      (grid-table-etaf-toggle-bold)
+      (should (equal (funcall size) '(9 6)))
+      (should (plist-get (grid-get-style-at source 8 5) :bold))
+      (grid-table-etaf-undo)
+      (should (equal (funcall size) '(4 3)))
+      ;; So does a merge reaching out there.
+      (grid-table-etaf-goto 3 2)
+      (grid-table-etaf-goto 5 4 t)
+      (grid-table-etaf-merge)
+      (should (equal (funcall size) '(6 5)))
+      (should (grid-table--merge-at (grid-get-merges source) 5 4))
+      (grid-table-etaf-undo)
+      (should (equal (funcall size) '(4 3)))
+      (should-not (grid-get-merges source))
+      ;; Removing duplicates among empty cells removes nothing.
+      (grid-table-etaf-goto 6 0)
+      (grid-table-etaf-goto 9 1 t)
+      (grid-table-etaf-remove-duplicates)
+      (should (equal (funcall size) '(4 3))))))
+
 (ert-deftest grid-table-etaf-spill-past-the-edge-grows-the-sheet ()
   "A typed formula spilling past the sheet's edge makes the sheet grow.
 Excel's sheet has no edge short of its last row and column, so only a

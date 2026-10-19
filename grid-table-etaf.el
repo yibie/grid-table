@@ -2619,6 +2619,10 @@ hold them, in the same step.  Return the number of cells that changed."
   (grid-table-etaf--as-one-step
    state
    (lambda ()
+     ;; Writing past the last row or column grows the sheet first;
+     ;; clearing a cell there changes nothing.
+     (grid-table-etaf--grow-to-hold
+      state (cl-remove-if (lambda (change) (equal (nth 2 change) "")) changes))
      (let ((applied (grid-table-etaf--write-cells state changes)))
        (when applied
          (setq grid-table-etaf--traces nil)
@@ -2628,6 +2632,28 @@ hold them, in the same step.  Return the number of cells that changed."
        (grid-table-etaf--bump state)
        (grid-table-etaf--settle state)
        (length applied)))))
+
+(defun grid-table-etaf--grow-to-hold (state cells)
+  "Grow STATE's sheet to hold CELLS, a list of (ROW COL ...), when they lie past it.
+A spreadsheet's cursor writes on the empty cells past the last row and
+column: the sheet then takes in the rows and columns up to them, in the
+step the writing is.  Return non-nil when the sheet grew."
+  (let* ((source (grid-table-etaf--source state))
+         (rows (grid-get-row-count source))
+         (cols (grid-get-column-count source))
+         (more-rows 0) (more-cols 0))
+    (dolist (cell cells)
+      (setq more-rows (max more-rows (- (1+ (nth 0 cell)) rows))
+            more-cols (max more-cols (- (1+ (nth 1 cell)) cols))))
+    (when (or (> more-rows 0) (> more-cols 0))
+      (let ((grow (gethash :grow source)))
+        (unless grow
+          (user-error "This grid cannot grow past its last row or column"))
+        (funcall grow source more-rows more-cols)
+        (grid-table-etaf--track-model state)
+        (grid-table-etaf--apply-filters state)
+        (grid-table-etaf--fit-widths state)
+        t))))
 
 (defun grid-table-etaf--grow-for-spills (state applied)
   "Grow STATE's sheet for the formulas APPLIED wrote that spill past it.
@@ -2679,6 +2705,9 @@ source stores no styles.  Return the number of cells that changed."
   (let ((source (grid-table-etaf--source state))
         applied)
     (when (gethash :set-style-at source)
+      ;; A style past the last row or column grows the sheet to hold it.
+      (grid-table-etaf--grow-to-hold
+       state (cl-remove-if-not (lambda (change) (nth 2 change)) changes))
       (pcase-dolist (`(,row ,col ,style) changes)
         (let ((old (grid-get-style-at source row col)))
           (unless (or (equal old style)
@@ -2805,13 +2834,21 @@ shifts."
   "Merge the selected range into one cell, or ask for a range to merge.
 Only the top left cell of the range may hold a value."
   (interactive)
-  (let ((range (grid-table-etaf-selection)))
+  (let ((range (grid-table-etaf-selection))
+        (state (grid-table-etaf--state-or-error)))
     (if (and (= (nth 0 range) (nth 2 range)) (= (nth 1 range) (nth 3 range)))
         (call-interactively #'grid-table-merge-cells)
-      (grid-table-merge-cells
-       (format "%s:%s"
-               (grid-table-etaf--address (nth 0 range) (nth 1 range))
-               (grid-table-etaf--address (nth 2 range) (nth 3 range)))))))
+      ;; A range reaching past the last row or column grows the sheet
+      ;; to hold it, in the step the merge is.
+      (grid-table-etaf--as-one-step
+       state
+       (lambda ()
+         (grid-table-etaf--grow-to-hold
+          state (list (list (nth 2 range) (nth 3 range))))
+         (grid-table-merge-cells
+          (format "%s:%s"
+                  (grid-table-etaf--address (nth 0 range) (nth 1 range))
+                  (grid-table-etaf--address (nth 2 range) (nth 3 range)))))))))
 
 ;;;----------------------------------------------------------------------
 ;;; Formatting
@@ -2845,11 +2882,23 @@ change is one undoable step.  Covered cells of a merge are skipped."
           (let* ((old (grid-get-style-at source row col))
                  (new (funcall function (copy-sequence old))))
             (unless (equal old new)
-              (grid-set-style-at source row col new)
               (push (list row col old new) changed)))))))
-    (when changed
-      (grid-table-etaf--record state (cons 'styles (nreverse changed)))
-      (grid-table-etaf--widen-visible state))
+    (setq changed (nreverse changed))
+    (grid-table-etaf--as-one-step
+     state
+     (lambda ()
+       ;; A style past the last row or column grows the sheet to hold it.
+       (grid-table-etaf--grow-to-hold
+        state (cl-remove-if-not (lambda (change) (nth 3 change)) changed))
+       (setq changed
+             (cl-loop for change in changed
+                      for (row col _old new) = change
+                      unless (grid-table-outside-p source row col)
+                      do (grid-set-style-at source row col new)
+                      and collect change))
+       (when changed
+         (grid-table-etaf--record state (cons 'styles changed))
+         (grid-table-etaf--widen-visible state))))
     (grid-table-etaf--bump state)
     (grid-table-etaf--settle state)
     (length changed)))
@@ -3567,12 +3616,18 @@ with the rows that stay, and references to the deleted rows become
                      (= (nth 1 range) (nth 3 range))))
          (first (max (if (grid-table-header-row-p source) 1 0)
                      (if whole 0 (nth 0 range))))
-         (last (if whole (1- (grid-get-row-count source)) (nth 2 range)))
+         ;; The empty rows and columns past the sheet's edge hold
+         ;; nothing to repeat.
+         (last (if whole (1- (grid-get-row-count source))
+                 (min (nth 2 range) (1- (grid-get-row-count source)))))
          (cols (if whole
                    (number-sequence 0 (1- (grid-get-column-count source)))
-                 (number-sequence (nth 1 range) (nth 3 range))))
-         (duplicates (grid-table-etaf--duplicate-rows
-                      source (number-sequence first last) cols))
+                 (number-sequence (nth 1 range)
+                                  (min (nth 3 range)
+                                       (1- (grid-get-column-count source))))))
+         (duplicates (and (<= first last) cols
+                          (grid-table-etaf--duplicate-rows
+                           source (number-sequence first last) cols)))
          (delete-all (gethash :delete-rows source))
          (delete (gethash :delete-row source)))
     (unless (or delete-all delete)
