@@ -352,8 +352,13 @@ number that is no date #NUM!."
   (not (or (memq (grid-calc--weekday serial) weekend) (memql serial holidays))))
 
 (defun grid-calc--work-day (start days weekend holidays)
-  "Return the day DAYS working days from START."
-  (let ((serial start) (step (if (< days 0) -1 1)) (left (abs days)))
+  "Return the day DAYS working days from START.
+A fraction of a day counts down to the day below it, as Excel floors
+DAYS: -0.5 is one working day back."
+  (let* ((days (floor days))
+         (serial start)
+         (step (if (< days 0) -1 1))
+         (left (abs days)))
     (while (> left 0)
       (setq serial (+ serial step))
       ;; The walk only goes one way, so a day off the sheet is #NUM! now
@@ -370,13 +375,13 @@ number that is no date #NUM!."
     (* sign (cl-loop for serial from start to end
                      count (grid-calc--work-day-p serial weekend holidays)))))
 
-(grid-calc-define workday ((start date) (days integer) &optional (holidays values))
+(grid-calc-define workday ((start date) (days number) &optional (holidays values))
   "The date DAYS working days from START, weekends and HOLIDAYS left out."
   :toolpak t
   (grid-calc--work-day start days '(6 0)
                        (grid-calc--holidays holidays)))
 
-(grid-calc-define workday.intl ((start date) (days integer) &optional (weekend lazy)
+(grid-calc-define workday.intl ((start date) (days number) &optional (weekend lazy)
                                 (holidays values))
   "The date DAYS working days from START, WEEKEND days and HOLIDAYS left out."
   :toolpak t

@@ -3846,6 +3846,19 @@ BINOM.DIST(1E+10,1E+30,0.3,TRUE) summed a billion terms before: its
   (should (equal (grid-calc-int 1e15) 1000000000000000))
   (should (equal (grid-calc-int 5.7) 5)))
 
+(ert-deftest grid-table-formula-workday-floors-a-fraction-of-a-day ()
+  "WORKDAY counts a fraction of a day to the whole day below it.
+So -0.9999999 is one day back, as Excel has it in IronCalc's WORKDAY
+workbook, and a positive fraction is still no day at all."
+  (dolist (case '(("=WORKDAY(DATE(2025,1,10),-0.9999999)" . 45666)
+                  ("=WORKDAY.INTL(DATE(2025,1,10),-0.9999999)" . 45666)
+                  ("=WORKDAY(DATE(2025,1,10),-1E-9)" . 45666)
+                  ("=WORKDAY.INTL(DATE(2025,1,10),-1E-9)" . 45666)
+                  ("=WORKDAY(DATE(2025,1,10),0.9999999)" . 45667)
+                  ("=WORKDAY(DATE(2025,1,10),1E-9)" . 45667)
+                  ("=WORKDAY(DATE(2025,1,10),2.000001)" . 45671)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
