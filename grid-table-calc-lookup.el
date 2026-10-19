@@ -654,6 +654,16 @@ With A1 false TEXT is in R1C1 style, as \"R2C3\" or \"R[-1]C\"."
           (grid-calc--r1c1-reference text grid-calc--model))
         (grid-calc-err "#REF!"))))
 
+(defun grid-calc--array-range-reference (model row col)
+  "Return the range an array formula over several cells fills, or nil.
+The formula in the corner of it spills over all of them, as C2# names
+every cell of the array formula written over C2:C5."
+  (when-let* ((array (grid-model-array-at model row col))
+              (range (ignore-errors
+                       (grid-calc--reference model (grid-parser-parse array)))))
+    (and (or (/= (grid-calc-ref-rows range) 1) (/= (grid-calc-ref-cols range) 1))
+         range)))
+
 (defun grid-calc--anchor-array (reference)
   "Return the cells the formula in the corner of REFERENCE spills over.
 They are a reference, so a formula in a plain cell takes the one in its
@@ -662,23 +672,26 @@ own row or column, as from any range."
          (row (grid-calc-ref-top reference))
          (col (grid-calc-ref-left reference))
          (raw (grid-calc--raw-at reference)))
-    ;; Only one cell, holding a formula, is a corner things spill from.
-    ;; A formula whose values cannot spill names no cells.
-    (if (not (and (= (grid-calc-ref-rows reference) 1)
-                  (= (grid-calc-ref-cols reference) 1)
-                  (grid-calc--formula-p raw)
-                  (not (grid-calc--spill-blocked-p
-                        model (+ (* row (grid-data-model-cols model)) col)))))
-        (grid-calc-err "#REF!")
-      (let* ((value (let ((grid-calc--here (list model row col))
-                          (grid-calc--array-context t)
-                          (grid-calc--locals nil)
-                          (grid-calc--names-open nil))
-                      (grid-calc--deref
-                       (grid-calc--eval model (grid-parser-parse (substring raw 1))))))
-             (rows (if (grid-calc-array-p value) (grid-calc-array-rows value) 1))
-             (cols (if (grid-calc-array-p value) (grid-calc-array-cols value) 1)))
-        (grid-calc-ref--make model row col (+ row rows -1) (+ col cols -1))))))
+    (or (and (= (grid-calc-ref-rows reference) 1)
+             (= (grid-calc-ref-cols reference) 1)
+             (grid-calc--array-range-reference model row col))
+        ;; Only one cell, holding a formula, is a corner things spill from.
+        ;; A formula whose values cannot spill names no cells.
+        (if (not (and (= (grid-calc-ref-rows reference) 1)
+                      (= (grid-calc-ref-cols reference) 1)
+                      (grid-calc--formula-p raw)
+                      (not (grid-calc--spill-blocked-p
+                            model (+ (* row (grid-data-model-cols model)) col)))))
+            (grid-calc-err "#REF!")
+          (let* ((value (let ((grid-calc--here (list model row col))
+                              (grid-calc--array-context t)
+                              (grid-calc--locals nil)
+                              (grid-calc--names-open nil))
+                          (grid-calc--deref
+                           (grid-calc--eval model (grid-parser-parse (substring raw 1))))))
+                 (rows (if (grid-calc-array-p value) (grid-calc-array-rows value) 1))
+                 (cols (if (grid-calc-array-p value) (grid-calc-array-cols value) 1)))
+            (grid-calc-ref--make model row col (+ row rows -1) (+ col cols -1)))))))
 
 (grid-calc-define anchorarray ((reference ref))
   "All the values the formula at REFERENCE gives, as A1# names them."

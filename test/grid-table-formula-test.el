@@ -4231,6 +4231,23 @@ nothing: VLOOKUP(3,3,1) and VLOOKUP(3,TRUE,1) are #N/A."
                   ("=VLOOKUP(2,{1,2;3,4},2,FALSE)" . "#N/A")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-an-array-formula-spills-over-its-range ()
+  "An array formula over several cells spills over all of them for A1#.
+IronCalc's spill_operator workbook has the array formula C2:C5 holding
+123 four times over, and SUM(C2#) as 492; a cell holding no formula
+there is #REF!, as A2 is."
+  (let ((model (grid-model-create 4 3 '(("=SUM(A2#)" "" "")
+                                        ("=123" "" "")
+                                        ("=123" "" "")
+                                        ("=123" "" "")))))
+    ;; The formula over A2:A4 fills those cells, and the sum reads all.
+    (grid-model-set-arrays model '(((1 . 0) . "A2:A4")))
+    (grid-model-set-raw-value model 0 1 "x")
+    (should (equal (grid-model-get-computed-value model 0 0) 369))
+    ;; A cell holding no formula spills nothing.
+    (grid-model-set-raw-value model 0 0 "=SUM(C1#)")
+    (should (equal (grid-model-get-computed-value model 0 0) "#REF!"))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
