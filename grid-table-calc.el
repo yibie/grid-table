@@ -1734,10 +1734,28 @@ side is a number, text or a truth value."
       (cond ((grid-calc--numbers-equal-p left right) 0)
             ((< left right) -1)
             (t 1)))
-     ((stringp left)
-      (let ((a (downcase left)) (b (downcase right)))
-        (cond ((string= a b) 0) ((string< a b) -1) (t 1))))
+     ((stringp left) (grid-calc--compare-text left right))
      (t (cond ((eq left right) 0) ((eq left :false) -1) (t 1))))))
+
+(defun grid-calc--compare-text (left right)
+  "Return -1, 0 or 1 as the text LEFT sorts before, with or after RIGHT.
+The order is that of the two in lower case, as `downcase' writes them.
+They are compared a character at a time, making no new strings, as
+FILTER comparing a whole column would make two for every cell; only
+where `downcase' of the whole text differs from that of its characters,
+for İ and the Greek final sigma, are the lower-case texts made."
+  (if (or (string-match-p "[İΣ]" left) (string-match-p "[İΣ]" right))
+      (let ((a (downcase left)) (b (downcase right)))
+        (cond ((string= a b) 0) ((string< a b) -1) (t 1)))
+    (let ((a-length (length left)) (b-length (length right))
+          (i 0) (order nil))
+      (while (and (not order) (< i a-length) (< i b-length))
+        (let ((a (downcase (aref left i))) (b (downcase (aref right i))))
+          (cond ((< a b) (setq order -1))
+                ((> a b) (setq order 1))))
+        (setq i (1+ i)))
+      (or order
+          (cond ((= a-length b-length) 0) ((< a-length b-length) -1) (t 1))))))
 
 (defun grid-calc-equal-p (left right)
   "Return non-nil when LEFT and RIGHT are equal, as = takes them."

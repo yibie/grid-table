@@ -4294,6 +4294,27 @@ Excel's rules for names keep out C, c, R and r alone, and R1C1."
   (dolist (name '("Rate" "Cost" "RC_total" "R1C1x" "CR" "Rx" "s2a1"))
     (should-not (grid-calc-name-problem name))))
 
+(ert-deftest grid-table-formula-text-compares-as-in-lower-case ()
+  "Text compares as its lower case does, character by character or not.
+The order is that of `downcase' of each whole text, as it always was."
+  (let ((pool (string-to-list "aAbBzZ_[`~ 0é ÉßẞσςΣİıiIǅǄǆ中文Ж ж"))
+        (state (random "grid-table-compare")))
+    (ignore state)
+    (dotimes (_ 3000)
+      (let* ((make (lambda ()
+                     (apply #'string
+                            (cl-loop repeat (random 5)
+                                     collect (nth (random (length pool)) pool)))))
+             (left (funcall make))
+             (right (if (zerop (random 4)) (upcase left) (funcall make)))
+             (a (downcase left)) (b (downcase right))
+             (want (cond ((string= a b) 0) ((string< a b) -1) (t 1))))
+        (should (equal (list left right (grid-calc-compare left right))
+                       (list left right want))))))
+  (should (= (grid-calc-compare "North" "NORTH") 0))
+  (should (= (grid-calc-compare "apple" "Banana") -1))
+  (should (= (grid-calc-compare "abc" "ab") 1)))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with
