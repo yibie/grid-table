@@ -9,7 +9,10 @@
 # whose name matches the regexp CORPUS_DAY_FIRST, by default those of the
 # formulas project, reads text dates with the day before the month, and
 # one matching CORPUS_MAC, by default those too, numbers characters as
-# Excel on a Mac does.
+# Excel on a Mac does.  A workbook last saved by Excel 2007, or by Excel
+# 2008 for the Mac, whose version is 12, is left out unless
+# CORPUS_EXCEL_12=1: its cached values are those of a version too old to
+# hold the rest to.
 #
 # run.sh --one RESULTS-DIR WORKBOOK runs a single workbook.
 #
@@ -23,8 +26,8 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 : "${EMACS:=emacs}" "${JOBS:=8}" "${LIMIT:=120}" "${FRESH:=0}"
-: "${CORPUS_DAY_FIRST=/formulas/}" "${CORPUS_MAC=/formulas/}"
-export EMACS JOBS LIMIT CORPUS_DAY_FIRST CORPUS_MAC
+: "${CORPUS_DAY_FIRST=/formulas/}" "${CORPUS_MAC=/formulas/}" "${CORPUS_EXCEL_12:=0}"
+export EMACS JOBS LIMIT CORPUS_DAY_FIRST CORPUS_MAC CORPUS_EXCEL_12
 
 limit() {
   if command -v timeout >/dev/null; then timeout -k 5 "$LIMIT" "$@"
@@ -71,6 +74,11 @@ if [ "${1:-}" = --one ]; then
   id=$(printf '%s' "$file" | shasum | cut -c1-16)
   record=$results/$id.json
   [ -s "$record" ] && exit 0
+  if [ "$CORPUS_EXCEL_12" != 1 ] &&
+       unzip -p "$file" docProps/app.xml 2>/dev/null |
+         grep -Eq '<([A-Za-z0-9]+:)?AppVersion>12\.'; then
+    exit 0
+  fi
   start=$(date +%s)
   limit "$EMACS" -Q --batch -L "$lisp" -L "$lisp/plugins" \
     -l "$here/grid-table-corpus.el" -f grid-table-corpus-run-file \
