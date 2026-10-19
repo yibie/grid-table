@@ -602,12 +602,19 @@ through 1 when CONST is false."
 ;;;----------------------------------------------------------------------
 
 (grid-calc-define min (&rest (numbers values))
-  "The smallest of NUMBERS; 0 when there are none."
+  "The smallest of NUMBERS; 0 when there are none.
+An error among them is that error, and text that is no number is
+#VALUE!, whichever comes first, as MAX reads them."
+  :errors t
   (let ((numbers (grid-calc-numbers numbers)))
     (if numbers (apply #'min numbers) 0)))
 
 (grid-calc-define max (&rest (numbers values))
-  "The largest of NUMBERS; 0 when there are none."
+  "The largest of NUMBERS; 0 when there are none.
+An error among them is that error, and text that is no number is
+#VALUE!, whichever comes first as Excel reads them: MAX(\"abc\",NA())
+is #VALUE! and MAX(NA(),\"abc\") is #N/A."
+  :errors t
   (let ((numbers (grid-calc-numbers numbers)))
     (if numbers (apply #'max numbers) 0)))
 

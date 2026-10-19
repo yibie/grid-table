@@ -3991,6 +3991,20 @@ it did, and text that is no number is still #VALUE!."
                   ("=EXP(\"100€\")" . 2.6881171418161356e+43)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-max-reads-its-arguments-in-order ()
+  "MAX and MIN give the error of the first argument that is one or no number.
+IronCalc's MAX_MIN workbook has MAX(\"abc\",NA()) as #VALUE! and
+MAX(NA(),\"abc\") as #N/A, as Excel reads them from the left."
+  (dolist (case '(("=MAX(\"abc\",NA())" . "#VALUE!")
+                  ("=MAX(NA(),\"abc\")" . "#N/A")
+                  ("=MAX(1,\"abc\")" . "#VALUE!")
+                  ("=MAX(NA(),1)" . "#N/A")
+                  ("=MAX(1,2)" . 2)
+                  ("=MIN(\"abc\",NA())" . "#VALUE!")
+                  ("=MIN(NA(),\"abc\")" . "#N/A")
+                  ("=MIN(1,2)" . 1)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
