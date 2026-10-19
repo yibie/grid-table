@@ -1835,9 +1835,13 @@ of one row or column stands for each row or column."
    ((and (zerop base) (zerop exponent)) (grid-calc-raise "#NUM!"))
    ((and (zerop base) (< exponent 0)) (grid-calc-raise "#DIV/0!"))
    ((and (< base 0) (/= exponent (truncate exponent)))
-    ;; Excel has no root of a negative number, not even an odd one:
-    ;; =(-8)^(1/3) is #NUM!.
-    (grid-calc-raise "#NUM!"))
+    ;; Excel takes the odd root of a negative number, as =(-8)^(1/3) is
+    ;; -2; any other fraction of one, as =(-8)^0.5, is no number.
+    (let ((root (/ 1.0 (float exponent))))
+      (if (and (<= (abs (- root (round root))) 1e-12)
+               (cl-oddp (round root)))
+          (- (expt (float (- base)) exponent))
+        (grid-calc-raise "#NUM!"))))
    ((and (integerp base) (integerp exponent) (>= exponent 0)
          (< (* exponent (log (max 2 (abs base)) 2)) 62))
     (expt base exponent))

@@ -83,7 +83,9 @@
   (should (equal (grid-table-formula-test--eval "=2^3") 8))
   (should (equal (grid-table-formula-test--eval "=(-2)^3") -8))
   (should (equal (grid-table-formula-test--eval "=(-4)^-1") -0.25))
-  (should (equal (grid-table-formula-test--eval "=(-8)^(1/3)") "#NUM!"))
+  ;; An odd root of a negative number is real: see the POWER workbook.
+  (should (equal (grid-table-formula-test--eval "=(-8)^(1/3)") -2))
+  (should (equal (grid-table-formula-test--eval "=(-8)^(1/2)") "#NUM!"))
   (should (equal (grid-table-formula-test--eval "=-5") -5))
   (should (equal (grid-table-formula-test--eval "=+5") 5))
   (should (equal (grid-table-formula-test--eval "=--5") 5))
@@ -4185,6 +4187,21 @@ number, as #DIV/0!; a fraction of 1 leaves the number as it is."
                   ("=DOLLARDE(1.02,16)" . 1.125)
                   ("=DOLLARDE(-1.02,16)" . -1.125)
                   ("=DOLLARFR(1.125,32)" . 1.04)))
+    (grid-table-formula-test--should-be case)))
+
+(ert-deftest grid-table-formula-a-negative-number-has-an-odd-root ()
+  "A negative base takes the root an odd exponent asks for.
+IronCalc's POWER workbook has POWER(-8,1/3) and (-8)^(1/3) as -2, where
+(-8)^0.5 and (-8)^(2/3) are no number at all."
+  (dolist (case '(("=POWER(-8,1/3)" . -2)
+                  ("=(-8)^(1/3)" . -2)
+                  ("=(-8)^(-1/3)" . -0.5)
+                  ("=(-8)^(1/5)" . -1.5157165665103982)
+                  ("=POWER(-2,3)" . -8)
+                  ("=(-8)^2" . 64)
+                  ("=(-8)^0.5" . "#NUM!")
+                  ("=(-8)^(2/3)" . "#NUM!")
+                  ("=(-8)^(5/3)" . "#NUM!")))
     (grid-table-formula-test--should-be case)))
 
 (provide 'grid-table-formula-test)
