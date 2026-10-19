@@ -527,11 +527,25 @@ The density of DF 0 is #DIV/0!, as in Excel."
   (grid-calc--require (>= x 0) (>= df 1) (memq tails '(1 2)))
   (* tails (- 1 (grid-calc--t-cdf x df))))
 
+(defun grid-calc--invert-below (cdf p high)
+  "Return X below HIGH where the rising CDF is P, the way down pushed out.
+A chance far below a half needs an X far below 0, past where 1 - P
+would have told it from a half."
+  (let ((low (if (zerop high) -1.0 (- (abs high)))) (tries 0))
+    (while (and (> (funcall cdf low) p) (< tries 200))
+      (setq low (* 2.0 low) tries (1+ tries)))
+    (grid-calc--invert cdf p low high)))
+
 (defun grid-calc--t-inverse (p df)
   "Return X where the t distribution of DF degrees of freedom is P."
   (grid-calc--require (< 0 p 1) (>= df 1))
   (if (< p 0.5)
-      (- (grid-calc--t-inverse (- 1 p) df))
+      ;; A chance so far below a half that 1 - P is a whole is read as it
+      ;; stands, from the far side of 0, where its digits still are.
+      (let ((upper (- 1.0 p)))
+        (if (< upper 1.0)
+            (- (grid-calc--t-inverse upper df))
+          (grid-calc--invert-below (lambda (x) (grid-calc--t-cdf x df)) p 0.0)))
     (grid-calc--invert (lambda (x) (grid-calc--t-cdf x df)) p 0.0 4.0)))
 
 (grid-calc-define t.inv ((p number) (df integer))

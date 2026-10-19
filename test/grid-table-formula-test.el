@@ -4081,6 +4081,19 @@ the GAMMA.INV of that error follows it."
                   ("=GAMMA.INV(0,0.5,1)" . 0)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-a-chance-far-below-a-half-still-inverts ()
+  "T.INV of a chance below 1E-16 is read from the far side of 0.
+IronCalc's T_DIST workbook has T.INV(1.230468749943611E-56,10) as
+-1000000.0000000001, where 1 - P is a whole and tells nothing."
+  (dolist (case '(("=T.INV(1.230468749943611E-56,10)" . -1000000.0000000001)
+                  ("=T.INV(0.01,9)" . -2.8214379250258093)))
+    (grid-table-formula-test--should-be case))
+  ;; The far side of 0 is where the little of the tail is, not the whole.
+  (should (< (abs (- (grid-table-formula-test--eval
+                      "=T.INV(1.230468749943611E-56,10)")
+                     -1000000.0))
+             1e-6)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here
