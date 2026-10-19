@@ -4172,6 +4172,21 @@ the ~ itself at 4; ~~ and ~d still stand for a ~ and a d."
                   ("=SEARCH(\"Lat???\",\"Late\",1)" . "#VALUE!")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-a-dollar-fraction-below-one-is-no-fraction ()
+  "DOLLARDE and DOLLARFR take no fraction below one.
+IronCalc's DOLLARs workbook has DOLLARFR(10,-2) and DOLLARDE(10,-2) as
+#NUM!, and a fraction that comes to nothing, as 0 or 0.5 cut to a whole
+number, as #DIV/0!; a fraction of 1 leaves the number as it is."
+  (dolist (case '(("=DOLLARFR(10,-2)" . "#NUM!")
+                  ("=DOLLARDE(10,-2)" . "#NUM!")
+                  ("=DOLLARFR(10,0)" . "#DIV/0!")
+                  ("=DOLLARDE(10,0.5)" . "#DIV/0!")
+                  ("=DOLLARFR(10,1)" . 10)
+                  ("=DOLLARDE(1.02,16)" . 1.125)
+                  ("=DOLLARDE(-1.02,16)" . -1.125)
+                  ("=DOLLARFR(1.125,32)" . 1.04)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

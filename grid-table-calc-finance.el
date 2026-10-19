@@ -1202,23 +1202,29 @@ others are less by 1 + RATE."
     scale))
 
 (grid-calc-define dollarde ((fractional number) (fraction number))
-  "FRACTIONAL read as a fraction of FRACTION, as a decimal."
+  "FRACTIONAL read as a fraction of FRACTION, as a decimal.
+A FRACTION below nothing is #NUM!, and one that comes to nothing, as 0.5
+cut to a whole number, is #DIV/0!, as Excel has them."
   :toolpak t
   (let* ((fraction (grid-calc-int fraction))
          (sign (if (< fractional 0) -1 1))
          (whole (truncate (abs fractional)))
          (part (- (abs fractional) whole)))
+    (when (minusp fraction) (grid-calc-raise "#NUM!"))
     (when (zerop fraction) (grid-calc-raise "#DIV/0!"))
     (* sign (+ whole (/ (* part (grid-calc--finance-dollar-scale fraction))
                         (float fraction))))))
 
 (grid-calc-define dollarfr ((fractional number) (fraction number))
-  "FRACTIONAL as a decimal read back as a fraction of FRACTION."
+  "FRACTIONAL as a decimal read back as a fraction of FRACTION.
+A FRACTION below nothing is #NUM!, and one that comes to nothing, as 0.5
+cut to a whole number, is #DIV/0!, as Excel has them."
   :toolpak t
   (let* ((fraction (grid-calc-int fraction))
          (sign (if (< fractional 0) -1 1))
          (whole (truncate (abs fractional)))
          (part (- (abs fractional) whole)))
+    (when (minusp fraction) (grid-calc-raise "#NUM!"))
     (when (zerop fraction) (grid-calc-raise "#DIV/0!"))
     (* sign (+ whole (/ (* part (float fraction))
                         (grid-calc--finance-dollar-scale fraction))))))
