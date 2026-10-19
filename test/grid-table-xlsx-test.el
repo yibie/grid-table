@@ -12,15 +12,18 @@
 ;; "greater than 5" conditional format on C3:C5 and a total in E6.  Sheet
 ;; Sheet2 holds a formula that reads the first sheet and a two-line text.
 ;;
-;; test/fixtures/links.xlsx is a hand-written package with one external
-;; link, xl/externalLinks/externalLink1.xml and its relationship to
-;; other.xlsx.  That link caches a small sheet, A1:B3 numbers, C1 text,
-;; D1 TRUE and E1 #N/A, lists two more sheets, one whose refresh failed
-;; and one it read as empty, and the workbook's Sheet1 holds in A1 to A16
-;; the formulas that read them: a cell, a range, a whole column, a
-;; VLOOKUP, a name pointing into it, sheets and a link it has not, one
-;; INDIRECT naming it, and what it cached as text, TRUE, an error and a
-;; blank.
+;; test/fixtures/links.xlsx is a hand-written package with two external
+;; links: xl/externalLinks/externalLink1.xml, an externalBook relating it
+;; to other.xlsx, and externalLink2.xml, a DDE one.  The first caches a
+;; small sheet, A1:B3 numbers, C1 text, D1 TRUE and E1 #N/A, lists two
+;; more sheets, one whose refresh failed and one it read as empty, and
+;; keeps five names, one of a cell, one of a range, one of a sheet, one
+;; defined as #REF! and one with no definition at all.  The workbook's
+;; Sheet1 holds in A1 to A25 the formulas that read all of it: cells,
+;; ranges, a whole column, a VLOOKUP, a name of this workbook pointing
+;; into it, sheets and links it has not, INDIRECT naming it, what it
+;; cached as text, TRUE, an error and a blank, and those names, read
+;; through [1]!Name, [1]Sheet1!Name, [0]!Name and a table of it.
 ;;
 ;; test/fixtures/compat.xlsx began as a workbook grid-table wrote and was
 ;; then edited by hand into shapes other writers produce and umya used to
@@ -894,11 +897,13 @@ write began with, numbered among those the write made itself."
   (grid-table-xlsx-test--with-file file
     (copy-file grid-table-xlsx-test--links file)
     (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
-                   '("externalLinks/externalLink1.xml")))
+                   '("externalLinks/externalLink1.xml"
+                     "externalLinks/externalLink2.xml")))
     (grid-table-xlsx-write-workbook (grid-table-xlsx-create-workbook file) file)
     ;; The link is still there, and so are the cells and name that name it.
     (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
-                   '("externalLinks/externalLink1.xml")))
+                   '("externalLinks/externalLink1.xml"
+                     "externalLinks/externalLink2.xml")))
     (let* ((workbook (grid-table-xlsx-create-workbook file))
            (sheet (grid-workbook-sheet workbook "Sheet1")))
       (should (equal (grid-get-raw-value-at sheet 0 0) "=[1]Sheet1!$A$1"))
@@ -912,18 +917,25 @@ write began with, numbered among those the write made itself."
       (grid-set-raw-value-at source 1 1 "8")
       (grid-table-xlsx-write-data-source source file "Sheet1"))
     (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
-                   '("externalLinks/externalLink1.xml")))
+                   '("externalLinks/externalLink1.xml"
+                     "externalLinks/externalLink2.xml")))
     (grid-table-xlsx-module-set-names file "")
     (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
-                   '("externalLinks/externalLink1.xml")))
+                   '("externalLinks/externalLink1.xml"
+                     "externalLinks/externalLink2.xml")))
     (when (executable-find "unzip")
       (let ((workbook (grid-table-xlsx-test--unzip file "xl/workbook.xml"))
             (rels (grid-table-xlsx-test--unzip file "xl/_rels/workbook.xml.rels"))
             (types (grid-table-xlsx-test--unzip file "[Content_Types].xml"))
             (part (grid-table-xlsx-test--unzip file "xl/externalLinks/externalLink1.xml")))
-        ;; The reference comes after the sheets, as the schema orders it.
-        (should (string-match-p "</sheets><externalReferences><externalReference r:id=\"rId[0-9]+\"/></externalReferences>"
-                                workbook))
+        ;; The references come after the sheets, as the schema orders them,
+        ;; one for each link.
+        (should (string-match-p
+                 (concat "</sheets><externalReferences>"
+                         "<externalReference r:id=\"rId[0-9]+\"/>"
+                         "<externalReference r:id=\"rId[0-9]+\"/>"
+                         "</externalReferences>")
+                 workbook))
         ;; Its r:id names an external link of the relationships.
         (should (string-match-p "Id=\"rId[0-9]+\" Type=\"[^\"]*/externalLink\" Target=\"externalLinks/externalLink1.xml\""
                                 rels))
@@ -958,9 +970,25 @@ and a cell it holds no value for is blank."
     (should (equal (funcall value 4) "#REF!"))
     (should (equal (funcall value 5) "#REF!"))
     (should (equal (funcall value 6) "#REF!"))
-    (should (equal (funcall value 15) "#REF!"))
+    (should (equal (funcall value 14) "#REF!"))
     ;; A sheet it cached no cell for but did read holds nothing to find.
-    (should (equal (funcall value 16) 0))
+    (should (equal (funcall value 15) 0))
+    ;; The names it keeps, of a cell, of a range, and of one of its sheets.
+    (should (equal (funcall value 16) 2))
+    (should (equal (funcall value 17) 35))
+    (should (equal (funcall value 18) 30))
+    ;; A name it defines as #REF!, and one it keeps no definition of, read
+    ;; as those do; a name it has not is #NAME?; a table of it is #REF!;
+    ;; and a DDE link, which no formula reads, is #REF!.
+    (should (equal (funcall value 19) "#REF!"))
+    (should (equal (funcall value 20) "#NAME?"))
+    (should (equal (funcall value 21) "#REF!"))
+    (should (equal (funcall value 22) "#REF!"))
+    ;; INDIRECT reads no name of another workbook either, and [0] is the
+    ;; name of this one.
+    (should (equal (funcall value 23) "#REF!"))
+    (should (equal (funcall value 24) 30))
+    (should (equal (funcall value 25) "#NAME?"))
     ;; What it reads is no sheet of this workbook.
     (should (equal (grid-workbook-sheet-names workbook) '("Sheet1")))))
 

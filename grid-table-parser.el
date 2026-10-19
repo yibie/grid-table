@@ -50,32 +50,50 @@ put the second in group 2.")
 (defconst grid-parser--whole-rows-regexp "\\$?[0-9]+:\\$?[0-9]+"
   "Matches a range of whole rows, such as 2:5.")
 
+(defconst grid-parser--external-prefix-regexp "\\[\\([0-9]+\\)\\]!"
+  "Matches the number of another workbook, up to its exclamation mark.
+[1]!Name is a name of that workbook, one of no single sheet.")
+
+(defun grid-parser-external-sheet (sheet)
+  "Return (LINK . SHEET) when SHEET names another workbook, or nil.
+[1]Sheet1 is the sheet Sheet1 of the first workbook a file links to, and
+[1] with no sheet is a name of that workbook that no single sheet holds."
+  (when (and (stringp sheet)
+             (string-match "\\`\\[\\([0-9]+\\)\\]\\(.*\\)\\'" sheet))
+    (cons (string-to-number (match-string 1 sheet)) (match-string 2 sheet))))
+
 (defun grid-parser-sheet-prefix-at (text pos)
   "Return (END . NAME) for the sheet prefix that starts at POS in TEXT.
 END is the position after the exclamation mark.  Return nil when no
-prefix starts there."
-  (let ((char (aref text pos)))
-    ;; Looking for a match that starts further on would be wasted work.
-    (when (and (or (eq char ?') (eq char ?_) (eq char ?\[)
-                   (eq (get-char-code-property char 'general-category) 'Lo)
-                   (memq (get-char-code-property char 'general-category)
-                         '(Lu Ll Lt Lm)))
-               (eq (string-match grid-parser-sheet-prefix-regexp text pos) pos)
-               ;; A1:Sheet2!B3 is a range from A1, as no sheet named
-               ;; like a cell goes without apostrophes.
-               (not (and (match-beginning 4)
-                         (save-match-data
-                           (let ((case-fold-search nil))
-                             (grid-parser--cell-text-p
-                              (upcase (substring text pos
-                                                 (1- (match-beginning 4))))))))))
-      (cons (match-end 0)
-            (cond ((match-beginning 2)
-                   (concat (string-replace "''" "'" (match-string 1 text)) ":"
-                           (string-replace "''" "'" (match-string 2 text))))
-                  ((match-beginning 1)
-                   (string-replace "''" "'" (match-string 1 text)))
-                  (t (match-string 3 text)))))))
+prefix starts there.  [1]!Name is such a prefix: a name of another
+workbook, one that no single sheet of it holds, names it [1]."
+  (let* ((char (aref text pos))
+         (external (and (eq char ?\[)
+                        (string-match grid-parser--external-prefix-regexp text pos)
+                        (= (match-beginning 0) pos))))
+    (if external
+        (cons (match-end 0) (concat "[" (match-string 1 text) "]"))
+      ;; Looking for a match that starts further on would be wasted work.
+      (when (and (or (eq char ?') (eq char ?_) (eq char ?\[)
+                     (eq (get-char-code-property char 'general-category) 'Lo)
+                     (memq (get-char-code-property char 'general-category)
+                           '(Lu Ll Lt Lm)))
+                 (eq (string-match grid-parser-sheet-prefix-regexp text pos) pos)
+                 ;; A1:Sheet2!B3 is a range from A1, as no sheet named
+                 ;; like a cell goes without apostrophes.
+                 (not (and (match-beginning 4)
+                           (save-match-data
+                             (let ((case-fold-search nil))
+                               (grid-parser--cell-text-p
+                                (upcase (substring text pos
+                                                   (1- (match-beginning 4))))))))))
+        (cons (match-end 0)
+              (cond ((match-beginning 2)
+                     (concat (string-replace "''" "'" (match-string 1 text)) ":"
+                             (string-replace "''" "'" (match-string 2 text))))
+                    ((match-beginning 1)
+                     (string-replace "''" "'" (match-string 1 text)))
+                    (t (match-string 3 text))))))))
 
 ;; Helper to create a token
 (defun grid-parser-make-token (type value)
@@ -168,6 +186,21 @@ Brackets nest; an apostrophe makes the character after it plain."
       (setq pos (1+ pos)))
     (or end (error "Unclosed ["))))
 
+(defun grid-parser--quoted-at (text pos)
+  "Return (END . NAME) for the name in apostrophes that starts at POS in TEXT.
+END is the position after the closing apostrophe, and NAME what it holds,
+a doubled apostrophe standing for one."
+  (let ((end (1+ pos)) (len (length text)) found)
+    (while (and (not found) (< end len))
+      (if (eq (aref text end) ?')
+          (if (and (< (1+ end) len) (eq (aref text (1+ end)) ?'))
+              (setq end (+ end 2))
+            (setq found end))
+        (setq end (1+ end))))
+    (when found
+      (cons (1+ found)
+            (string-replace "''" "'" (substring text (1+ pos) found))))))
+
 (defun grid-parser--word-at (text pos)
   "Return (END . WORD) for the name that starts at POS in TEXT."
   (let ((end pos) (len (length text)))
@@ -259,8 +292,24 @@ token; elsewhere it separates tokens and is dropped."
                ((and (< (car prefix) len)
                      (grid-parser--name-start-p (aref formula-str (car prefix))))
                 (let ((word (grid-parser--word-at formula-str (car prefix))))
-                  (push (list 'NAME-REF (upcase (cdr word)) (cdr prefix)) tokens)
-                  (setq pos (car word))))))))
+                  (if (and (grid-parser-external-sheet (cdr prefix))
+                           (< (car word) len)
+                           (eq (aref formula-str (car word)) ?\[))
+                      ;; A table of another workbook is #REF!: only the
+                      ;; workbook that holds a table reads one.
+                      (progn
+                        (push (grid-parser-make-token grid-parser-token-type-error
+                                                      "#REF!")
+                              tokens)
+                        (setq pos (grid-parser--bracket-end formula-str (car word))))
+                    (push (list 'NAME-REF (upcase (cdr word)) (cdr prefix)) tokens)
+                    (setq pos (car word)))))
+               ;; A name of another workbook in apostrophes: [1]!'ES #F'
+               ((and (grid-parser-external-sheet (cdr prefix))
+                     (eq (aref formula-str (car prefix)) ?'))
+                (let ((quoted (grid-parser--quoted-at formula-str (car prefix))))
+                  (push (list 'NAME-REF (upcase (cdr quoted)) (cdr prefix)) tokens)
+                  (setq pos (car quoted))))))))
 
          ;; !A1 is A1 on the sheet the formula is worked out on, as a
          ;; name may say: CELL("filename",!A1)

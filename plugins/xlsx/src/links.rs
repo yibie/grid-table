@@ -474,6 +474,16 @@ struct Cached {
     value: String,
 }
 
+/// A name of another workbook the link keeps, as its externalLink part does:
+/// the name, the sheet of the other workbook it belongs to, or nil for one
+/// of the whole workbook, and what it is defined as, as the part writes it,
+/// nil when the link keeps no definition, as a macro's name does.
+struct NameDef {
+    name: String,
+    sheet: Option<String>,
+    text: Option<String>,
+}
+
 /// The cached sheets of one external link, in the order it names them.
 struct CachedSheets {
     sheets: Vec<(String, Vec<Cached>)>,
@@ -546,6 +556,113 @@ pub(crate) fn link_sheets(path: &Path, order: usize) -> Result<String, String> {
     }
     out.push_str("))");
     Ok(out)
+}
+
+/// The kind of the link numbered ORDER of the workbook at PATH, and the
+/// names it defines, as a Lisp form: (:kind externalBook :names (("X" "Sheet"
+/// "='Sheet'!$A$1") ...)).  A name's sheet is nil for one of the whole
+/// workbook, and its text nil when the link keeps no definition.
+pub(crate) fn link_names(path: &Path, order: usize) -> Result<String, String> {
+    let file = File::open(path).map_err(|error| format!("{path:?}: {error}"))?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|error| format!("{path:?}: {error}"))?;
+    let parts = referenced_parts(&mut zip, path)?;
+    let part = order
+        .checked_sub(1)
+        .and_then(|at| parts.get(at))
+        .ok_or_else(|| format!("{path:?}: no external link {order}"))?;
+    let bytes = entry(&mut zip, part)?.ok_or_else(|| format!("{path:?}: no part {part}"))?;
+    let (kind, names) = book_names(&bytes);
+    let mut out = String::from("(:kind ");
+    out.push_str(kind);
+    out.push_str(" :names (");
+    for (at, name) in names.iter().enumerate() {
+        if at > 0 {
+            out.push(' ');
+        }
+        out.push('(');
+        quote(&mut out, &name.name);
+        out.push(' ');
+        match &name.sheet {
+            Some(sheet) => quote(&mut out, sheet),
+            None => out.push_str("nil"),
+        }
+        out.push(' ');
+        match &name.text {
+            Some(text) => quote(&mut out, text),
+            None => out.push_str("nil"),
+        }
+        out.push(')');
+    }
+    out.push_str("))");
+    Ok(out)
+}
+
+/// Return what kind of link the part XML holds, and the names it defines.
+///
+/// A link is an externalBook, whose names stand in a `<definedNames>` as
+/// `<definedName name="X" refersTo="='Sheet1'!$A$1" sheetId="0"/>`, where
+/// sheetId counts the `<sheetName>`s of the link from zero when the name
+/// belongs to one sheet; a ddeLink or an oleLink has no names a formula
+/// reads, and a sheet it names neither.
+fn book_names(xml: &[u8]) -> (&'static str, Vec<NameDef>) {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut kind = "externalBook";
+    let mut sheets: Vec<String> = Vec::new();
+    let mut names: Vec<NameDef> = Vec::new();
+    let mut text: Option<String> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref event)) | Ok(Event::Empty(ref event)) => {
+                match event.local_name().as_ref() {
+                    b"externalBook" => kind = "externalBook",
+                    b"ddeLink" => kind = "ddeLink",
+                    b"oleLink" => kind = "oleLink",
+                    b"sheetName" => sheets.push(attribute(event, b"val").unwrap_or_default()),
+                    b"definedName" => {
+                        let refers = attribute(event, b"refersTo");
+                        let sheet = attribute(event, b"sheetId")
+                            .and_then(|id| id.parse::<usize>().ok())
+                            .and_then(|id| sheets.get(id).cloned());
+                        names.push(NameDef {
+                            name: attribute(event, b"name").unwrap_or_default(),
+                            sheet,
+                            text: refers,
+                        });
+                        text = Some(String::new());
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(ref event)) => {
+                if let Some(value) = text.as_mut() {
+                    if let Ok(decoded) = event.decode() {
+                        value.push_str(&decoded);
+                    }
+                }
+            }
+            Ok(Event::End(ref event)) => {
+                if event.local_name().as_ref() == b"definedName" {
+                    // A part that writes the definition as its text, as the
+                    // workbook does, rather than as refersTo.
+                    if let Some(value) = text.take() {
+                        if let Some(name) = names.last_mut() {
+                            if name.text.as_deref().unwrap_or_default().is_empty()
+                                && !value.is_empty()
+                            {
+                                name.text = Some(value);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    (kind, names)
 }
 
 /// Return the parts of the external links of ZIP, in the order it names them.

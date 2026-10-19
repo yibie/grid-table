@@ -1234,6 +1234,15 @@ fn external_sheets(path: String, order: i64) -> Result<String> {
     links::link_sheets(Path::new(&path), order.max(0) as usize).map_err(fail)
 }
 
+/// Return the kind of the ORDERth external link of the workbook at PATH and
+/// the names it defines, as (:kind externalBook :names (("X" "Sheet"
+/// "='Sheet'!$A$1") ...)).  Only an externalBook holds names a formula may
+/// read; a ddeLink and an oleLink give nil for the sheet of a name.
+#[defun]
+fn external_names(path: String, order: i64) -> Result<String> {
+    links::link_names(Path::new(&path), order.max(0) as usize).map_err(fail)
+}
+
 /// Return the parts a workbook's external links name, in the order its
 /// formulas count them from 1, separated by U+001E.
 #[defun]

@@ -64,8 +64,9 @@ without it a reference into another sheet is #REF!.")
 (defvar grid-calc-externals t
   "Non-nil makes a reference into another workbook read what it cached.
 A workbook a sheet is not open from has its values cached in the file
-that reads it.  INDIRECT is the exception: Excel gives #REF! for a
-reference into a workbook that is not open, whatever the file caches.")
+that reads it, and its names too.  INDIRECT is the exception: Excel gives
+#REF! for a reference into a workbook that is not open, whatever the file
+caches, and for a name of one.")
 
 (defvar grid-calc-names nil
   "Function that returns the parsed definition of a defined name, or nil.
@@ -105,6 +106,30 @@ SHEET is the sheet NAME was qualified with, as in Sheet1!Rate, or nil;
 MODEL the sheet of the formula using it, by default the one computed."
   (and grid-calc-names
        (funcall grid-calc-names name sheet (or model (car grid-calc--here)))))
+
+(defun grid-calc--external-ast (ast link sheet)
+  "Return AST, read as the definition of a name of another workbook.
+LINK counts the workbooks the file links to from 1; every sheet AST names
+becomes a sheet of that workbook, as [LINK]Sheet, and one that names none
+is SHEET, the sheet of that workbook the name belongs to, when it has one."
+  (pcase ast
+    (`(CELL-REF ,text . ,own)
+     (list 'CELL-REF text (grid-calc--external-sheet (car own) link sheet)))
+    (`(NAME ,name . ,own)
+     (list 'NAME name (grid-calc--external-sheet (car own) link sheet)))
+    ((pred consp)
+     (mapcar (lambda (part) (grid-calc--external-ast part link sheet)) ast))
+    (_ ast)))
+
+(defun grid-calc--external-sheet (own link sheet)
+  "Return the sheet a reference into OWN of the LINKth workbook reads.
+OWN is the sheet the reference names, nil when it names none, and SHEET the
+sheet of that workbook its name belongs to, or nil.  A reference that names
+no sheet of a workbook whose name belongs to none is #REF!."
+  (let ((prefix (format "[%d]" link)))
+    (cond ((and (stringp own) (string-prefix-p "[" own)) own)
+          (own (concat prefix own))
+          (t (concat prefix (or sheet ""))))))
 
 (defconst grid-calc--cell-text-regexp
   "\\`\\(\\$?\\)\\([A-Za-z]\\{1,3\\}\\)\\(\\$?\\)\\([0-9]+\\)\\'"

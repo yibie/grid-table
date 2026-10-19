@@ -28,6 +28,7 @@
 (declare-function grid-table-xlsx-module-links "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-externals "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-external-sheets "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-external-names "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-set-names "grid-table-xlsx-module")
 
 (defcustom grid-table-xlsx-module-file nil
@@ -810,30 +811,95 @@ the header row."
         source))))
 
 (defun grid-table-xlsx--external-reader (file)
-  "Return the function that reads the cached sheets of FILE's other workbooks.
-It takes a link number, counted from 1 as the workbook's formulas count
-them, and a sheet name, and returns the read-only model of that sheet, or
-nil when the file has no such link or sheet.  Caches are read when a
-formula first asks for one: a link may hold thousands of cells no formula
-reads."
-  (let ((links (make-hash-table :test 'eql))
+  "Return the function that reads the workbooks FILE links to.
+It takes :sheet, a LINK number, counted from 1 as the file's formulas
+count them, and a sheet name, and returns the read-only model of that
+sheet; or :name, a LINK, a sheet name and a NAME, and returns NAME read on
+the sheets of that workbook, as a formula of the file reads it.  Nil when
+the link has no such sheet, or keeps no such name, and #REF! for a name of
+a link that is a DDE or an OLE one.  What the link cached is read when a
+formula first asks for it: it may hold thousands of cells no formula reads."
+  (let ((sheets (make-hash-table :test 'eql))
+        (books (make-hash-table :test 'eql))
         (models (make-hash-table :test 'equal)))
-    (lambda (link sheet)
-      (let ((cached (if (gethash link links)
-                        (gethash link links)
-                      (puthash link
-                               (condition-case nil
-                                   (when-let* ((text (grid-table-xlsx-module-external-sheets
-                                                      file link)))
-                                     (plist-get (car (read-from-string text))
-                                                :sheets))
-                                 (error nil))
-                               links))))
-        (when-let* ((pair (assoc-string sheet cached t)))
-          (or (gethash (cons link sheet) models)
-              (puthash (cons link sheet)
-                       (grid-table-xlsx--external-model (delq nil (cadr pair)))
-                       models)))))))
+    (lambda (op link &rest args)
+      (pcase op
+        (:sheet
+         (when-let* ((pair (assoc-string
+                            (car args)
+                            (grid-table-xlsx--external-sheets file link sheets)
+                            t)))
+           (or (gethash (cons link (car pair)) models)
+               (puthash (cons link (car pair))
+                        (grid-table-xlsx--external-model (delq nil (cadr pair)))
+                        models))))
+        (:name
+         (pcase-let ((`(,sheet ,name) args))
+           (grid-table-xlsx--external-name
+            (grid-table-xlsx--external-book file link books)
+            link sheet name)))))))
+
+(defun grid-table-xlsx--external-sheets (file link cache)
+  "Return the sheets the LINKth workbook FILE links to cached: (NAME CELLS).
+CACHE keeps what was read, under LINK."
+  (if (gethash link cache)
+      (gethash link cache)
+    (puthash link
+             (condition-case nil
+                 (when-let* ((text (grid-table-xlsx-module-external-sheets
+                                    file link)))
+                   (plist-get (car (read-from-string text)) :sheets))
+               (error nil))
+             cache)))
+
+(defun grid-table-xlsx--external-book (file link cache)
+  "Return what the LINKth workbook FILE links to says of itself, or nil.
+It is (:kind KIND :names ((NAME SHEET TEXT) ...)), KIND the kind of link it
+is and SHEET the sheet of that workbook the name belongs to, or nil.  CACHE
+keeps what was read, under LINK."
+  (if (gethash link cache)
+      (gethash link cache)
+    (puthash link
+             (condition-case nil
+                 (when-let* ((text (grid-table-xlsx-module-external-names
+                                    file link)))
+                   (car (read-from-string text)))
+               (error nil))
+             cache)))
+
+(defun grid-table-xlsx--external-name (book link sheet name)
+  "Return the definition of NAME, a name of the LINKth workbook, parsed.
+BOOK is what the link says of itself, and SHEET the sheet NAME was
+qualified with, or nil for one of the whole workbook.  Nil when the link
+keeps no such name, and #REF! for one a DDE or an OLE link holds, or no
+link of the file holds, as Excel reads no name of a workbook it has no
+values of."
+  (if (not (eq (plist-get book :kind) 'externalBook))
+      (list 'ERROR "#REF!")
+    (let* ((names (plist-get book :names))
+           (qualified (and (stringp sheet) (not (string-empty-p sheet))))
+           (found (or (and qualified
+                           (cl-find-if (lambda (entry)
+                                         (and (string-equal-ignore-case
+                                               name (nth 0 entry))
+                                              (stringp (nth 1 entry))
+                                              (string-equal-ignore-case
+                                               sheet (nth 1 entry))))
+                                       names))
+                      ;; A name of one sheet does not stand for one of the
+                      ;; whole workbook, nor the other way about.
+                      (cl-find-if (lambda (entry)
+                                    (and (string-equal-ignore-case
+                                          name (nth 0 entry))
+                                         (null (nth 1 entry))))
+                                  names))))
+      (when-let* ((text (nth 2 found)))
+        (unless (string-empty-p text)
+          (condition-case nil
+              (grid-calc--external-ast
+               (grid-parser-parse (string-trim-left text "="))
+               link (nth 1 found))
+            (error nil)))))))
 
 (defun grid-table-xlsx--external-model (cells)
   "Return the model of a sheet of another workbook, of the cached CELLS.
