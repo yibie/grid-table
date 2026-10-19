@@ -25,6 +25,8 @@ use umya_spreadsheet::structs::drawing::charts::{
 use umya_spreadsheet::structs::drawing::spreadsheet::MarkerType;
 use umya_spreadsheet::structs::{Chart, ChartType};
 
+mod links;
+
 emacs::plugin_is_GPL_compatible!();
 
 /// Separates the records of a write payload.
@@ -1215,11 +1217,23 @@ fn names(path: String) -> Result<String> {
     Ok(out)
 }
 
+/// Return the parts a workbook's external links name, in the order its
+/// formulas count them from 1, separated by U+001E.
+#[defun]
+fn links(path: String) -> Result<String> {
+    let links = links::read(Path::new(&path)).map_err(fail)?;
+    Ok(links.targets().join(&RECORD.to_string()))
+}
+
 /// Give the xlsx file PATH the workbook names of PAYLOAD, records of NAME
 /// and REFERENCE fields, in place of the ones it had.
 #[defun]
 fn set_names(path: String, payload: String) -> Result<()> {
-    let mut book = reader::xlsx::read(Path::new(&path)).map_err(fail)?;
+    let path = Path::new(&path);
+    // External links have no part in umya's model: they are taken out
+    // before the write and given back after it.
+    let links = links::read(path).map_err(fail)?;
+    let mut book = reader::xlsx::read(path).map_err(fail)?;
     book.defined_names_mut().retain(|name| builtin_name(name));
     for sheet in book.sheet_collection_mut() {
         sheet.defined_names_mut().retain(|name| builtin_name(name));
@@ -1233,8 +1247,8 @@ fn set_names(path: String, payload: String) -> Result<()> {
             book.add_defined_names(name);
         }
     }
-    writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
-    Ok(())
+    writer::xlsx::write(&book, path).map_err(fail)?;
+    links::splice(&links, path).map_err(fail)
 }
 
 /// Remove from the xlsx file PATH every sheet not named in NAMES, a list
@@ -1242,7 +1256,9 @@ fn set_names(path: String, payload: String) -> Result<()> {
 #[defun]
 fn prune(path: String, names: String) -> Result<()> {
     let keep: Vec<&str> = names.split(RECORD).collect();
-    let mut book = reader::xlsx::read(Path::new(&path)).map_err(fail)?;
+    let path = Path::new(&path);
+    let links = links::read(path).map_err(fail)?;
+    let mut book = reader::xlsx::read(path).map_err(fail)?;
     let present: Vec<String> = book
         .sheet_collection()
         .iter()
@@ -1255,8 +1271,8 @@ fn prune(path: String, names: String) -> Result<()> {
             left -= 1;
         }
     }
-    writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
-    Ok(())
+    writer::xlsx::write(&book, path).map_err(fail)?;
+    links::splice(&links, path).map_err(fail)
 }
 
 /// Write PAYLOAD as sheet SHEET of the xlsx file PATH.
@@ -1317,5 +1333,9 @@ fn write(path: String, base: Option<String>, sheet: String, payload: String) -> 
     tables(target, &payload);
     filters(target, &payload);
     writer::xlsx::write(&book, Path::new(&path)).map_err(fail)?;
-    Ok(())
+    // The links of the file the sheet came from are the ones [N] counts.
+    match &base {
+        Some(base) => links::keep(Path::new(base), Path::new(&path)).map_err(fail),
+        None => Ok(()),
+    }
 }

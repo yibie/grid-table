@@ -25,6 +25,7 @@
 (declare-function grid-table-xlsx-module-date1904 "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-prune "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-names "grid-table-xlsx-module")
+(declare-function grid-table-xlsx-module-links "grid-table-xlsx-module")
 (declare-function grid-table-xlsx-module-set-names "grid-table-xlsx-module")
 
 (defcustom grid-table-xlsx-module-file nil

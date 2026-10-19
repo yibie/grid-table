@@ -480,7 +480,9 @@ name = "grid-table-xlsx-module"
 version = "0.1.0"
 dependencies = [
  "emacs",
+ "quick-xml",
  "umya-spreadsheet",
+ "zip",
 ]
 
 [[package]]

@@ -12,6 +12,10 @@ crate-type = ["cdylib"]
 [dependencies]
 emacs = "0.23"
 umya-spreadsheet = "3.1"
+# To give a written workbook back its external links, which umya has no
+# model for: the parts of the package are copied as they were.
+quick-xml = "0.41"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [profile.release]
 opt-level = "s"

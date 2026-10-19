@@ -12,6 +12,12 @@
 ;; "greater than 5" conditional format on C3:C5 and a total in E6.  Sheet
 ;; Sheet2 holds a formula that reads the first sheet and a two-line text.
 ;;
+;; test/fixtures/links.xlsx is a hand-written package with one external
+;; link, xl/externalLinks/externalLink1.xml and its relationship to
+;; other.xlsx, a formula [1]Sheet1!$A$1 that reads it and a name
+;; [1]!MonthNames: what a write must give back, as umya has no model for
+;; any of it.
+;;
 ;; test/fixtures/compat.xlsx began as a workbook grid-table wrote and was
 ;; then edited by hand into shapes other writers produce and umya used to
 ;; panic on or drop: cells of row 2 carry no reference, A3:B3 holds one
@@ -34,6 +40,11 @@
   (expand-file-name "compat.xlsx"
                     (file-name-directory grid-table-xlsx-test--fixture)))
 
+(defconst grid-table-xlsx-test--links
+  (expand-file-name "links.xlsx"
+                    (file-name-directory grid-table-xlsx-test--fixture))
+  "A workbook with one external link, as Excel writes it.")
+
 (defconst grid-table-xlsx-test--available
   (ignore-errors (grid-table-xlsx--ensure-module) t))
 
@@ -46,6 +57,18 @@
                        ".xlsx")))
      (unwind-protect (progn ,@body)
        (when (file-exists-p ,var) (delete-file ,var)))))
+
+(defun grid-table-xlsx-test--unzip (file part)
+  "Return PART of the xlsx FILE, as unzip gives it.
+A part named [Content_Types].xml is no pattern to unzip."
+  (with-temp-buffer
+    (call-process "unzip" nil t nil "-p" file
+                  (mapconcat (lambda (char)
+                               (if (memq char '(?[ ?] ?* ?? ?\\))
+                                   (concat "\\" (string char))
+                                 (string char)))
+                             part ""))
+    (buffer-string)))
 
 (defun grid-table-xlsx-test--raw (source row col)
   "Return the raw value at ROW and COL of SOURCE."
@@ -857,6 +880,49 @@ XML reads it so, as Excel does a formula's text and what it gave."
                            (grid-table-xlsx-test--raw source row col)))))
         (should (equal (grid-table-hidden back) '((39))))
         (should (equal (gethash 25 (grid-get-column-widths back)) 20))))))
+
+(ert-deftest grid-table-xlsx-test-write-keeps-external-links ()
+  "A write gives a workbook back the external links it read.
+umya-spreadsheet has no model for them, so the parts, the references
+and the relationships of xl/externalLinks are copied from the file the
+write began with, numbered among those the write made itself."
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (copy-file grid-table-xlsx-test--links file)
+    (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
+                   '("externalLinks/externalLink1.xml")))
+    (grid-table-xlsx-write-workbook (grid-table-xlsx-create-workbook file) file)
+    ;; The link is still there, and so are the cells and name that name it.
+    (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
+                   '("externalLinks/externalLink1.xml")))
+    (let* ((workbook (grid-table-xlsx-create-workbook file))
+           (sheet (grid-workbook-sheet workbook "Sheet1")))
+      (should (equal (grid-get-raw-value-at sheet 0 0) "=[1]Sheet1!$A$1"))
+      (should (equal (grid-get-raw-value-at sheet 1 0) "7"))
+      (should (equal (cdr (assoc-string "othername" (grid-workbook-names workbook) t))
+                     "=[1]!MonthNames")))
+    ;; Saving a sheet of it, and writing only its names, keep the link too.
+    (let ((source (grid-table-xlsx-create-data-source file "Sheet1")))
+      (grid-set-raw-value-at source 1 1 "8")
+      (grid-table-xlsx-write-data-source source file "Sheet1"))
+    (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
+                   '("externalLinks/externalLink1.xml")))
+    (grid-table-xlsx-module-set-names file "")
+    (should (equal (split-string (grid-table-xlsx-module-links file) "\u001e")
+                   '("externalLinks/externalLink1.xml")))
+    (when (executable-find "unzip")
+      (let ((workbook (grid-table-xlsx-test--unzip file "xl/workbook.xml"))
+            (rels (grid-table-xlsx-test--unzip file "xl/_rels/workbook.xml.rels"))
+            (types (grid-table-xlsx-test--unzip file "[Content_Types].xml"))
+            (part (grid-table-xlsx-test--unzip file "xl/externalLinks/externalLink1.xml")))
+        ;; The reference comes after the sheets, as the schema orders it.
+        (should (string-match-p "</sheets><externalReferences><externalReference r:id=\"rId[0-9]+\"/></externalReferences>"
+                                workbook))
+        ;; Its r:id names an external link of the relationships.
+        (should (string-match-p "Id=\"rId[0-9]+\" Type=\"[^\"]*/externalLink\" Target=\"externalLinks/externalLink1.xml\""
+                                rels))
+        (should (string-match-p "/xl/externalLinks/externalLink1.xml" types))
+        (should (string-match-p "<externalBook" part))))))
 
 (provide 'grid-table-xlsx-test)
 
