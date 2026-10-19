@@ -4144,6 +4144,18 @@ text under flow, as \"1e-400\", is 0 as Excel has it."
   (should (equal (grid-table-formula-test--eval "=B1+1" "'1e400") "#VALUE!"))
   (should (equal (grid-table-formula-test--eval "=B1+1" "'1e-400") 1)))
 
+(ert-deftest grid-table-formula-pv-at-a-rate-of-minus-one-divides-by-nothing ()
+  "PV at a rate of -1 has no growth to divide by, and gives #DIV/0!.
+IronCalc's PV workbook has PV(-1,20,300) as #DIV/0!, where PV(-3,0.5,1)
+is #NUM! for what an odd root of a negative growth is not."
+  (dolist (case '(("=PV(-1,20,300)" . "#DIV/0!")
+                  ("=PV(-1,20,0)" . "#DIV/0!")
+                  ("=PV(-1,-2,300)" . "#DIV/0!")
+                  ("=PV(-3,0.5,1)" . "#NUM!")
+                  ("=PV(-0.5,2,100)" . -600)
+                  ("=PV(0.05,5,10)" . -43.29476670630824)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

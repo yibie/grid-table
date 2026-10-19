@@ -43,6 +43,9 @@ TYPE non-zero pays at the start of each period."
     (if (zerop rate)
         (- (+ future (* payment periods)))
       (let ((growth (grid-calc--growth rate periods)))
+        ;; A rate of -1 leaves nothing of the growth, and nothing to
+        ;; divide by: Excel gives #DIV/0! for PV(-1,20,300).
+        (when (zerop growth) (grid-calc-raise "#DIV/0!"))
         (/ (- (+ future (/ (* payment (+ 1 (* rate type)) (- growth 1)) rate)))
            growth)))))
 
