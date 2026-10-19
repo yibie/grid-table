@@ -4286,6 +4286,14 @@ Excel writes 1234567 under \"0.0,, \"\"M\"\"\" as 1.2 M, in millions."
                   ("=TEXT(1234567,\"#,##0,,\")" . "1")))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-name-is-no-r1c1-reference ()
+  "R, C and references in the R1C1 style cannot be names, as in Excel.
+Excel's rules for names keep out C, c, R and r alone, and R1C1."
+  (dolist (name '("R" "r" "C" "c" "R1C1" "rc" "RC" "R2C" "RC3" "C3" "r10c20"))
+    (should (grid-calc-name-problem name)))
+  (dolist (name '("Rate" "Cost" "RC_total" "R1C1x" "CR" "Rx" "s2a1"))
+    (should-not (grid-calc-name-problem name))))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with

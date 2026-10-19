@@ -203,6 +203,11 @@ RATE(...) the function."
            (grid-parser--cell-text-p
             (upcase (concat (match-string 1 name) (match-string 2 name)))))
       "A name cannot be a cell reference")
+     ;; R and C alone, and R1C1, RC, R2C or C3, are references in the
+     ;; R1C1 style, which Excel keeps out of names too.
+     ((let ((case-fold-search t))
+        (string-match-p "\\`\\(?:r[0-9]*\\(?:c[0-9]*\\)?\\|c[0-9]*\\)\\'" name))
+      "A name cannot be a reference in the R1C1 style, as R, C or R1C1")
      ((member upper '("TRUE" "FALSE")) "TRUE and FALSE cannot be names"))))
 
 (defvar grid-calc-current-sheet nil
