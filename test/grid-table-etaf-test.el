@@ -1638,8 +1638,9 @@ to it."
                  2))
       ;; Dragged two empty columns further, it is still drawn, there.
       (etaf-drag-step (grid-table-etaf--runtime) 'grid-table-etaf-chart-0
-                      (* 2 (+ 2 grid-table-etaf--blank-col-chars)) 0)
+                      (* 2 (grid-table-etaf--col-pixels state 3)) 0)
       (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 5)))
+      (should-not (plist-get (car (grid-table-charts source)) :offset))
       (let ((geometry (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0)))
         (should geometry)
         (should (>= (plist-get geometry :x)
@@ -1652,6 +1653,60 @@ to it."
       (should (equal (grid-table-etaf-selection) '(0 0 5 2)))
       (grid-table-etaf-chart-range)
       (should (equal (plist-get (car (grid-table-charts source)) :range) "A1:C6")))))
+
+(ert-deftest grid-table-etaf-charts-move-to-the-pixel ()
+  "A dragged chart stands where it is let go, not on a cell's edge.
+While the pointer moves only its box moves; letting go changes the
+sheet, as one undo step."
+  (grid-table-etaf-test--with-grid (12 3 120 24)
+    (let* ((source grid-table--data-source)
+           (state grid-table-etaf--state)
+           (char (grid-table-etaf--char-width))
+           (drag (lambda (phase dx)
+                   (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
+                            (list :phase phase :delta (cons dx 0)))))
+           x)
+      (grid-table-etaf-goto 0 0)
+      (grid-table-etaf-goto 5 1 t)
+      (grid-table-etaf-insert-chart 'column)
+      (setq x (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x))
+      (funcall drag 'start 0)
+      (funcall drag 'move (* 3 char))
+      ;; The box moved; the sheet did not.
+      (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                 (+ x (* 3 char))))
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 3)))
+      (funcall drag 'end (* 3 char))
+      (let ((chart (car (grid-table-charts source))))
+        (should (equal (plist-get chart :anchor) '(0 . 3)))
+        (should (equal (plist-get chart :offset) '(3.0 . 0))))
+      (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                 (+ x (* 3 char))))
+      ;; Back where it started: no offset is kept, and the box is back too.
+      (funcall drag 'start 0)
+      (funcall drag 'move (* 5 char))
+      (funcall drag 'end (- (* 3 char)))
+      (should-not (plist-get (car (grid-table-charts source)) :offset))
+      (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                 x))
+      ;; A cancelled drag leaves the chart and its box where they were.
+      (funcall drag 'start 0)
+      (funcall drag 'move (* 7 char))
+      (funcall (grid-table-etaf--drag-chart (current-buffer) 0) '(:phase cancel))
+      (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                 x))
+      ;; Each drag that moved it is one undo step.
+      (grid-table-etaf-undo)
+      (should (equal (plist-get (car (grid-table-charts source)) :offset) '(3.0 . 0)))
+      (grid-table-etaf-undo)
+      (should-not (plist-get (car (grid-table-charts source)) :offset))
+      ;; Moving it to the cursor puts it on the cell's edge.
+      (grid-table-etaf-redo)
+      (grid-table-etaf-goto 2 1)
+      (grid-table-etaf-chart-next)
+      (grid-table-etaf-chart-move-here)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(2 . 1)))
+      (should-not (plist-get (car (grid-table-charts source)) :offset)))))
 
 (ert-deftest grid-table-etaf-paste-counts-the-cells-pasted ()
   "Pasting says how many cells it pasted, though some held the same."

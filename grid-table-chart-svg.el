@@ -7,7 +7,9 @@
 ;;    :range "A1:D7" :by BY :title TITLE)
 ;;
 ;; ROW and COL are the cell its top left corner sits on, COLUMNS and LINES
-;; its size in characters and lines.  RANGE holds the data, read the way
+;; its size in characters and lines.  An :offset (X . 0) moves the corner
+;; X characters, a fraction or more, right of that cell's left edge; with
+;; none it is on the edge.  RANGE holds the data, read the way
 ;; a spreadsheet reads it: a first row of text names the series, a first
 ;; column of text names the categories, and the series run down the
 ;; columns unless the range is wider than it is tall.  BY, `columns' or

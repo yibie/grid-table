@@ -1533,6 +1533,8 @@ is cut off at the left and top."
               (and scrolled-cols
                    (+ sx0 (grid-table-etaf--span
                            state (car scrolled-cols) col 'col nil nil)))))
+         ;; Within its cell the chart stands to the pixel.
+         (x (and x (+ x (round (* char (or (car (plist-get chart :offset)) 0))))))
          (clip-top (if (< row (car frozen)) y0 sy0))
          (clip-left (if (< col (cdr frozen)) x0 sx0)))
     (when (and x y)
@@ -1544,46 +1546,59 @@ is cut off at the left and top."
         (when (and (> shown-cols 0) (> vy1 vy0))
           (list left vy0 shown-cols (- vy1 vy0) cut-cols (- vy0 y)))))))
 
+(defvar-local grid-table-etaf--chart-boxes nil
+  "Where the last redraw put each chart: ((INDEX . GEOMETRY) ...).
+GEOMETRY holds the :left, :top, :width and :height of the chart's box.")
+
 (defun grid-table-etaf--chart-nodes (state source frame cols)
   "Return the View nodes of SOURCE's floating charts for STATE's window.
 FRAME is what `grid-table-etaf--chart-frame' returns, and COLS the model
 columns shown."
   (let* ((buffer (grid-table-etaf--state-buffer state))
          (charts (grid-table-charts source))
-         (tick (etaf-value (grid-table-etaf--state-tick state))))
-    (cl-loop
-     for chart in charts for index from 0
-     for place = (grid-table-etaf--chart-place state frame chart cols)
-     when place collect
-     (pcase-let* ((`(,left ,top ,columns ,lines ,cut-cols ,cut-lines) place)
-                  (size (plist-get chart :size))
-                  (data (grid-table-etaf--chart-data source chart tick))
-                  (drawn (if (eql index grid-table-etaf--chart)
-                             (plist-put (copy-sequence chart) :selected t)
-                           chart)))
-       (etaf-node
-        'box
-        (list :key (format "chart%d" index)
-              :ref (intern (format "grid-table-etaf-chart-%d" index))
-              :position 'absolute
-              :left (list 'px left) :top (list 'lh top)
-              :width (list 'ch columns) :height (list 'lh lines)
-              :z-index 5
-              :on-press (lambda ()
-                          (when (buffer-live-p buffer)
-                            (with-current-buffer buffer
-                              (grid-table-etaf--select-chart state index))))
-              :on-drag (grid-table-etaf--drag-chart buffer index))
-        (list
-         (if (display-graphic-p)
-             (etaf-node 'image
-                        (list :src (grid-table-etaf--chart-image
-                                    drawn data (car size) (cdr size)
-                                    (list cut-cols cut-lines columns lines))
-                              :columns columns :rows lines)
-                        nil)
-           (etaf-node 'text (list :key 'chart-text)
-                      (list (grid-chart-svg-text drawn data columns lines))))))))))
+         (tick (etaf-value (grid-table-etaf--state-tick state)))
+         (boxes nil)
+         (nodes
+          (cl-loop
+           for chart in charts for index from 0
+           for place = (grid-table-etaf--chart-place state frame chart cols)
+           when place collect
+           (pcase-let* ((`(,left ,top ,columns ,lines ,cut-cols ,cut-lines) place)
+                        (size (plist-get chart :size))
+                        (data (grid-table-etaf--chart-data source chart tick))
+                        (drawn (if (eql index grid-table-etaf--chart)
+                                   (plist-put (copy-sequence chart) :selected t)
+                                 chart))
+                        (box (list :left (list 'px left) :top (list 'lh top)
+                                   :width (list 'ch columns) :height (list 'lh lines))))
+             (push (cons index box) boxes)
+             (etaf-node
+              'box
+              (append
+               (list :key (format "chart%d" index)
+                     :ref (intern (format "grid-table-etaf-chart-%d" index))
+                     :position 'absolute)
+               box
+               (list :z-index 5
+                     :on-press (lambda ()
+                                 (when (buffer-live-p buffer)
+                                   (with-current-buffer buffer
+                                     (grid-table-etaf--select-chart state index))))
+                     :on-drag (grid-table-etaf--drag-chart buffer index)))
+              (list
+               (if (display-graphic-p)
+                   (etaf-node 'image
+                              (list :src (grid-table-etaf--chart-image
+                                          drawn data (car size) (cdr size)
+                                          (list cut-cols cut-lines columns lines))
+                                    :columns columns :rows lines)
+                              nil)
+                 (etaf-node 'text (list :key 'chart-text)
+                            (list (grid-chart-svg-text drawn data columns lines))))))))))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (setq grid-table-etaf--chart-boxes boxes)))
+    nodes))
 
 (defun grid-table-etaf--select-chart (state index)
   "Select floating chart INDEX of STATE's sheet; nil selects none."
@@ -1600,12 +1615,53 @@ columns shown."
     (grid-table-etaf--bump state)))
 
 (defvar-local grid-table-etaf--chart-drag nil
-  "The charts as they were when a chart drag started, or nil.
-It lives in the buffer, not in the handler: the grid redraws while the
-chart moves, and each redraw makes a new handler.")
+  "The charts and the dragged chart's box as a chart drag started, or nil.
+It is (CHARTS . GEOMETRY), GEOMETRY as in `grid-table-etaf--chart-boxes'.
+It lives in the buffer, not in the handler: the grid redraws as the drag
+starts, and each redraw makes a new handler.")
+
+(defun grid-table-etaf--move-chart-box (index geometry)
+  "Put the box of chart INDEX where GEOMETRY says, without a redraw."
+  (ignore-errors
+    (apply #'etaf-runtime-update-host-geometry
+           (grid-table-etaf--runtime)
+           (intern (format "grid-table-etaf-chart-%d" index))
+           geometry)))
+
+(defun grid-table-etaf--end-chart-drag (state index start)
+  "Finish dragging chart INDEX of STATE, which started at START.
+The box goes back where the last redraw put it, so that the redraw now
+puts it where the charts say; a redraw leaves alone what it drew the
+same."
+  (setq grid-table-etaf--chart-drag nil)
+  (grid-table-etaf--move-chart-box index (cdr start))
+  (grid-table-etaf--bump state))
+
+(defun grid-table-etaf--dragged-chart (state chart delta)
+  "Return CHART of STATE moved by DELTA, (PIXELS . PIXELS).
+Across the chart goes to the pixel, within a cell by an :offset; down
+it goes a line at a time, a line being as small as Emacs can show."
+  (let* ((anchor (plist-get chart :anchor))
+         (char (grid-table-etaf--char-width))
+         (x (grid-table-etaf--walk-cols-exactly
+             state (cdr anchor)
+             (+ (* char (or (car (plist-get chart :offset)) 0)) (car delta))))
+         (offset (/ (round (* 100 (/ (cdr x) (float char)))) 100.0))
+         (chart (plist-put (copy-sequence chart) :anchor
+                           (cons (grid-table-etaf--walk-rows
+                                  state (car anchor)
+                                  (/ (cdr delta)
+                                     (float (grid-table-etaf--line-pixels))))
+                                 (car x)))))
+    (if (> offset 0)
+        (plist-put chart :offset (cons offset 0))
+      (cl-loop for (key value) on chart by #'cddr
+               unless (eq key :offset) append (list key value)))))
 
 (defun grid-table-etaf--drag-chart (buffer index)
-  "Return the pointer handler moving floating chart INDEX of BUFFER."
+  "Return the pointer handler moving floating chart INDEX of BUFFER.
+While the pointer moves only the chart's box moves; the sheet takes the
+chart's new place, as one undo step, when the drag ends."
   (lambda (gesture)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
@@ -1615,34 +1671,38 @@ chart moves, and each redraw makes a new handler.")
           (pcase (plist-get gesture :phase)
             ('start
              (setq grid-table-etaf--chart-drag
-                   (copy-tree (grid-table-charts source)))
-             (setq grid-table-etaf--chart index))
-            ((or 'move 'end)
+                   (cons (copy-tree (grid-table-charts source))
+                         (cdr (assq index grid-table-etaf--chart-boxes))))
+             (unless (eql grid-table-etaf--chart index)
+               (grid-table-etaf--select-chart state index)
+               ;; The redraw selecting it may have moved the box.
+               (setcdr grid-table-etaf--chart-drag
+                       (cdr (assq index grid-table-etaf--chart-boxes)))))
+            ('move
+             (when-let* ((geometry (cdr start))
+                         (delta (plist-get gesture :delta)))
+               (grid-table-etaf--move-chart-box
+                index
+                (list :left (list 'px (+ (cadr (plist-get geometry :left))
+                                         (car delta)))
+                      :top (list 'lh (+ (cadr (plist-get geometry :top))
+                                        (round (cdr delta)
+                                               (grid-table-etaf--line-pixels))))))))
+            ('end
              (when start
-               (let* ((delta (plist-get gesture :delta))
-                      (chart (copy-sequence (nth index start)))
-                      (anchor (plist-get chart :anchor)))
-                 (setq chart
-                       (plist-put chart :anchor
-                                  (cons (grid-table-etaf--walk-rows
-                                         state (car anchor)
-                                         (/ (cdr delta)
-                                            (float (grid-table-etaf--line-pixels))))
-                                        (grid-table-etaf--walk-cols
-                                         state (cdr anchor) (car delta)))))
-                 (let ((new (copy-tree start)))
-                   (setf (nth index new) chart)
-                   (grid-table-set-charts source new)
-                   (when (eq (plist-get gesture :phase) 'end)
-                     (unless (equal new start)
-                       (grid-table-etaf--record state (list 'charts start new)))
-                     (setq grid-table-etaf--chart-drag nil)))
-                 (grid-table-etaf--bump state))))
+               (let ((new (copy-tree (car start))))
+                 (setf (nth index new)
+                       (grid-table-etaf--dragged-chart
+                        state (nth index (car start)) (plist-get gesture :delta)))
+                 (grid-table-set-charts source new)
+                 (unless (equal new (car start))
+                   (grid-table-etaf--record state (list 'charts (car start) new)))
+                 (grid-table-etaf--end-chart-drag state index start))))
             ('cancel
              (when start
-               (grid-table-set-charts source start)
-               (setq grid-table-etaf--chart-drag nil)
-               (grid-table-etaf--bump state)))))))))
+               (grid-table-set-charts source (car start))
+               (grid-table-etaf--end-chart-drag state index start)))))))))
+
 (defun grid-table-etaf--walk-rows (state row lines)
   "Return the shown row LINES lines below model ROW of STATE; negative goes up."
   (let* ((position (grid-table-etaf--row-position state row))
@@ -1671,6 +1731,22 @@ chart moves, and each redraw makes a new handler.")
                     (+ col step)
                   (grid-table-etaf--step-col state col step))))
     col))
+
+(defun grid-table-etaf--walk-cols-exactly (state col pixels)
+  "Return where PIXELS right of the left edge of model column COL of STATE is.
+The result is (COLUMN . PIXELS-INTO-IT).  Negative PIXELS go left, but
+not past the first shown column, nor right past the last one a sheet may
+have."
+  (let ((left pixels) next)
+    (while (and (>= left (grid-table-etaf--col-pixels state col))
+                (/= col (setq next (grid-table-etaf--step-col state col 1))))
+      (setq left (- left (grid-table-etaf--col-pixels state col))
+            col next))
+    (while (and (< left 0)
+                (/= col (setq next (grid-table-etaf--step-col state col -1))))
+      (setq col next
+            left (+ left (grid-table-etaf--col-pixels state col))))
+    (cons col (max 0 (min left (1- (grid-table-etaf--col-pixels state col)))))))
 
 (defun grid-table-etaf--current-region (state)
   "Return the block of filled cells around STATE's cursor, as a range.
@@ -1821,7 +1897,11 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
   (interactive)
   (let ((cursor (grid-table-etaf--cursor)))
     (grid-table-etaf--change-chart
-     (lambda (chart) (plist-put chart :anchor (cons (car cursor) (cdr cursor)))))))
+     (lambda (chart)
+       (cl-loop for (key value) on (plist-put chart :anchor
+                                              (cons (car cursor) (cdr cursor)))
+                by #'cddr
+                unless (eq key :offset) append (list key value))))))
 
 (defun grid-table-etaf-chart-resize (columns lines)
   "Make the selected chart COLUMNS characters wide and LINES lines high."
