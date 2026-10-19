@@ -3859,6 +3859,21 @@ workbook, and a positive fraction is still no day at all."
                   ("=WORKDAY(DATE(2025,1,10),2.000001)" . 45671)))
     (grid-table-formula-test--should-be case)))
 
+(ert-deftest grid-table-formula-a-chance-of-one-is-no-inverse ()
+  "BINOM.INV and NEGBINOM.DIST take no chance of 1, but BINOM.DIST does.
+The cases are IronCalc's BINOM workbook, as Excel keeps them."
+  (dolist (case '(("=BINOM.INV(10,1,0.8)" . "#NUM!")
+                  ("=CRITBINOM(10,1,0.8)" . "#NUM!")
+                  ("=BINOM.INV(10,0.5,0.8)" . 6)
+                  ("=NEGBINOM.DIST(2,10,1,TRUE)" . "#NUM!")
+                  ("=NEGBINOMDIST(2,10,1)" . "#NUM!")
+                  ("=NEGBINOM.DIST(2,10,0.999999,TRUE)" . 1.0000000000000007)
+                  ;; The distributions themselves take a chance of 1.
+                  ("=BINOM.DIST(2,10,1,TRUE)" . 0)
+                  ("=BINOM.DIST(2,10,1,FALSE)" . 0)
+                  ("=BINOM.DIST.RANGE(10,1,2,3)" . 0)))
+    (grid-table-formula-test--should-be case)))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

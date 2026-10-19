@@ -653,7 +653,7 @@ that many."
 (grid-calc-define binom.inv ((trials integer) (p number) (alpha number))
   "The fewest successes in TRIALS tries of chance P whose chance of at
 most that many is ALPHA or more."
-  (grid-calc--require (>= trials 0) (<= 0 p 1) (< 0 alpha 1))
+  (grid-calc--require (>= trials 0) (<= 0 p) (< p 1) (< 0 alpha 1))
   (let ((sum 0.0) (k 0))
     (while (and (<= k trials)
                 (< (setq sum (+ sum (grid-calc--binomial-pmf k trials p)))
@@ -667,17 +667,15 @@ most that many is ALPHA or more."
                                  &optional (cumulative bool))
   "The chance of FAILURES failures before the SUCCESSESth success, each
 of chance P; or of at most that many."
-  (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (<= p 1))
+  (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (< p 1))
   (cl-flet ((pmf (f) (exp (+ (grid-calc--log-choose (+ f successes -1) (1- successes))
-                             (* successes (log p))
-                             (if (= p 1) (if (= f 0) 0 -1.0e+INF)
-                               (* f (log (- 1 p))))))))
+                             (* successes (log p)) (* f (log (- 1 p)))))))
     (if cumulative (cl-loop for f from 0 to failures sum (pmf f))
       (pmf failures))))
 
 (grid-calc-define negbinomdist ((failures integer) (successes integer) (p number))
   "The chance of FAILURES failures before the SUCCESSESth success."
-  (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (<= p 1))
+  (grid-calc--require (>= failures 0) (>= successes 1) (< 0 p) (< p 1))
   (exp (+ (grid-calc--log-choose (+ failures successes -1) (1- successes))
           (* successes (log p)) (* failures (log (- 1 p))))))
 
