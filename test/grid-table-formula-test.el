@@ -4365,6 +4365,17 @@ The cursor may stand there, as on a spreadsheet's empty cells."
     (should (equal (grid-get-raw-value-at source 0 1) "=A1*2"))
     (should (equal (grid-get-computed-value-at source 0 1) 2))))
 
+(ert-deftest grid-table-formula-lookup-regex-reads-groups-and-choices ()
+  "XMATCH and XLOOKUP's match mode 3 read a pattern as REGEXTEST does.
+A group and a choice, as ^(Pu|Ro), are PCRE2's, not literal text."
+  (dolist (case '(("=XMATCH(\"^(Pu|Ro)\",{\"Assam\",\"Pu-erh\",\"Rooibos\"},3)" . 2)
+                  ("=XMATCH(\"^(Pu|Ro)\",{\"Assam\";\"Rooibos\"},3)" . 2)
+                  ("=XLOOKUP(\"^(?:Dar|Ear)\",{\"Assam\";\"Earl Grey\"},{1;2},,3)" . 2)
+                  ("=XMATCH(\"T\\d+$\",{\"x\",\"T42\"},3)" . 2)
+                  ("=XMATCH(\"^Pu\",{\"Assam\",\"Pu-erh\"},3)" . 2)
+                  ("=XMATCH(\"(?=x)\",{\"x\"},3)" . "#VALUE!")))
+    (grid-table-formula-test--should-be case)))
+
 (ert-deftest grid-table-formula-hyperlink-with-a-blank-label-shows-zero ()
   "HYPERLINK of a blank label shows 0, where one left out shows the link.
 IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with

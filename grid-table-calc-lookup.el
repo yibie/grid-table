@@ -11,6 +11,8 @@
 (require 'grid-table-calc)
 (require 'grid-table-parser)
 
+(declare-function grid-calc--regexp "grid-table-calc-text" (pattern))
+
 ;;;----------------------------------------------------------------------
 ;;; Tables of values
 ;;;----------------------------------------------------------------------
@@ -197,9 +199,11 @@ FROM-END searches from the last, as XMATCH with a search mode of -1 does."
 It matches when it is found anywhere in the value, as REGEXTEST finds
 it, so a pattern wanting the whole value says so with ^ and $; a number
 or a truth value is read as its text, and a blank or an error matches
-nothing.  A pattern that is no regexp is #VALUE!."
+nothing.  The pattern is read as REGEXTEST reads one, as PCRE2 writes
+it, so ^(Pu|Ro) groups and picks as it does there.  A pattern that is
+no regexp is #VALUE!."
   (let ((regexp (condition-case nil
-                    (let ((regexp (grid-calc-text wanted)))
+                    (let ((regexp (grid-calc--regexp (grid-calc-text wanted))))
                       (string-match-p regexp "")
                       regexp)
                   (invalid-regexp (grid-calc-raise "#VALUE!")))))
