@@ -942,6 +942,27 @@
             (should (equal (grid-get-raw-value-at loaded 3 0) "b"))))
       (delete-file file))))
 
+(ert-deftest grid-table-save-writes-everything-whatever-the-print-settings ()
+  ;; A print length or level set by the user, or by a tool talking to
+  ;; Emacs, must not cut the saved rows down to `...'.
+  (let ((source (grid-table-formula-test--source))
+        (file (make-temp-file "grid-print-" nil ".grid")))
+    (unwind-protect
+        (progn
+          (let ((print-length 2) (print-level 1) (print-circle t))
+            (grid-table-persistence--save-to-file source file))
+          (should-not (with-temp-buffer
+                        (insert-file-contents file)
+                        (search-forward "..." nil t)))
+          (let ((loaded (grid-table-persistence-create-data-source-from-file
+                         file)))
+            (should loaded)
+            (should (= (grid-get-row-count loaded) 4))
+            (should (= (grid-get-column-count loaded) 3))
+            (should (equal (grid-get-raw-value-at loaded 3 0) "b"))
+            (should (equal (grid-get-raw-value-at loaded 1 1) "3"))))
+      (delete-file file))))
+
 ;; Found by an independent review: results that looked right and were not.
 (ert-deftest grid-table-formula-large-numbers-round-to-themselves ()
   (should (equal (grid-format-display 5000000000 '(currency 2 "$"))

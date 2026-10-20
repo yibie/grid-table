@@ -173,7 +173,10 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
              (gethash :get-raw-value-at data-source))
     (let ((data-to-save (grid-table-persistence--file-data data-source)))
       (with-temp-buffer
-        (prin1 data-to-save (current-buffer))
+        ;; The whole grid, whatever the user's print settings: a print
+        ;; length or level would write `...' for the rows and lose them.
+        (let ((print-length nil) (print-level nil) (print-circle nil))
+          (prin1 data-to-save (current-buffer)))
         ;; Not `write-file', which would visit the file and show the
         ;; text as a grid, a .grid file's mode.
         (let ((coding-system-for-write 'utf-8-unix))
