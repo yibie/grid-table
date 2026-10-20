@@ -707,6 +707,8 @@ The column follows the pointer; a cancelled drag restores its width."
 
 (defconst grid-table-etaf--keys
   '(("RET" grid-table-edit-cell "Edit cell")
+    ;; A window system's Return key, which Ebox binds apart from RET.
+    ("<return>" grid-table-edit-cell "Edit cell")
     ("<f2>" grid-table-edit-cell "Edit cell")
     ("C-c C-r" grid-table-recalculate-all "Recalculate and refresh")
     ("C-c C-q" quit-window "Quit")
@@ -2524,8 +2526,10 @@ Columns only shrink on `grid-table-refresh'."
 (defvar grid-table-etaf-edit-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'grid-table-etaf-commit-edit-and-move-down)
+    (define-key map [return] #'grid-table-etaf-commit-edit-and-move-down)
     (define-key map (kbd "C-c C-c") #'grid-table-etaf-commit-edit)
     (define-key map (kbd "M-RET") #'newline)
+    (define-key map [M-return] #'newline)
     (define-key map (kbd "C-c C-k") #'grid-table-etaf-cancel-edit)
     (define-key map (kbd "TAB") #'grid-table-next-cell)
     (define-key map [tab] #'grid-table-next-cell)

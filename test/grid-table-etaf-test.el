@@ -1970,6 +1970,22 @@ cell in the way makes such a formula #SPILL!."
                          "x")))
       (delete-directory dir t))))
 
+;; A window system's Return key is the event `return', not RET; it edits
+;; and stores a cell all the same.
+(ert-deftest grid-table-etaf-return-key-edits-and-stores ()
+  (grid-table-etaf-test--with-grid (6 5)
+    (switch-to-buffer buffer)
+    (grid-table-etaf-goto 1 0)
+    (execute-kbd-macro [return])
+    (should (grid-table-etaf--state-session grid-table-etaf--state))
+    (execute-kbd-macro (vconcat (kbd "C-a C-k 4 2") [return]))
+    (should-not (grid-table-etaf--state-session grid-table-etaf--state))
+    (should (equal (grid-get-raw-value-at source 1 0) "42"))
+    (should (equal (grid-table-etaf--cursor) '(2 . 0)))
+    ;; M-<return> is a line break inside the cell, as M-RET is.
+    (execute-kbd-macro (vconcat (kbd "a") [M-return] (kbd "b") [return]))
+    (should (equal (grid-get-raw-value-at source 2 0) "a\nb"))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
