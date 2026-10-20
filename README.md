@@ -382,7 +382,7 @@ here display table preview (static preview)
 | `M-x grid-table-xlsx-find-file` | Open a workbook as a grid, with a sheet for each of its sheets |
 | `M-x grid-table-xlsx-export` | Write the grid and all its sheets to a workbook |
 
-Values, formulas, merges, bold, italic, text and fill color, alignment and conditional formats travel both ways. The first row of the sheet becomes the header row. A grid opened from a workbook is not tied to it: `C-c C-w` saves a `.grid` file, and exporting writes the workbook.
+Values, formulas, merges, bold, italic, text and fill color, alignment and conditional formats travel both ways. The first row of the sheet becomes the header row. A grid opened from a workbook is not tied to it: `C-x C-s` or `C-c C-w` saves a `.grid` file, and exporting writes the workbook.
 
 What does not travel:
 
