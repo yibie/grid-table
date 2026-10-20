@@ -1986,6 +1986,21 @@ cell in the way makes such a formula #SPILL!."
     (execute-kbd-macro (vconcat (kbd "a") [M-return] (kbd "b") [return]))
     (should (equal (grid-get-raw-value-at source 2 0) "a\nb"))))
 
+;; A tooltip is a frame of its own, which would take the pointer from a
+;; drag; none shows while one lasts, and help comes back after it.
+(ert-deftest grid-table-etaf-no-tooltip-while-dragging ()
+  (grid-table-etaf-test--with-grid (6 5)
+    (let ((show-help-function #'tooltip-show-help)
+          (handler (grid-table-etaf--drag-cell (current-buffer) 0 0)))
+      (dolist (stop '((:phase end :delta (0 . 0))
+                      (:phase cancel :reason window-left :delta (0 . 0))
+                      (:phase cancel :reason quit)))
+        (funcall handler '(:phase start :delta (0 . 0)))
+        (should (eq show-help-function #'ignore))
+        (funcall handler stop)
+        (should (eq show-help-function #'tooltip-show-help))
+        (should-not grid-table-etaf--drag-help)))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

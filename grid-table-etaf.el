@@ -628,23 +628,43 @@ The width is saved with the grid and moves with its column."
     (aset (grid-table-etaf--state-widths state) col width)
     (grid-table-etaf--bump state)))
 
+(defvar grid-table-etaf--drag-help nil
+  "While a drag lasts, (FUNCTION), the `show-help-function' it put aside.")
+
 (defun grid-table-etaf--drag-phase (gesture)
   "Return the phase of the drag GESTURE, a pointer leaving the window ending it.
 Then the drag stops where it last was, rather than undoing it all.  A
 drag cancelled by Esc is not followed by Esc read again, which would
-begin a Meta key."
-  (let ((phase (plist-get gesture :phase))
-        (event (plist-get gesture :event)))
-    (if (not (eq phase 'cancel))
-        phase
-      (pcase (plist-get gesture :reason)
-        ('window-left 'end)
-        ('input
-         ;; The drag hands back the key that stopped it to be read again.
-         (when (or (eq event 'escape) (eql event ?\e))
-           (setq unread-command-events (delq event unread-command-events)))
-         phase)
-        (_ phase)))))
+begin a Meta key.  No tooltip shows while the drag lasts."
+  (let* ((phase (plist-get gesture :phase))
+         (event (plist-get gesture :event))
+         (phase (if (not (eq phase 'cancel))
+                    phase
+                  (pcase (plist-get gesture :reason)
+                    ('window-left 'end)
+                    ('input
+                     ;; The drag hands back the key that stopped it to be
+                     ;; read again.
+                     (when (or (eq event 'escape) (eql event ?\e))
+                       (setq unread-command-events
+                             (delq event unread-command-events)))
+                     phase)
+                    (_ phase)))))
+    (pcase phase
+      ;; A tooltip is a frame of its own: one shown under the pointer,
+      ;; such as a column edge's, takes the pointer from the window, and
+      ;; the drag ends there or never sees the button let go.
+      ('start
+       (unless grid-table-etaf--drag-help
+         (setq grid-table-etaf--drag-help (list show-help-function)))
+       (setq show-help-function #'ignore)
+       (when (fboundp 'tooltip-hide)
+         (tooltip-hide)))
+      ((or 'end 'cancel)
+       (when grid-table-etaf--drag-help
+         (setq show-help-function (car grid-table-etaf--drag-help)
+               grid-table-etaf--drag-help nil))))
+    phase))
 
 (defun grid-table-etaf--drag-resize (buffer col)
   "Return the pointer handler resizing column COL of BUFFER.
