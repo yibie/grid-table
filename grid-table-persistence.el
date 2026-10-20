@@ -174,7 +174,10 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
     (let ((data-to-save (grid-table-persistence--file-data data-source)))
       (with-temp-buffer
         (prin1 data-to-save (current-buffer))
-        (write-file file-path nil)
+        ;; Not `write-file', which would visit the file and show the
+        ;; text as a grid, a .grid file's mode.
+        (let ((coding-system-for-write 'utf-8-unix))
+          (write-region nil nil file-path nil 'silent))
         (message "Grid saved to %s" file-path)))))
 
 (defun grid-table-persistence--restore-formats (model styles conditionals)

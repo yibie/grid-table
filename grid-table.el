@@ -914,25 +914,51 @@ In a sheet with a header row, nothing goes above that row."
       (puthash :title grid-table--title grid-table--data-source)
       (grid-table-persistence--save-to-file grid-table--data-source file-path)
       (setq-local grid-table--file-path file-path)
-      (rename-buffer (file-name-nondirectory file-path))
-      (set-visited-file-name file-path)
+      (unless (and buffer-file-name
+                   (file-equal-p buffer-file-name file-path))
+        (set-visited-file-name file-path))
+      ;; Saved here rather than by `save-buffer', which would find the
+      ;; file changed since it was visited.
+      (set-visited-file-modtime)
       (set-buffer-modified-p nil)
       (message "Grid saved to %s" file-path))))
 
 (defun grid-table-find-file (file-path)
-  "Open a grid from a file."
+  "Open a grid from a file.
+The buffer visits FILE-PATH, so `save-buffer' saves the grid there."
   (interactive "fFind grid file: ")
-  (let* ((data-source (grid-table-persistence-create-data-source-from-file file-path))
-         (buffer-name (file-name-nondirectory file-path)))
-    (if data-source
-        (let ((buffer (get-buffer-create buffer-name)))
-          (with-current-buffer buffer
-            (setq-local grid-table--file-path file-path)
-            ;; Get title from data source
-            (setq-local grid-table--title (gethash :title data-source))
-            (grid-table--show-grid-in-current-buffer data-source))
-          (switch-to-buffer buffer))
-      (message "Failed to load grid from %s" file-path))))
+  (let ((buffer (find-file-noselect file-path)))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'grid-table-mode)
+        (grid-table-visit)))
+    (switch-to-buffer buffer)))
+
+;;;###autoload
+(defun grid-table-visit ()
+  "Show the grid file the current buffer visits as a grid.
+`find-file' calls this for a .grid file; `save-buffer' then saves the
+grid to the file.  A file that does not exist yet starts as an empty
+grid."
+  (interactive)
+  (unless buffer-file-name
+    (user-error "This buffer visits no file"))
+  (let ((data-source
+         (if (file-exists-p buffer-file-name)
+             (grid-table-persistence-create-data-source-from-file buffer-file-name)
+           ;; A new file starts as an empty grid, saved on the first save.
+           (make-default-data-source (make-list 4 "") (make-list 4 (make-list 4 ""))
+                                     (file-name-base buffer-file-name)))))
+    (unless data-source
+      (user-error "Failed to load grid from %s" buffer-file-name))
+    (setq-local grid-table--file-path buffer-file-name)
+    (setq-local grid-table--title (gethash :title data-source))
+    (let ((inhibit-read-only t))
+      (erase-buffer))
+    (grid-table--show-grid-in-current-buffer data-source)
+    (set-buffer-modified-p nil)))
+
+;;;###autoload
+(add-to-list 'auto-mode-alist '("\\.grid\\'" . grid-table-visit))
 
 ;;;###autoload
 (defun grid-open (file-path)

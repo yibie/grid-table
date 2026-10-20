@@ -620,7 +620,8 @@ grid and follow their columns; otherwise they live as long as the view."
 The width is saved with the grid and moves with its column."
   (let* ((state (grid-table-etaf--state-or-error))
          (width (max 1 (min 200 width))))
-    (unless (grid-set-column-width (grid-table-etaf--source state) col width)
+    (if (grid-set-column-width (grid-table-etaf--source state) col width)
+        (grid-table-etaf--changed state)
       (unless (grid-table-etaf--state-manual state)
         (setf (grid-table-etaf--state-manual state) (make-hash-table)))
       (puthash col width (grid-table-etaf--state-manual state)))
@@ -666,7 +667,8 @@ The column follows the pointer; a cancelled drag restores its width."
 (defun grid-table-etaf--restore-column-width (state col width)
   "Give column COL of STATE the width WIDTH set by hand; nil fits it again."
   (let ((source (grid-table-etaf--source state)))
-    (unless (grid-set-column-width source col width)
+    (if (grid-set-column-width source col width)
+        (grid-table-etaf--changed state)
       (when-let* ((manual (grid-table-etaf--state-manual state)))
         (if width (puthash col width manual) (remhash col manual))))
     (grid-table-etaf--fit-widths state)
@@ -2656,12 +2658,19 @@ than `grid-table-etaf-undo-model-cells' allows, but always the first."
              do (setcdr tail nil))
     undo))
 
+(defun grid-table-etaf--changed (state)
+  "Mark the buffer of STATE changed, so that `save-buffer' saves the grid."
+  (when (buffer-live-p (grid-table-etaf--state-buffer state))
+    (with-current-buffer (grid-table-etaf--state-buffer state)
+      (set-buffer-modified-p t))))
+
 (defun grid-table-etaf--record (state record)
   "Push RECORD on STATE's undo history and drop its redo history."
   (setf (grid-table-etaf--state-undo state)
         (grid-table-etaf--trim-undo
          (cons record (grid-table-etaf--state-undo state)))
-        (grid-table-etaf--state-redo state) nil))
+        (grid-table-etaf--state-redo state) nil)
+  (grid-table-etaf--changed state))
 
 (defun grid-table-etaf--as-one-step (state function)
   "Call FUNCTION and fold the undo records it leaves on STATE into one.
@@ -2910,6 +2919,7 @@ shifts."
     (grid-table-etaf--end-session state)
     (pop (grid-table-etaf--state-undo state))
     (push record (grid-table-etaf--state-redo state))
+    (grid-table-etaf--changed state)
     (grid-table-etaf--replay state record nil)))
 
 (defun grid-table-etaf-redo ()
@@ -2921,6 +2931,7 @@ shifts."
     (grid-table-etaf--end-session state)
     (pop (grid-table-etaf--state-redo state))
     (push record (grid-table-etaf--state-undo state))
+    (grid-table-etaf--changed state)
     (grid-table-etaf--replay state record t)))
 
 (defun grid-table-etaf-merge ()
@@ -4284,6 +4295,8 @@ Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
   :group 'grid-table
   (setq buffer-read-only nil)
   (setq truncate-lines t)
+  ;; The buffer's text is the drawn sheet, not the file's.
+  (auto-save-mode -1)
   (add-hook 'write-contents-functions #'grid-table-etaf--write-contents nil t))
 
 (defun grid-table-etaf-refresh (&optional restore-row restore-col)

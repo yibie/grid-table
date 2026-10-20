@@ -770,7 +770,8 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should-not (grid-table-etaf--state-session grid-table-etaf--state))
     (should (equal (grid-table-etaf--cursor) '(2 . 1)))
     (should (equal (grid-get-raw-value-at source 2 1) "100"))
-    (should-not (buffer-modified-p))
+    ;; The grid changed, so the buffer is one to save.
+    (should (buffer-modified-p))
     (should (equal (grid-get-computed-value-at source 2 3) 106))
     (should (string-match-p "106" (grid-table-etaf-test--text)))
     ;; A recalculated value that outgrows its column widens it.
@@ -1896,6 +1897,53 @@ cell in the way makes such a formula #SPILL!."
     ;; Defining it is a step undo takes back.
     (grid-table-etaf-undo)
     (should (equal (grid-get-computed-value-at source 6 1) "#NAME?"))))
+
+;; A .grid file opens as a grid, and saving the buffer saves the grid,
+;; as with any file Emacs visits.
+(ert-deftest grid-table-etaf-save-buffer-saves-the-grid ()
+  (let* ((dir (make-temp-file "grid-visit" t))
+         (file (expand-file-name "sales.grid" dir))
+         (fresh (expand-file-name "new.grid" dir)))
+    (unwind-protect
+        (progn
+          (grid-table-persistence--save-to-file
+           (make-default-data-source '("A" "B") '(("1" "2"))) file)
+          (with-current-buffer (find-file-noselect file)
+            (should (derived-mode-p 'grid-table-etaf-mode))
+            (should-not (buffer-modified-p))
+            (switch-to-buffer (current-buffer))
+            (grid-table-etaf-goto 1 0)
+            (execute-kbd-macro (kbd "9 9 RET"))
+            (should (buffer-modified-p))
+            (save-buffer)
+            (should-not (buffer-modified-p))
+            ;; Undoing is a change too, and saving again finds no
+            ;; complaint that the file changed since it was visited.
+            (grid-table-etaf-undo)
+            (should (buffer-modified-p))
+            (save-buffer)
+            (grid-table-etaf-redo)
+            (save-buffer)
+            (should (equal (directory-files dir nil "\\`[^.]") '("sales.grid")))
+            (kill-buffer))
+          (should (equal (grid-get-raw-value-at
+                          (grid-table-persistence-create-data-source-from-file file)
+                          1 0)
+                         "99"))
+          ;; A file not there yet is an empty grid until it is saved.
+          (with-current-buffer (find-file-noselect fresh)
+            (should (derived-mode-p 'grid-table-etaf-mode))
+            (should-not (file-exists-p fresh))
+            (switch-to-buffer (current-buffer))
+            (grid-table-etaf-goto 0 0)
+            (execute-kbd-macro (kbd "x RET"))
+            (save-buffer)
+            (kill-buffer))
+          (should (equal (grid-get-raw-value-at
+                          (grid-table-persistence-create-data-source-from-file fresh)
+                          0 0)
+                         "x")))
+      (delete-directory dir t))))
 
 (provide 'grid-table-etaf-test)
 

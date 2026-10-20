@@ -111,8 +111,8 @@ Run the tests with `make test-model` (the model, the formulas and the text table
 | 🎯 Action | 📝 Command                     | 🔑 Shortcut | ⚡ Tip                |
 | --------- | ------------------------------ | ----------- | --------------------- |
 | New       | `M-x grid-table-create`        | -           | Create a blank table  |
-| Open      | `M-x grid-table-find-file`     | `C-c C-f`   | Open .grid file       |
-| Save      | -                              | `C-c C-w`   | Smart path suggestion |
+| Open      | `C-x C-f` or `M-x grid-table-find-file` | `C-c C-f` | Open .grid file; a new name starts an empty grid |
+| Save      | -                              | `C-x C-s` or `C-c C-w` | Save to the file it visits, or ask for one |
 | CSV       | `M-x grid-table-find-file-csv` | -           | Directly read CSV     |
 | Excel     | `M-x grid-table-xlsx-find-file` | -          | Open an xlsx workbook |
 

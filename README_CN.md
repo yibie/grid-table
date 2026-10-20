@@ -111,8 +111,8 @@
 | 🎯 动作 | 📝 命令                        | 🔑 快捷键 | ⚡ 提示       |
 | ------- | ------------------------------ | --------- | ------------- |
 | 新建    | `M-x grid-table-create`        | -         | 创建空白表格  |
-| 打开    | `M-x grid-table-find-file`     | `C-c C-f` | 打开.grid文件 |
-| 保存    | -                              | `C-c C-w` | 智能提示路径  |
+| 打开    | `C-x C-f` 或 `M-x grid-table-find-file` | `C-c C-f` | 打开.grid文件；新文件名得到空表 |
+| 保存    | -                              | `C-x C-s` 或 `C-c C-w` | 存回所打开的文件，没有则询问路径 |
 | CSV     | `M-x grid-table-find-file-csv` | -         | 直接读取CSV   |
 | Excel   | `M-x grid-table-xlsx-find-file` | -        | 打开 xlsx 工作簿 |
 
