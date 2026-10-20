@@ -488,6 +488,21 @@
   (should (equal (grid-calc-shift-formula "=elisp:(cell \"A1\")" 1 1)
                  "=elisp:(cell \"A1\")")))
 
+(ert-deftest grid-table-formula-elisp-reads-cells ()
+  (let* ((grid-table-allow-elisp t)
+         (source (make-default-data-source
+                  '("" "" "" "")
+                  '(("5" "7" "=elisp:(+ (cell \"A1\") (cell \"B1\"))"
+                     "=ELISP:(* 2 (cell \"C1\"))")))))
+    (should (equal (grid-get-computed-value-at source 0 2) 12))
+    ;; The prefix is read whatever its case, as a function's name is.
+    (should (equal (grid-get-computed-value-at source 0 3) 24)))
+  (let ((grid-table-allow-elisp nil))
+    (should (equal (grid-get-computed-value-at
+                    (make-default-data-source '("") '(("=elisp:(cell \"A1\")")))
+                    0 0)
+                   "#ERROR!"))))
+
 ;;;----------------------------------------------------------------------
 ;;; Sorting
 ;;;----------------------------------------------------------------------

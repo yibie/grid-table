@@ -6,6 +6,8 @@
 
 (defvar grid-calc-functions)
 (defvar grid-table-allow-elisp)
+(defvar grid-calc--elisp-model nil
+  "The model an =elisp: formula being computed belongs to.")
 
 (defvar grid-cell--parsed)
 (defvar grid-cell--reads)
@@ -2461,10 +2463,13 @@ whatever its class.  See `grid-calc--eval'."
      (grid-calc--call model name arguments))
     (`(ELISP-CODE ,code)
      (if grid-table-allow-elisp
-         (let ((cell (lambda (ref) (grid-calc-get-cell-value model ref))))
-           (ignore cell)
+         ;; The code is read from text, so it sees none of this function's
+         ;; lexical bindings: `cell' is given to it as a local function.
+         (let ((grid-calc--elisp-model model))
            (condition-case err
-               (eval (read code))
+               (eval `(cl-flet ((cell (ref) (grid-calc--elisp-cell ref)))
+                        ,(read code))
+                     t)
              (error (format "Elisp Error: %s" (error-message-string err)))))
        (error "Elisp disabled: see `grid-table-allow-elisp'")))
     (_ (error "Unknown AST node type: %s" ast))))
@@ -2502,6 +2507,10 @@ of them, row after row."
     (if (grid-calc-array-p value)
         (mapcar #'grid-calc--store (grid-calc-array-values value))
       (grid-calc--store value))))
+
+(defun grid-calc--elisp-cell (ref)
+  "Return the value of the cell REF names, for an =elisp: formula's `cell'."
+  (grid-calc-get-cell-value grid-calc--elisp-model ref))
 
 (defun grid-calc-get-cell-value (model ref-str)
   "Return the value of the cell REF-STR names in MODEL, as a cell stores it."
@@ -3210,7 +3219,7 @@ to write instead, or nil to keep it.  Text inside double quotes and
 anything that is not a formula are returned unchanged."
   (if (or (not (stringp formula))
           (not (string-prefix-p "=" formula))
-          (string-prefix-p "=elisp:" formula))
+          (string-prefix-p "=elisp:" formula t))
       formula
     (let ((pos 0) (len (length formula)) (parts nil) (case-fold-search t))
       (while (< pos len)

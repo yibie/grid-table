@@ -906,7 +906,7 @@ Returns (ast . remaining-tokens).  See `grid-parser--starts'."
 
 (defun grid-parser-parse (formula-str)
   "Parse a formula string into an AST."
-  (if (string-prefix-p "elisp:" formula-str)
+  (if (string-prefix-p "elisp:" formula-str t)
       (list grid-ast-type-elisp-code (substring formula-str 6))
     (let* ((tokens (grid-parser-tokenize formula-str))
            (result (grid-parser-parse-expression tokens))
