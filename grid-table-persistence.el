@@ -177,8 +177,7 @@ When DATA-SOURCE is one of several sheets, all of them are saved."
         ;; Not `write-file', which would visit the file and show the
         ;; text as a grid, a .grid file's mode.
         (let ((coding-system-for-write 'utf-8-unix))
-          (write-region nil nil file-path nil 'silent))
-        (message "Grid saved to %s" file-path)))))
+          (write-region nil nil file-path nil 'silent))))))
 
 (defun grid-table-persistence--restore-formats (model styles conditionals)
   "Give MODEL the saved STYLES and CONDITIONALS, skipping malformed ones."
