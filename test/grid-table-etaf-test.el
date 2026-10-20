@@ -695,6 +695,14 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (grid-table-etaf-filter-column 1 ">" "10")
     (should (string-match-p "6 of 12 rows shown" (grid-table-etaf-test--text)))))
 
+(ert-deftest grid-table-etaf-an-empty-sheet-says-so ()
+  (grid-table-etaf-test--with-grid (3 3)
+    (grid-table-sheet-new "Blank")
+    (should (string-match-p "Empty sheet" (grid-table-etaf-test--text)))
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-set-cell 1 1 "x")
+    (should-not (string-match-p "Empty sheet" (grid-table-etaf-test--text)))))
+
 (ert-deftest grid-table-etaf-filters-hide-rows-and-movement-skips-them ()
   (grid-table-etaf-test--with-grid (12 4 100 20)
     ;; Column B below its title holds 2, 4, ... 22.

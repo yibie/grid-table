@@ -1160,6 +1160,20 @@ row, and with no header row the first row counts like any other."
                  1 0))
           (- (grid-get-row-count source) header))))
 
+(defun grid-table-etaf--sheet-empty-p (source)
+  "Return non-nil when no cell of SOURCE holds anything.
+Looks at the first few thousand cells only, so that a large sheet does
+not make the status bar slow; one that big is taken as not empty."
+  (let ((rows (grid-get-row-count source))
+        (cols (grid-get-column-count source)))
+    (and (<= (* rows cols) 4000)
+         (cl-loop for row below rows
+                  always (cl-loop for col below cols
+                                  always (equal (or (grid-get-raw-value-at
+                                                     source row col)
+                                                    "")
+                                                ""))))))
+
 (defun grid-table-etaf--size-text (state source)
   "Return how many rows and columns SOURCE has, as STATE shows them."
   (let ((counts (grid-table-etaf--data-row-counts state)))
@@ -1167,6 +1181,7 @@ row, and with no header row the first row counts like any other."
      ((grid-table-etaf--state-filters state)
       (format "%d of %d rows shown (filtered) × %d columns"
               (car counts) (cdr counts) (grid-get-column-count source)))
+     ((grid-table-etaf--sheet-empty-p source) "Empty sheet")
      (t (format "%d rows × %d columns"
                 (cdr counts) (grid-get-column-count source))))))
 
