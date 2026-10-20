@@ -1708,6 +1708,31 @@ sheet, as one undo step."
       (funcall (grid-table-etaf--drag-chart (current-buffer) 0) '(:phase cancel))
       (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
                  x))
+      ;; Esc puts it back too, and is not read again as a Meta key.
+      (funcall drag 'start 0)
+      (funcall drag 'move (* 7 char))
+      (let ((unread-command-events (list 'escape)))
+        (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
+                 '(:phase cancel :reason input :event escape :delta (70 . 0)))
+        (should-not unread-command-events))
+      (should (= (plist-get (grid-table-etaf-test--geometry 'grid-table-etaf-chart-0) :x)
+                 x))
+      ;; So it is when Esc stops a selection.
+      (let ((unread-command-events (list ?\e)))
+        (funcall (grid-table-etaf--drag-cell (current-buffer) 0 0)
+                 '(:phase cancel :reason input :event ?\e))
+        (should-not unread-command-events))
+      ;; A pointer leaving the window leaves the chart where it last
+      ;; stood, as letting go there would.
+      (let ((before (copy-tree (grid-table-charts source))))
+        (funcall drag 'start 0)
+        (funcall drag 'move (* 2 char))
+        (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
+                 (list :phase 'cancel :reason 'window-left :delta (cons (* 2 char) 0)))
+        (should (equal (plist-get (car (grid-table-charts source)) :offset)
+                       (cons (+ (or (car (plist-get (car before) :offset)) 0) 2.0) 0)))
+        (grid-table-etaf-undo)
+        (should (equal (grid-table-charts source) before)))
       ;; Each drag that moved it is one undo step.
       (grid-table-etaf-undo)
       (should (equal (plist-get (car (grid-table-charts source)) :offset) '(3.0 . 0)))

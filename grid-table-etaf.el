@@ -558,7 +558,7 @@ held; dragging extends the selection to the cell under the pointer."
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (let ((state grid-table-etaf--state))
-          (pcase (plist-get gesture :phase)
+          (pcase (grid-table-etaf--drag-phase gesture)
             ('start
              (grid-table-etaf-goto
               row col
@@ -628,6 +628,24 @@ The width is saved with the grid and moves with its column."
     (aset (grid-table-etaf--state-widths state) col width)
     (grid-table-etaf--bump state)))
 
+(defun grid-table-etaf--drag-phase (gesture)
+  "Return the phase of the drag GESTURE, a pointer leaving the window ending it.
+Then the drag stops where it last was, rather than undoing it all.  A
+drag cancelled by Esc is not followed by Esc read again, which would
+begin a Meta key."
+  (let ((phase (plist-get gesture :phase))
+        (event (plist-get gesture :event)))
+    (if (not (eq phase 'cancel))
+        phase
+      (pcase (plist-get gesture :reason)
+        ('window-left 'end)
+        ('input
+         ;; The drag hands back the key that stopped it to be read again.
+         (when (or (eq event 'escape) (eql event ?\e))
+           (setq unread-command-events (delq event unread-command-events)))
+         phase)
+        (_ phase)))))
+
 (defun grid-table-etaf--drag-resize (buffer col)
   "Return the pointer handler resizing column COL of BUFFER.
 The column follows the pointer; a cancelled drag restores its width."
@@ -635,8 +653,9 @@ The column follows the pointer; a cancelled drag restores its width."
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (let* ((state grid-table-etaf--state)
-               (widths (grid-table-etaf--state-widths state)))
-          (pcase (plist-get gesture :phase)
+               (widths (grid-table-etaf--state-widths state))
+               (phase (grid-table-etaf--drag-phase gesture)))
+          (pcase phase
             ;; START is the width at the press and the width set by
             ;; hand then, for the one undo step the drag makes.
             ('start
@@ -651,7 +670,7 @@ The column follows the pointer; a cancelled drag restores its width."
                   col (+ (car start)
                          (round (car (plist-get gesture :delta))
                                 (grid-table-etaf--char-width))))
-                 (when (eq (plist-get gesture :phase) 'end)
+                 (when (eq phase 'end)
                    (setf (grid-table-etaf--state-resize-start state) nil)
                    (let ((new (aref (grid-table-etaf--state-widths state) col)))
                      (unless (eql new (car start))
@@ -1670,14 +1689,16 @@ it goes a line at a time, a line being as small as Emacs can show."
 (defun grid-table-etaf--drag-chart (buffer index)
   "Return the pointer handler moving floating chart INDEX of BUFFER.
 While the pointer moves only the chart's box moves; the sheet takes the
-chart's new place, as one undo step, when the drag ends."
+chart's new place, as one undo step, when the drag ends.  A pointer
+leaving the window ends the drag where the chart last stood; Esc puts
+it back and does nothing more."
   (lambda (gesture)
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (let* ((state grid-table-etaf--state)
                (source (grid-table-etaf--source state))
                (start grid-table-etaf--chart-drag))
-          (pcase (plist-get gesture :phase)
+          (pcase (grid-table-etaf--drag-phase gesture)
             ('start
              (setq grid-table-etaf--chart-drag
                    (cons (copy-tree (grid-table-charts source))
