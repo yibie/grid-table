@@ -1148,15 +1148,27 @@ line border."
               'text nil
               (list (string-replace "\n" "⏎" raw)))))))))
 
+(defun grid-table-etaf--data-row-counts (state)
+  "Return (SHOWN . ALL), the rows of STATE's sheet below its header row.
+As Excel's \"N of M records found\", neither count takes in the header
+row, and with no header row the first row counts like any other."
+  (let* ((source (grid-table-etaf--source state))
+         (header (if (grid-table-header-row-p source) 1 0))
+         (shown (grid-table-etaf--state-shown state)))
+    (cons (- (grid-table-etaf--row-count state)
+             (if (and (= header 1) (or (null shown) (eql (aref shown 0) 0)))
+                 1 0))
+          (- (grid-get-row-count source) header))))
+
 (defun grid-table-etaf--size-text (state source)
   "Return how many rows and columns SOURCE has, as STATE shows them."
-  (if (grid-table-etaf--state-filters state)
+  (let ((counts (grid-table-etaf--data-row-counts state)))
+    (cond
+     ((grid-table-etaf--state-filters state)
       (format "%d of %d rows shown (filtered) × %d columns"
-              (1- (grid-table-etaf--row-count state))
-              (1- (grid-get-row-count source))
-              (grid-get-column-count source))
-    (format "%d rows × %d columns"
-            (grid-get-row-count source) (grid-get-column-count source))))
+              (car counts) (cdr counts) (grid-get-column-count source)))
+     (t (format "%d rows × %d columns"
+                (cdr counts) (grid-get-column-count source))))))
 
 (defun grid-table-etaf--status-text (state source range)
   "Return the status bar text for SOURCE as STATE shows it.
@@ -2498,9 +2510,8 @@ after each edit."
     (setf (alist-get col (grid-table-etaf--state-filters state))
           (list op value))
     (grid-table-etaf--refilter state)
-    (message "Showing %d of %d rows"
-             (1- (grid-table-etaf--row-count state))
-             (1- (grid-get-row-count (grid-table-etaf--source state))))))
+    (let ((counts (grid-table-etaf--data-row-counts state)))
+      (message "Showing %d of %d rows" (car counts) (cdr counts)))))
 
 (defun grid-table-etaf-filter-by-cell ()
   "Show only the rows that hold the cursor cell's value in its column."

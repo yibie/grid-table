@@ -198,7 +198,8 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
 
 (ert-deftest grid-table-etaf-status-bar-summarizes-the-selection ()
   (grid-table-etaf-test--with-grid (6 5)
-    (should (string-match-p "6 rows × 5 columns" (grid-table-etaf-test--text)))
+    ;; The header row is not counted, as in the filtered count.
+    (should (string-match-p "5 rows × 5 columns" (grid-table-etaf-test--text)))
     (grid-table-etaf-goto 0 1)
     (grid-table-etaf-extend-down)
     (grid-table-etaf-extend-down)
@@ -680,6 +681,19 @@ SPEC is (ROWS COLS &optional VIEWPORT-COLUMNS VIEWPORT-LINES)."
     (should (string-match-p "=COUNTPLOT" (car (split-string
                                                (grid-table-etaf-test--text)
                                                "\n"))))))
+
+(ert-deftest grid-table-etaf-row-counts-agree-with-and-without-a-header ()
+  (grid-table-etaf-test--with-grid (12 4 100 20)
+    ;; 12 rows: a header and 11 below it, of which column B holds 2 ... 22.
+    (should (string-match-p "11 rows × 4 columns" (grid-table-etaf-test--text)))
+    (grid-table-etaf-filter-column 1 ">" "10")
+    (should (string-match-p "6 of 11 rows shown" (grid-table-etaf-test--text)))
+    ;; Without a header row the first row counts like any other.
+    (grid-table-toggle-header-row)
+    (grid-table-etaf-clear-filters)
+    (should (string-match-p "12 rows × 4 columns" (grid-table-etaf-test--text)))
+    (grid-table-etaf-filter-column 1 ">" "10")
+    (should (string-match-p "6 of 12 rows shown" (grid-table-etaf-test--text)))))
 
 (ert-deftest grid-table-etaf-filters-hide-rows-and-movement-skips-them ()
   (grid-table-etaf-test--with-grid (12 4 100 20)
