@@ -532,6 +532,35 @@ grid reads them back without it."
        file)
       (should (= (grid-table-xlsx-date-system file) 1900)))))
 
+(ert-deftest grid-table-xlsx-test-keeps-sheet-titles ()
+  (skip-unless grid-table-xlsx-test--available)
+  (grid-table-xlsx-test--with-file file
+    (let* ((data (make-default-data-source '("") '(("1"))))
+           (sum (make-default-data-source '("") '(("2"))))
+           (workbook (grid-workbook-create (list (cons "Data" data)
+                                                 (cons "Sum" sum)))))
+      (puthash :title "Northwind · Data" data)
+      (puthash :title "Sum" sum)
+      (grid-table-xlsx-write-workbook workbook file)
+      (let ((back (grid-table-xlsx-create-workbook file)))
+        (should (equal (gethash :title (grid-workbook-sheet back "Data"))
+                       "Northwind · Data"))
+        ;; A title that is the sheet's name needs nothing kept.
+        (should (equal (gethash :title (grid-workbook-sheet back "Sum")) "Sum"))
+        ;; A sheet taken out of the workbook takes its title with it, and a
+        ;; title given back as the sheet's name is no longer kept.
+        (puthash :title "Data" (grid-workbook-sheet back "Data"))
+        (grid-workbook-remove-sheet back (grid-workbook-sheet back "Sum"))
+        (grid-table-xlsx-write-workbook back file)
+        (should (equal (gethash :title (grid-table-xlsx-create-data-source
+                                        file "Data"))
+                       "Data"))
+        (should-not (string-match-p
+                     "grid-table title"
+                     (shell-command-to-string
+                      (format "unzip -p %s docProps/custom.xml 2>/dev/null"
+                              (shell-quote-argument file)))))))))
+
 (ert-deftest grid-table-xlsx-test-table-column-with-a-line-break ()
   "A column name with a line break is read whole, however written.
 Excel writes it as _x000a_ in the table, and a formula may write it

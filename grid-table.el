@@ -680,6 +680,9 @@ Display column 0 is the row numbers; the first column of the grid is 1.")
                  (eq new-align grid-table-title-align)
                  (eq new-decoration grid-table-title-decoration))
       (setq-local grid-table--title new-title)
+      ;; The sheet keeps its title, to show it again and write it out.
+      (when grid-table--data-source
+        (puthash :title new-title grid-table--data-source))
       (when new-align
         (setq-local grid-table-title-align new-align))
       (when new-decoration

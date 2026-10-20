@@ -16,6 +16,7 @@ use umya_spreadsheet::{
     Style, Table, TableColumn, TableStyleInfo, Workbook, Worksheet,
 };
 use umya_spreadsheet::structs::{AutoFilter, FilterColumn};
+use umya_spreadsheet::structs::custom_properties::CustomDocumentProperty;
 use umya_spreadsheet::helper::coordinate::{index_from_coordinate, string_from_column_index};
 use umya_spreadsheet::structs::drawing::Theme;
 use umya_spreadsheet::structs::drawing::charts::{
@@ -502,7 +503,47 @@ fn read(path: String, sheet: String) -> Result<String> {
         book.sheet_by_name(&sheet).map_err(fail)?,
         book.theme(),
     )?;
+    if let Some(title) = sheet_title(&book, &sheet) {
+        out.pop();
+        out.push_str(" :title ");
+        quote(&mut out, &title);
+        out.push(')');
+    }
     Ok(out)
+}
+
+/// The custom document property that keeps the grid title of SHEET.
+/// Excel shows a sheet's name only; grid-table's title rides along in
+/// the workbook's custom properties, where Excel leaves it alone.
+fn title_property(sheet: &str) -> String {
+    format!("grid-table title: {}", sheet)
+}
+
+/// Return the grid title kept for SHEET of BOOK, if any.
+fn sheet_title(book: &Workbook, sheet: &str) -> Option<String> {
+    let name = title_property(sheet);
+    book.properties()
+        .custom_properties()
+        .custom_document_property_list()
+        .iter()
+        .find(|property| property.name() == name)
+        .map(|property| property.value().to_string())
+}
+
+/// Keep TITLE as the grid title of SHEET of BOOK, or drop the one kept
+/// when TITLE is None.  Other custom properties are left as they are.
+fn set_sheet_title(book: &mut Workbook, sheet: &str, title: Option<&str>) {
+    let name = title_property(sheet);
+    let list = book
+        .properties_mut()
+        .custom_properties_mut()
+        .custom_document_property_list_mut();
+    list.retain(|property| property.name() != name);
+    if let Some(title) = title {
+        let mut property = CustomDocumentProperty::default();
+        property.set_name(name).set_value_string(title);
+        list.push(property);
+    }
 }
 
 fn argb(rgb: &str) -> String {
@@ -819,8 +860,9 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                 sheet.cell_mut((col + 1, row + 1)).set_hyperlink(link);
             }
             "F" if fields.len() >= 4 => conditionals.push(&record[2..]),
-            // The workbook's date system, which `write' has taken.
-            "Y" => {}
+            // The workbook's date system and the grid title, which `write'
+            // has taken.
+            "Y" | "S" => {}
             // U and T, the sheet's tables, which `tables' has taken.
             "U" | "T" => {}
             // A, the filtered ranges, which `filters' has taken.
@@ -1307,6 +1349,7 @@ fn prune(path: String, names: String) -> Result<()> {
     for name in present {
         if left > 1 && !keep.contains(&name.as_str()) {
             book.remove_sheet_by_name(&name).map_err(fail)?;
+            set_sheet_title(&mut book, &name, None);
             left -= 1;
         }
     }
@@ -1319,7 +1362,8 @@ fn prune(path: String, names: String) -> Result<()> {
 /// SHEET replaced or added and its other sheets kept.  PAYLOAD is records
 /// separated by U+001E with fields separated by U+001F:
 /// C ROW COL KIND TEXT BOLD ITALIC COLOR FILL ALIGN, M RANGE and
-/// F RANGE OP FORMULA TEXT BOLD ITALIC COLOR FILL, and Y 1900 or Y 1904
+/// F RANGE OP FORMULA TEXT BOLD ITALIC COLOR FILL, S TITLE for the grid
+/// title kept beside the sheet, and Y 1900 or Y 1904
 /// for the workbook's date system.
 #[defun]
 fn write(path: String, base: Option<String>, sheet: String, payload: String) -> Result<()> {
@@ -1359,13 +1403,19 @@ fn write(path: String, base: Option<String>, sheet: String, payload: String) -> 
     if !has_sheet(&book, &sheet) {
         book.new_sheet(sheet.as_str()).map_err(fail)?;
     }
-    // Y 1904 or Y 1900 gives the workbook its date system.
+    // Y 1904 or Y 1900 gives the workbook its date system, and S TITLE
+    // the sheet its grid title; without S it keeps none.
+    let mut title = None;
     for record in payload.split(RECORD) {
         let fields: Vec<&str> = record.split(FIELD).collect();
         if fields.len() >= 2 && fields[0] == "Y" {
             book.set_date1904(fields[1] == "1904");
         }
+        if fields.len() >= 2 && fields[0] == "S" && !fields[1].is_empty() {
+            title = Some(fields[1].to_string());
+        }
     }
+    set_sheet_title(&mut book, &sheet, title.as_deref());
     let target = book.sheet_by_name_mut(&sheet).map_err(fail)?;
     clear(target);
     fill(target, &payload)?;

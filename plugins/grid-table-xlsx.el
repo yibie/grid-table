@@ -743,7 +743,10 @@ the header row."
              ;; Formulas read as Excel reads a file's.
              (source (let ((grid-calc-legacy-arrays t))
                        (make-default-data-source
-                        (copy-sequence (car values)) values sheet)))
+                        (copy-sequence (car values)) values
+                        ;; A title grid-table gave the sheet, kept in the
+                        ;; workbook's custom properties, else its name.
+                        (or (plist-get data :title) sheet))))
              (model (gethash :model source))
              ;; A dynamic array spills, as a formula typed today does;
              ;; only the others are array formulas.
@@ -1266,10 +1269,18 @@ SHEET is the name SOURCE is written as, which its charts' ranges name."
          (grid-calc-names (and workbook (grid-workbook--names-resolver workbook)))
          (grid-calc-tables (and workbook (grid-workbook--tables-resolver workbook)))
          (grid-format-date-system (grid-workbook-date-system-of workbook))
-         ;; The workbook's date system, which a new file would not know.
-         (records (and workbook
-                       (list (concat "Y" grid-table-xlsx--field
-                                     (number-to-string grid-format-date-system))))))
+         (title (gethash :title source))
+         ;; The workbook's date system, which a new file would not know,
+         ;; and a title other than the sheet's name, which Excel has no
+         ;; place for and the workbook's custom properties keep.
+         (records (append
+                   (and workbook
+                        (list (concat "Y" grid-table-xlsx--field
+                                      (number-to-string grid-format-date-system))))
+                   (and (stringp title) (not (string-empty-p title))
+                        (not (equal title sheet))
+                        (list (concat "S" grid-table-xlsx--field
+                                      (grid-table-xlsx--clean title)))))))
     (dotimes (row rows)
       (dotimes (col cols)
         (when-let* ((record
@@ -1491,6 +1502,8 @@ replace."
                                       (string-join names ", ")
                                       (file-name-nondirectory file)))))
       (user-error "Export canceled"))
+    ;; The title shown is the one the sheet keeps.
+    (puthash :title grid-table--title source)
     (if (cdr sheets)
         (grid-table-xlsx-write-workbook (grid-workbook-of source) file)
       (grid-table-xlsx-write-data-source source file (car names)))
