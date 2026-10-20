@@ -251,25 +251,27 @@
                                         '("beta" ("alpha" "beta"))))))
 
 (ert-deftest grid-table-csv-open-preserves-csv-data-source ()
+  "A CSV file's header line is the grid's first row, and saving writes it once."
+  (require 'grid-table-csv)
   (let ((input (make-temp-file "grid-csv-input-" nil ".csv"))
-        (output (make-temp-file "grid-csv-output-" nil ".csv"))
-        source)
+        (output (make-temp-file "grid-csv-output-" nil ".csv")))
     (unwind-protect
         (progn
           (with-temp-file input
-            (insert "name,amount\nalpha,10\nbeta,20\n"))
-          (cl-letf (((symbol-function 'grid-table-api-create)
-                     (lambda (&rest args)
-                       (setq source (plist-get args :data-source)))))
-            (grid-table-find-file-csv input))
-          (should (equal (gethash :file-path source) input))
-          (should (functionp (gethash :save-to-file source)))
-          (let ((grid-table--data-source source))
-            (grid-table-csv-save output))
+            (insert "name,amount\r\nalpha,10\r\n\"b, c\",20\r\n"))
+          (let ((source (grid-table-csv-create-data-source input)))
+            (should (equal (gethash :file-path source) input))
+            (should (functionp (gethash :save-to-file source)))
+            (should (equal (grid-get-raw-value-at source 0 0) "name"))
+            (should (equal (grid-get-raw-value-at source 1 1) "10"))
+            (should (equal (grid-get-raw-value-at source 2 0) "b, c"))
+            (should (grid-table-header-row-p source))
+            (let ((grid-table--data-source source))
+              (grid-table-csv-save output)))
           (with-temp-buffer
             (insert-file-contents output)
             (should (equal (buffer-string)
-                           "name,amount\nalpha,10\nbeta,20\n"))))
+                           "name,amount\nalpha,10\n\"b, c\",20\n"))))
       (delete-file input)
       (delete-file output))))
 

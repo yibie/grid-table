@@ -48,34 +48,33 @@
    ","))
 
 (defun grid-table-csv--save-data-source (data-source file-path)
-  "Save a data source back to a CSV file."
-  (let* ((headers (gethash :headers data-source))
-         (model (gethash :model data-source))
+  "Save DATA-SOURCE to FILE-PATH as CSV, one line per row.
+The header line is the grid's first row, as it was read."
+  (let* ((model (gethash :model data-source))
          (rows (grid-data-model-rows model))
          (cols (grid-data-model-cols model))
          (lines '()))
-    ;; Add header line
-    (push (grid-table-csv--format-line headers) lines)
-    ;; Add data rows
     (dotimes (r rows)
       (let ((row '()))
         (dotimes (c cols)
-          (push (grid-cell-raw-input (grid-model-get-cell model r c)) row))
+          (push (or (grid-cell-raw-input (grid-model-get-cell model r c)) "") row))
         (push (grid-table-csv--format-line (nreverse row)) lines)))
-    ;; Write to file
-    (with-temp-file file-path
-      (insert (mapconcat #'identity (nreverse lines) "\n"))
-      (insert "\n"))))
+    (let ((coding-system-for-write 'utf-8-unix))
+      (with-temp-file file-path
+        (insert (mapconcat #'identity (nreverse lines) "\n"))
+        (insert "\n")))))
 
 (defun grid-table-csv-create-data-source (file-path)
-  "Create a grid-table data source from a CSV file."
+  "Create a grid-table data source from the CSV file FILE-PATH.
+Its first line is the grid's first row, as a .grid file's header line is."
   (when (file-exists-p file-path)
     (with-temp-buffer
       (insert-file-contents file-path)
-      (let* ((lines (split-string (buffer-string) "\n" t))
-             (csv-headers (grid-table-csv--parse-line (pop lines)))
+      (let* ((lines (split-string (buffer-string) "\r?\n" t))
              (csv-rows (mapcar #'grid-table-csv--parse-line lines))
-             (source (make-default-data-source csv-headers csv-rows (file-name-nondirectory file-path))))
+             (csv-headers (car csv-rows))
+             (source (make-default-data-source csv-headers csv-rows
+                                               (file-name-nondirectory file-path))))
         ;; Add CSV-specific functionality
         (puthash :file-path file-path source)
         (puthash :save-to-file
@@ -85,10 +84,23 @@
         source))))
 
 (defun grid-table-find-file-csv (file-path)
-  "Open a CSV file in a grid-table view."
+  "Open the CSV file FILE-PATH as a grid.
+The buffer visits the file, so `save-buffer' writes the grid back to it
+as CSV."
   (interactive "fFind CSV file: ")
-  (when-let ((data-source (grid-table-csv-create-data-source file-path)))
-    (grid-table-api-create :data-source data-source)))
+  (unless (file-exists-p file-path)
+    (user-error "No such file: %s" file-path))
+  (let ((buffer (find-file-noselect file-path)))
+    (with-current-buffer buffer
+      (unless (derived-mode-p 'grid-table-mode)
+        (let ((source (grid-table-csv-create-data-source buffer-file-name)))
+          (setq-local grid-table--file-path buffer-file-name)
+          (setq-local grid-table--title (gethash :title source))
+          (let ((inhibit-read-only t))
+            (erase-buffer))
+          (grid-table--show-grid-in-current-buffer source)
+          (set-buffer-modified-p nil))))
+    (switch-to-buffer buffer)))
 
 (defun grid-table-csv-save (file-path)
   "Save the current grid-table data back to a CSV file."

@@ -4485,9 +4485,20 @@ ignoring the case of FROM.  The whole is one undoable step."
           #'grid-table-etaf--viewport-changed 90)
 
 (defun grid-table-etaf--write-contents ()
-  "Save the grid of the current buffer instead of its rendered text."
+  "Save the grid of the current buffer instead of its rendered text.
+A data source with a `:save-to-file' function, such as a CSV file's,
+saves itself to the visited file; any other grid is saved as a .grid
+file."
   (when grid-table--data-source
-    (grid-table-write-file)
+    (let ((save (gethash :save-to-file grid-table--data-source)))
+      (if (and save buffer-file-name
+               (not (string-suffix-p ".grid" buffer-file-name)))
+          (progn
+            (funcall save grid-table--data-source buffer-file-name)
+            (set-visited-file-modtime)
+            (set-buffer-modified-p nil)
+            (message "Saved %s" buffer-file-name))
+        (grid-table-write-file)))
     t))
 
 (define-derived-mode grid-table-etaf-mode grid-table-mode "Grid Table"

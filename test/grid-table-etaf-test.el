@@ -1992,6 +1992,33 @@ cell in the way makes such a formula #SPILL!."
                          "x")))
       (delete-directory dir t))))
 
+;; A CSV file opens as a grid with its header line on top, and saving
+;; the buffer writes CSV back to it.
+(ert-deftest grid-table-etaf-csv-opens-and-saves-as-csv ()
+  (require 'grid-table-csv)
+  (let* ((dir (make-temp-file "grid-csv" t))
+         (file (expand-file-name "sales.csv" dir)))
+    (unwind-protect
+        (progn
+          (with-temp-file file
+            (insert "name,amount\nalpha,10\nbeta,20\n"))
+          (grid-table-find-file-csv file)
+          (should (equal buffer-file-name file))
+          (should (derived-mode-p 'grid-table-etaf-mode))
+          (should-not (buffer-modified-p))
+          (should (equal (grid-get-raw-value-at grid-table--data-source 0 0) "name"))
+          (grid-table-etaf-goto 1 1)
+          (execute-kbd-macro (kbd "9 9 RET"))
+          (should (buffer-modified-p))
+          (save-buffer)
+          (should-not (buffer-modified-p))
+          (kill-buffer)
+          (should (equal (directory-files dir nil "\\`[^.]") '("sales.csv")))
+          (with-temp-buffer
+            (insert-file-contents file)
+            (should (equal (buffer-string) "name,amount\nalpha,99\nbeta,20\n"))))
+      (delete-directory dir t))))
+
 ;; A window system's Return key is the event `return', not RET; it edits
 ;; and stores a cell all the same.
 (ert-deftest grid-table-etaf-return-key-edits-and-stores ()

@@ -14,9 +14,7 @@
      ("C-f" . grid-table-next-cell)
      ("C-b" . grid-table-previous-cell))
     (:editing
-     ("RET" . grid-table-edit-cell)
-     ("C-c C-c" . grid-table-finish-edit)
-     ("C-g" . grid-table-cancel-edit))
+     ("RET" . grid-table-edit-cell))
     (:file
      ("C-x C-s" . grid-table-save)
      ("C-x C-w" . grid-table-save-as)))
@@ -144,9 +142,11 @@ not overridden this way."
   grid-table--file-path)
 
 (defun grid-table-save ()
-  "Save the current grid table."
+  "Save the current grid table.
+Without a file to save to, ask for one, as `grid-table-save-as' does."
   (interactive)
-  (when grid-table--file-path
+  (if (not grid-table--file-path)
+      (call-interactively #'grid-table-save-as)
     (let ((save-func (gethash :save-to-file grid-table--data-source)))
       (if save-func
           (progn
