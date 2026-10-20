@@ -94,7 +94,8 @@ elsewhere.
 
 1. `C-x C-f data.grid`. A file that does not exist yet opens as an empty
    grid. `M-x grid-table-xlsx-find-file` opens an xlsx workbook, and
-   `M-x grid-table-find-file-csv` a CSV file.
+   `M-x grid-table-find-file-csv` a CSV file, whose first line is the
+   grid's first row; `C-x C-s` writes it back as CSV.
 2. Move with the arrow keys or `C-n`/`C-p`/`C-f`/`C-b`. Type to replace
    the cell under the cursor; press `RET` to store it and move down.
 3. Type a formula: `=SUM(B2:B10)`, `=B2*$C$1`, `=XLOOKUP(A2,Items!A:A,Items!C:C)`.
@@ -353,9 +354,10 @@ A grid opened from a workbook is not tied to it: `C-x C-s` saves a
 
 Both ways: values, formulas, number formats, merges, bold, italic,
 colors, alignment, conditional formats, column widths, frozen panes,
-hidden rows and columns, list validations, workbook names, notes, links
-and charts (column, bar, line, area, pie, doughnut and scatter, including
-how far into a column a chart starts).
+hidden rows and columns, list validations, workbook names, notes, links,
+charts (column, bar, line, area, pie, doughnut and scatter, including
+how far into a column a chart starts), and each sheet's grid title, kept
+in the workbook's custom properties where Excel leaves it alone.
 
 Not carried, or changed on the way:
 
@@ -378,24 +380,32 @@ Not carried, or changed on the way:
 
 ## Org, Markdown and reStructuredText
 
-**Org**: `M-x grid-table-org-insert-block` inserts a dynamic block that
-previews a `.grid` file, `M-x grid-table-org-refresh-block` updates the
-preview and `M-x grid-table-org-open-block` opens the grid.
+**Org**: `M-x grid-table-org-insert-block` inserts a source block that
+previews a `.grid` file. Inside the block, `M-x grid-table-org-refresh-block`
+draws the preview again from the file and `M-x grid-table-org-open-block`
+opens the grid.
 
 ```org
-#+BEGIN: grid-table
-#+OPTIONS: :file "~/project/data.grid"
-#+END:
+#+BEGIN_SRC grid-table :file /home/me/project/data.grid
+| Region | Total |
+|--------+-------|
+| North  | 120   |
+#+END_SRC
 ```
 
-**Markdown**: a fenced block names the file, and the preview is drawn
-below it.
+**Markdown**: `M-x grid-table-markdown-insert-block` inserts a fenced
+block the same way, with `grid-table-markdown-refresh-block` and
+`grid-table-markdown-open-block` for the block at point.
 
 ````markdown
-```grid-table
-:file ~/project/data.grid
+```grid-view file=/home/me/project/data.grid
+┌───┬────────┬───────┐
+│   │ A      │ B     │
+…
 ```
 ````
+
+A path with spaces is written in double quotes.
 
 **reStructuredText**: `M-x grid-table-export-as-rst` writes a grid as an
 RST table, and `M-x grid-table-rst-insert-table-from-file` inserts one

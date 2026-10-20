@@ -85,7 +85,7 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 
 1. `C-x C-f data.grid`。文件还不存在时会打开一张空表。
    `M-x grid-table-xlsx-find-file` 打开 xlsx 工作簿，`M-x grid-table-find-file-csv`
-   打开 CSV 文件。
+   打开 CSV 文件，它的第一行就是表格的第一行，`C-x C-s` 按 CSV 存回去。
 2. 用方向键或 `C-n`/`C-p`/`C-f`/`C-b` 移动。直接输入就替换光标所在的单元格，
    按 `RET` 存入并下移。
 3. 输入公式：`=SUM(B2:B10)`、`=B2*$C$1`、`=XLOOKUP(A2,Items!A:A,Items!C:C)`。
@@ -96,7 +96,7 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 
 ## 常用按键
 
-下面是日常最常用的键，全部按键见 [docs/KEYS.md](docs/KEYS.md)。
+下面是日常最常用的键，全部按键见 [docs/KEYS_CN.md](docs/KEYS_CN.md)。
 
 | 操作 | 按键 |
 |---|---|
@@ -161,7 +161,7 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 | 其他工作表 | `Sheet2!A1`、`'My Sheet'!A1` | `=SUM(Sheet2!A1:B5)` |
 | 溢出区域 | `C1#` | `=SUM(C1#)` |
 | 名称 | 用 `C-c n d` 定义 | `=SUM(Sales)`、`=Twice(A2)` |
-| 运算符 | `+ - * / ^ & %` 和 `= <> < > <= >=` | `=A1&" kg"`、`=B2*15%` |
+| 运算符 | `+ - * / ^ & %` 和 `= <> < > <= >=` | `=A1&" kg"`、`=B2*15% |
 
 需要知道的：
 
@@ -187,7 +187,7 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 
 `=elisp:(+ (cell "A1") (cell "B2"))` 执行 Emacs Lisp。它默认关闭，因为表格文件
 可以借此执行任意代码：只对信得过的文件把 `grid-table-allow-elisp` 设为 `t`。
-详见 [docs/ELISP_FORMULA_GUIDE.md](docs/ELISP_FORMULA_GUIDE.md)。
+详见 [docs/ELISP_FORMULA_GUIDE_CN.md](docs/ELISP_FORMULA_GUIDE_CN.md)。
 
 ## 格式、筛选和工作表
 
@@ -246,12 +246,12 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 - 图表存在 `.grid` 文件里，导出 xlsx 时写成工作簿自己的图表。
 - 在终端这类不能显示图片的地方，图表显示为文字草图。
 
-| 操作 | 按键 |
-|---|---|
-| 插入图表 | `C-c i` |
-| 类型 / 切换行列 / 标题 | `C-c k t` / `C-c k s` / `C-c k h` |
-| 改画选中的单元格 | `C-c k r` |
-| 移到光标处 / 调整大小 | `C-c k m` / `C-c k z` |
+| 操作                             | 按键                              |
+|----------------------------------|-----------------------------------|
+| 插入图表                         | `C-c i`                           |
+| 类型 / 切换行列 / 标题           | `C-c k t` / `C-c k s` / `C-c k h` |
+| 改画选中的单元格                 | `C-c k r`                         |
+| 移到光标处 / 调整大小            | `C-c k m` / `C-c k z`             |
 | 选中下一个图表 / 取消选中 / 删除 | `C-c k n` / `C-c k x` / `C-c k d` |
 
 ### 图表公式
@@ -312,7 +312,8 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 
 双向保留：值、公式、数字格式、合并、粗体、斜体、颜色、对齐、条件格式、列宽、
 冻结窗格、隐藏行列、下拉列表校验、工作簿级名称、批注、链接，以及图表（柱形、条形、
-折线、面积、饼图、圆环和散点，包括图表在列内的起始偏移）。
+折线、面积、饼图、圆环和散点，包括图表在列内的起始偏移），以及每个工作表的
+表格标题（存在工作簿的自定义属性里，Excel 不会动它）。
 
 不保留或会变化的：
 
@@ -329,23 +330,31 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 
 ## Org、Markdown 和 reStructuredText
 
-**Org**：`M-x grid-table-org-insert-block` 插入一个预览 `.grid` 文件的动态块，
-`M-x grid-table-org-refresh-block` 刷新预览，`M-x grid-table-org-open-block`
-打开表格。
+**Org**：`M-x grid-table-org-insert-block` 插入一个预览 `.grid` 文件的源码块。
+光标在块里时，`M-x grid-table-org-refresh-block` 按文件重画预览，
+`M-x grid-table-org-open-block` 打开表格。
 
 ```org
-#+BEGIN: grid-table
-#+OPTIONS: :file "~/project/data.grid"
-#+END:
+#+BEGIN_SRC grid-table :file /home/me/project/data.grid
+| Region | Total |
+|--------+-------|
+| North  | 120   |
+#+END_SRC
 ```
 
-**Markdown**：用代码块写明文件，预览画在它下面。
+**Markdown**：`M-x grid-table-markdown-insert-block` 用同样的方式插入一个代码块，
+光标所在的块用 `grid-table-markdown-refresh-block` 刷新、
+`grid-table-markdown-open-block` 打开。
 
 ````markdown
-```grid-table
-:file ~/project/data.grid
+```grid-view file=/home/me/project/data.grid
+┌───┬────────┬───────┐
+│   │ A      │ B     │
+…
 ```
 ````
+
+路径里有空格时，用双引号括起来。
 
 **reStructuredText**：`M-x grid-table-export-as-rst` 把表格写成 RST 表，
 `M-x grid-table-rst-insert-table-from-file` 从 `.grid` 文件插入一张。
@@ -381,7 +390,7 @@ make test-etaf ETAF_SRC=~/src        # 界面；ETAF_SRC 是放 ecss、ebox、et
 `test/corpus/` 把公式结果和一批真实工作簿里 Excel 存下的值做对照；
 `make corpus-fetch` 下载这批文件。
 
-插件可以增加数据源和文件格式，见 [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md)
+插件可以增加数据源和文件格式，见 [docs/PLUGIN_DEVELOPMENT_CN.md](docs/PLUGIN_DEVELOPMENT_CN.md)
 和 `plugins/grid-table-example-plugin.el`。
 
 问题和建议请提到 [GitHub Issues](https://github.com/yibie/grid-table/issues)。

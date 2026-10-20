@@ -1,479 +1,228 @@
-# grid-table Plugin Development Detailed Guide
+[English](PLUGIN_DEVELOPMENT.md) | [中文](PLUGIN_DEVELOPMENT_CN.md)
 
-## 🏗️ Plugin System Architecture
+# Writing a plugin
 
-### Core Components
+A plugin is an Emacs Lisp file that requires `grid-table` and adds
+something to it: a file format to open, an export, a command. There is
+no plugin loader to satisfy; the file is loaded with `require` like any
+other library. The plugins that come with grid-table live in `plugins/`,
+which `grid-table.el` adds to `load-path`.
 
-```elisp
-;; Plugin registry
-(defvar grid-table-plugins '())
-(defvar grid-table-cell-renderers (make-hash-table))
-(defvar grid-table-data-source-types (make-hash-table))
-```
+## Where things are
 
-### Registration Functions
+| File | What a plugin uses from it |
+|---|---|
+| `grid-data-source.el` | `make-default-data-source`, the data source a grid shows |
+| `grid-table.el` | `grid-get-row-count`, `grid-get-raw-value-at` and the other accessors |
+| `grid-table-plugins.el` | `grid-table-register-data-source-type`, `grid-table-register-plugin` |
+| `grid-table-api.el` | `grid-table-create-data-source`, `grid-table-api-create` |
+| `grid-table-persistence.el` | `grid-table-persistence-create-data-source-from-file`, to read a `.grid` file |
+| `grid-table-text.el` | `grid-table-text-render`, a grid as a plain-text table |
 
-```elisp
-;; Register plugin
-(grid-table-register-plugin 'my-plugin)
+## Data sources
 
-;; Register cell renderer
-(grid-table-register-cell-renderer 'my-type #'my-renderer)
+A grid shows a data source: a hash table from keywords to functions,
+plus the data they work on. Each function takes the data source itself
+as its first argument.
 
-;; Register data source type
-(grid-table-register-data-source-type 'my-format #'my-creator)
-```
-
-## 🧩 Plugin Types Explained
-
-### 1. Cell Renderer Plugin
-
-Cell renderer is responsible for converting raw data values to display text.
-
-#### Function Signature
-```elisp
-(defun my-renderer (value &optional cell-props)
-  "Render VALUE with optional CELL-PROPS.
-VALUE is the raw cell value.
-CELL-PROPS is a plist with cell properties.
-Returns formatted text string.")
-```
-
-#### Example: Syntax Highlight Renderer
-```elisp
-(defun grid-table-syntax-highlight-renderer (value &optional cell-props)
-  "Render text with syntax highlighting."
-  (if (and value (stringp value))
-      (let ((rendered value))
-        ;; Highlight URL
-        (setq rendered (replace-regexp-in-string 
-                        "https?://[^\\s]+" 
-                        (lambda (url)
-                          (propertize url 'face '(:foreground "blue" :underline t)))
-                        rendered))
-        ;; Highlight email
-        (setq rendered (replace-regexp-in-string 
-                        "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
-                        (lambda (email)
-                          (propertize email 'face '(:foreground "green")))
-                        rendered))
-        rendered)
-    ""))
-```
-
-### 2. Data Source Type Plugin
-
-Data source type plugin defines how to create a data source from a specific format.
-
-#### Registration Function Signature
-```elisp
-(defun my-data-source-creator (source &rest args)
-  "Create a data source from SOURCE with ARGS.
-SOURCE is the data source (file path, URL, etc.).
-ARGS are additional arguments.
-Returns a data source hash table.")
-```
-
-#### Example: JSON Data Source
-```elisp
-(defun grid-table-json-data-source (json-file)
-  "Create a data source from JSON file."
-  (when (file-exists-p json-file)
-    (let* ((json-data (json-read-file json-file))
-           (headers (mapcar #'car (cdr (car json-data))))
-           (data (mapcar #'cdr json-data)))
-      (make-default-data-source headers data (file-name-nondirectory json-file)))))
-```
-
-### 3. Feature Plugin
-
-Feature plugin provides a complete custom functionality module.
-
-#### Example: Export Plugin
-```elisp
-(defun grid-table-export-to-csv (file-path)
-  "Export current grid to CSV file."
-  (interactive "FSave to CSV: ")
-  (when grid-table--data-source
-    (let* ((rows (grid-get-row-count grid-table--data-source))
-           (cols (grid-get-column-count grid-table--data-source)))
-      (with-temp-file file-path
-        ;; Write header row
-        (insert (mapconcat #'identity 
-                          (mapcar (lambda (c) (grid-get-header-value grid-table--data-source c))
-                                  (number-sequence 0 (1- cols)))
-                        ","))
-        (insert "\n")
-        ;; Write data row
-        (dotimes (r rows)
-          (insert (mapconcat #'identity 
-                            (mapcar (lambda (c) (grid-get-raw-value-at grid-table--data-source r c))
-                                    (number-sequence 0 (1- cols)))
-                          ","))
-          (insert "\n")))
-      (message "Exported to: %s" file-path))))
-```
-
-## 🔧 Development Environment Setup
-
-### 1. Create Plugin Directory Structure
-
-```
-my-grid-table-plugin/
-├── my-grid-table-plugin.el    ; Main plugin file
-├── README.md                  ; Plugin description
-├── tests/
-│   └── test-my-plugin.el     ; Test file
-└── examples/
-    └── demo.el               ; Usage example
-```
-
-### 2. Plugin File Template
+Build one with `make-default-data-source`:
 
 ```elisp
-;;; my-grid-table-plugin.el --- My custom plugin -*- lexical-binding: t -*-
-;;; Version: 1.0.0
-;;; Author: Your Name
-;;; Keywords: grid-table, plugin
-;;; URL: https://github.com/yourname/my-grid-table-plugin
-
-(require 'grid-table-plugins)
-(require 'grid-table-core)
-
-;;;----------------------------------------------------------------------
-;;; Plugin Implementation
-;;;----------------------------------------------------------------------
-
-;; Your plugin code here
-
-;;;----------------------------------------------------------------------
-;;; Plugin Registration
-;;;----------------------------------------------------------------------
-
-(defun my-grid-table-plugin-init ()
-  "Initialize my grid-table plugin."
-  ;; Register components
-  (grid-table-register-cell-renderer 'my-type #'my-renderer)
-  (grid-table-register-data-source-type 'my-format #'my-creator)
-  (grid-table-register-plugin 'my-plugin)
-  (message "My plugin initialized"))
-
-;; Auto-initialize
-(my-grid-table-plugin-init)
-
-(provide 'my-grid-table-plugin)
+(make-default-data-source HEADERS ROWS &optional TITLE MERGES)
 ```
 
-## 📝 Plugin Development Workflow
+- `ROWS` is a list of rows, each a list of strings, as they would be
+  typed: `"12"`, `"=SUM(B2:B3)"`, `"pen"`. A short row is filled with
+  empty cells.
+- `HEADERS` is a list of strings, one for each column; its length is the
+  number of columns.
+- The first row of `ROWS` is the header row the grid shows, which stays
+  in place when sorting and filtering. `HEADERS` is not drawn. So pass
+  the header line both ways: as `HEADERS` and as the first element of
+  `ROWS`. This is what grid-table does when it reads a `.grid` file.
 
-### Step 1: Requirement Analysis
+Do not build the hash table by hand. The view reads the sheet's model
+(`:model`) directly in many places, and only `make-default-data-source`
+sets it up, along with workbook bookkeeping.
 
-1. **Determine plugin type**: Renderer, data source, feature plugin
-2. **Define feature requirements**: Input, output, processing logic
-3. **Design interface**: Function signature, parameters, return values
+### The keys
 
-### Step 2: Implement Core Functionality
+Code outside the model goes through accessors in `grid-table.el`, which
+call these keys:
+
+| Key | Accessor |
+|---|---|
+| `:get-row-count`, `:get-column-count` | `grid-get-row-count`, `grid-get-column-count` |
+| `:get-raw-value-at` | `grid-get-raw-value-at`: what was typed, a formula as text |
+| `:get-computed-value-at` | `grid-get-computed-value-at`: a formula's value |
+| `:set-raw-value-at` | `grid-set-raw-value-at` |
+| `:get-style-at`, `:set-style-at` | `grid-get-style-at`, `grid-set-style-at` |
+| `:get-merges`, `:merge-cells` | `grid-get-merges`, `grid-merge-cells` |
+| `:get-column-widths`, `:set-column-width` | `grid-get-column-widths`, `grid-set-column-width` |
+| `:get-conditional-formats`, `:set-conditional-formats` | `grid-get-conditional-formats`, `grid-set-conditional-formats` |
+
+`make-default-data-source` also provides keys the view calls for rows,
+columns, sorting, freezing, hiding, filters, validations and charts
+(`:add-row`, `:delete-column`, `:sort-by-column`, `:set-frozen`,
+`:set-filters`, `:set-charts` and others); see the function itself.
+Rows and columns count from 0. A value typed as a number comes back from
+`grid-get-computed-value-at` as text (`"12"`).
+
+A plugin can store its own keys in the same table. The CSV plugin adds
+two that grid-table uses:
+
+| Key | Used by |
+|---|---|
+| `:file-path` | The CSV plugin's `grid-table-csv-save-overwrite` |
+| `:save-to-file` | `grid-table-save` and `grid-table-save-as`, and `C-x C-s` in a buffer that visits a file other than a `.grid` one. Each calls it as `(funcall FN SOURCE FILE)`. |
+
+## Registering
+
+`grid-table-plugins.el` has two registers that work:
 
 ```elisp
-;; Implement renderer
-(defun my-custom-renderer (value &optional cell-props)
-  "My custom cell renderer."
-  (if (and value (stringp value))
-      ;; Implement rendering logic
-      (let ((result value))
-        ;; Process logic
-        result)
-    ""))
-
-;; Implement data source creator
-(defun my-data-source-creator (source)
-  "Create data source from SOURCE."
-  (when (file-exists-p source)
-    ;; Parse data
-    (let* ((data (my-parse-data source))
-           (headers (my-extract-headers data))
-           (rows (my-extract-rows data)))
-      (make-default-data-source headers rows))))
+(grid-table-register-data-source-type 'tsv #'grid-table-tsv-create-data-source)
+(grid-table-create-data-source 'tsv "~/data.tsv")  ; calls the function with "~/data.tsv"
 ```
 
-### Step 3: Register Plugin
+`grid-table-register-data-source-type` stores a function under a type,
+and `grid-table-create-data-source` calls it with the remaining
+arguments. An unknown type signals `Unknown data source type`.
+
+`grid-table-register-plugin` adds a symbol to `grid-table-plugins`.
+Nothing reads that list; it only records what was loaded.
+
+`grid-table-load-plugin` requires `grid-table-NAME` and registers `NAME`:
+`(grid-table-load-plugin "csv")` loads the CSV plugin.
+
+Not used yet: `grid-table-register-cell-renderer` stores a function in
+`grid-table-cell-renderers`, but the view never calls it, so a renderer
+changes nothing on screen. Format cells with number formats and
+conditional formats instead. Likewise `grid-table-plugins-init` and the
+built-in renderers it registers are never called, and the `:columns`
+argument of `grid-table-api-create` is ignored.
+
+## Showing a data source
+
+`grid-table-api-create` shows a data source in a new buffer called
+`*Grid Table*`:
 
 ```elisp
-(defun my-plugin-init ()
-  "Initialize my plugin."
-  ;; Register renderer
-  (grid-table-register-cell-renderer 'my-type #'my-custom-renderer)
-  
-  ;; Register data source type
-  (grid-table-register-data-source-type 'my-format #'my-data-source-creator)
-  
-  ;; Register plugin
-  (grid-table-register-plugin 'my-plugin)
-  
-  (message "My plugin initialized"))
+(grid-table-api-create :data-source SOURCE :title TITLE :file-path FILE)
 ```
 
-### Step 4: Test and Debug
+In that buffer `C-x C-s` runs `grid-table-save`, which calls the source's
+`:save-to-file` with `FILE`. Without `:file-path`, it asks for a file,
+as `grid-table-save-as` does. The keys it binds are in
+`grid-table-default-bindings`.
+
+The buffer visits no file. To make a grid that visits its file, as
+`C-x C-f` does for `.grid` files, see how `grid-table-find-file-csv`
+opens the file with `find-file-noselect` and shows the source in that
+buffer: `C-x C-s` then calls `:save-to-file` with the visited file.
+
+## A worked example: tab-separated files
+
+This plugin opens a tab-separated file as a grid and saves it back. It
+was loaded and run as shown below.
 
 ```elisp
-(defun my-plugin-test ()
-  "Test my plugin functionality."
-  (interactive)
-  ;; Test renderer
-  (let ((result (my-custom-renderer "test value")))
-    (message "Renderer test: %s" result))
-  
-  ;; Test data source
-  (let ((source (my-data-source-creator "test.data")))
-    (message "Data source test: %s" (if source "success" "failed"))))
-```
+;;; grid-table-tsv.el --- Tab-separated files for grid-table -*- lexical-binding: t -*-
 
-## 🎯 实际示例
+(require 'grid-table)
+(require 'grid-table-api)
 
-### Example 1: Currency Formatting Plugin
-
-```elisp
-;;; grid-table-currency-plugin.el --- Currency formatting plugin -*- lexical-binding: t -*-
-
-(require 'grid-table-plugins)
-
-(defun grid-table-currency-renderer (value &optional cell-props)
-  "Render currency values with proper formatting."
-  (if (and value (stringp value))
-      (let ((amount (string-to-number value)))
-        (if (numberp amount)
-            (format "$%.2f" amount)
-          value))
-    ""))
-
-(defun grid-table-currency-plugin-init ()
-  "Initialize currency plugin."
-  (grid-table-register-cell-renderer 'currency #'grid-table-currency-renderer)
-  (grid-table-register-plugin 'currency-plugin)
-  (message "Currency plugin initialized"))
-
-(grid-table-currency-plugin-init)
-
-(provide 'grid-table-currency-plugin)
-```
-
-### Example 2: Progress Bar Plugin
-
-```elisp
-;;; grid-table-progress-plugin.el --- Progress bar plugin -*- lexical-binding: t -*-
-
-(require 'grid-table-plugins)
-
-(defun grid-table-progress-renderer (value &optional cell-props)
-  "Render progress values as visual bars."
-  (if (and value (stringp value))
-      (let* ((percentage (string-to-number value))
-             (bar-width 20)
-             (filled-width (round (* percentage bar-width 0.01)))
-             (bar (make-string bar-width ?-)))
-        (when (and (numberp percentage) (>= percentage 0) (<= percentage 100))
-          (dotimes (i filled-width)
-            (aset bar i ?█))
-          (format "[%s] %d%%" bar percentage)))
-    ""))
-
-(defun grid-table-progress-plugin-init ()
-  "Initialize progress plugin."
-  (grid-table-register-cell-renderer 'progress #'grid-table-progress-renderer)
-  (grid-table-register-plugin 'progress-plugin)
-  (message "Progress plugin initialized"))
-
-(grid-table-progress-plugin-init)
-
-(provide 'grid-table-progress-plugin)
-```
-
-### Example 3: JSON Data Source Plugin
-
-```elisp
-;;; grid-table-json-plugin.el --- JSON data source plugin -*- lexical-binding: t -*-
-
-(require 'grid-table-plugins)
-(require 'json)
-
-(defun grid-table-json-create-data-source (json-file)
-  "Create a data source from JSON file."
-  (when (file-exists-p json-file)
-    (let* ((json-data (json-read-file json-file))
-           (headers (mapcar #'car (cdr (car json-data))))
-           (data (mapcar #'cdr json-data)))
-      (make-default-data-source headers data (file-name-nondirectory json-file)))))
-
-(defun grid-table-json-plugin-init ()
-  "Initialize JSON plugin."
-  (grid-table-register-data-source-type 'json #'grid-table-json-create-data-source)
-  (grid-table-register-plugin 'json-plugin)
-  (message "JSON plugin initialized"))
-
-(grid-table-json-plugin-init)
-
-(provide 'grid-table-json-plugin)
-```
-
-## 🚀 Advanced Features
-
-### 1. Custom Command
-
-```elisp
-(defun my-plugin-custom-command ()
-  "My custom command for the grid table."
-  (interactive)
-  (when grid-table--data-source
-    ;; Implement custom functionality
-    (let ((rows (grid-get-row-count grid-table--data-source))
-          (cols (grid-get-column-count grid-table--data-source)))
-      (message "Grid has %d rows and %d columns" rows cols))))
-
-;; Add to key bindings
-(define-key grid-table-mode-map (kbd "C-c m") #'my-plugin-custom-command)
-```
-
-A binding in `grid-table-mode-map` takes effect only for keys the view does not bind itself: the arrows, `TAB`, `RET`, plain characters and the view's own `C-c` commands win. Pick a free key under `C-c`.
-
-### 2. Custom Data Source Functionality
-
-```elisp
-(defun my-data-source-with-custom-functions (data)
-  "Create a data source with custom functions."
-  (let ((source (make-default-data-source headers data title)))
-    ;; Add custom functionality
-    (puthash :my-custom-function
-             (lambda (s arg)
-               ;; Implement custom functionality
-               (message "Custom function called with %s" arg))
-             source)
+(defun grid-table-tsv-create-data-source (file)
+  "Return a data source holding the tab-separated FILE."
+  (let* ((lines (with-temp-buffer
+                  (insert-file-contents file)
+                  (split-string (buffer-string) "\n" t)))
+         (rows (mapcar (lambda (line) (split-string line "\t")) lines))
+         ;; The first line is the header row: it is passed as HEADERS
+         ;; and kept as the first row of the grid.
+         (source (make-default-data-source (car rows) rows
+                                           (file-name-nondirectory file))))
+    (puthash :file-path file source)
+    (puthash :save-to-file #'grid-table-tsv--save source)
     source))
+
+(defun grid-table-tsv--save (source file)
+  "Write SOURCE to FILE as tab-separated lines."
+  (with-temp-file file
+    (dotimes (row (grid-get-row-count source))
+      (insert (mapconcat (lambda (col) (grid-get-raw-value-at source row col))
+                         (number-sequence 0 (1- (grid-get-column-count source)))
+                         "\t")
+              "\n"))))
+
+(defun grid-table-tsv-find-file (file)
+  "Show the tab-separated FILE as a grid."
+  (interactive "fTSV file: ")
+  (grid-table-api-create
+   :data-source (grid-table-tsv-create-data-source file)
+   :title (file-name-nondirectory file)
+   :file-path file))
+
+(grid-table-register-plugin 'tsv)
+(grid-table-register-data-source-type 'tsv #'grid-table-tsv-create-data-source)
+
+(provide 'grid-table-tsv)
 ```
 
-### 3. Plugin Configuration
+With a file holding `Item Qty Price`, `pen 3 1.5` and `ink 2 4`
+separated by tabs, `M-x grid-table-tsv-find-file` shows three rows with
+`Item`, `Qty` and `Price` as the header row. Typing `total` in `A4` and
+`=SUM(B2:B3)` in `B4` shows `5`, and `C-x C-s` writes the file back with
+the formula as text:
 
-```elisp
-(defcustom my-plugin-config-value "default"
-  "Configuration value for my plugin."
-  :type 'string
-  :group 'grid-table)
-
-(defun my-plugin-with-config ()
-  "Use plugin with configuration."
-  (let ((config my-plugin-config-value))
-    ;; Use configuration value
-    (message "Using config: %s" config)))
+```
+Item	Qty	Price
+pen	3	1.5
+ink	2	4
+total	=SUM(B2:B3)	
 ```
 
-## 🔍 Debugging and Testing
+## Commands and keys
 
-### 1. Plugin Debugging Tool
+A command reads the grid of the current buffer from
+`grid-table--data-source`:
 
 ```elisp
-(defun grid-table-debug-plugins ()
-  "Debug loaded plugins."
+(defun my-grid-size ()
+  "Say how many rows and columns the grid has."
   (interactive)
-  (message "Loaded plugins: %s" grid-table-plugins)
-  (message "Cell renderers: %s" (hash-table-keys grid-table-cell-renderers))
-  (message "Data source types: %s" (hash-table-keys grid-table-data-source-types)))
+  (message "%d rows, %d columns"
+           (grid-get-row-count grid-table--data-source)
+           (grid-get-column-count grid-table--data-source)))
+
+(define-key grid-table-mode-map (kbd "C-c x") #'my-grid-size)
 ```
 
-### 2. Plugin Test Framework
+Grids are shown in `grid-table-etaf-mode`, which derives from
+`grid-table-mode`, so a key bound in `grid-table-mode-map` works in every
+grid unless the view binds it itself. The view binds the arrows, `TAB`,
+`RET`, plain characters and many `C-c` keys ([KEYS.md](KEYS.md)); pick a
+free key, and check it with `C-h k` in a grid.
 
-```elisp
-(defun grid-table-test-plugin (plugin-name)
-  "Test a specific plugin."
-  (interactive "sPlugin name: ")
-  (let ((plugin-symbol (intern plugin-name)))
-    (if (member plugin-symbol grid-table-plugins)
-        (message "Plugin %s is loaded" plugin-name)
-      (message "Plugin %s is not loaded" plugin-name))))
-```
+After changing cells from Lisp, `grid-table-refresh` redraws the grid.
 
-### 3. Renderer Test
+## The plugins that come with grid-table
 
-```elisp
-(defun grid-table-test-renderer (type value)
-  "Test a cell renderer."
-  (interactive "sRenderer type: \nsTest value: ")
-  (let ((renderer (grid-table-get-cell-renderer (intern type))))
-    (if renderer
-        (let ((result (funcall renderer value)))
-          (message "Renderer result: %s" result))
-      (message "Renderer not found: %s" type))))
-```
+| File | How it hooks in |
+|---|---|
+| `grid-table-csv.el` | Registers the `csv` type and the `csv` plugin. `grid-table-find-file-csv` visits the file and shows it as a grid, its header line as the first row; `C-x C-s` writes it back as CSV through `:save-to-file`. `grid-table-csv-save` writes it to another file. |
+| `grid-table-xlsx.el` | Registers the `xlsx` type and the `xlsx` plugin. The registered function, `grid-table-xlsx-create-data-source`, reads one sheet of a workbook through the Rust module; `grid-table-xlsx-find-file` opens every sheet as a workbook. |
+| `grid-table-org.el`, `grid-table-markdown.el` | Register nothing. They read a `.grid` file with `grid-table-persistence-create-data-source-from-file`, draw it as text (Markdown with `grid-table-text-render`, Org with its own table code), and insert or refresh the text in an Org or Markdown buffer. |
+| `grid-table-rst.el` | Registers nothing. `grid-table-export-as-rst` and `grid-table-rst-insert-table-from-file` write a grid as an RST table. |
+| `grid-table-example-plugin.el` | Loads, but most of it does not work: see below. |
 
-## 📚 Best Practices
+### About the example plugin
 
-### 1. Naming Convention
-
-```elisp
-;; Use grid-table- prefix
-(defun grid-table-my-plugin-function () ...)
-(defun grid-table-my-renderer () ...)
-(defun grid-table-my-data-source () ...)
-```
-
-### 2. Error Handling
-
-```elisp
-(defun my-safe-renderer (value &optional cell-props)
-  "Safe renderer with error handling."
-  (condition-case err
-      (my-renderer value cell-props)
-    (error
-     (message "Renderer error: %s" (error-message-string err))
-     (format "%s" value))))
-```
-
-### 3. Documentation
-
-```elisp
-(defun my-renderer (value &optional cell-props)
-  "Render VALUE with optional CELL-PROPS.
-VALUE is the raw cell value to render.
-CELL-PROPS is a plist with cell properties like :width, :align.
-Returns a formatted string for display.
-
-Example:
-  (my-renderer \"123.45\" '(:width 10))
-  => \"$123.45    \"")
-```
-
-### 4. Backward Compatibility
-
-```elisp
-;; Check version compatibility
-(defun my-plugin-check-compatibility ()
-  "Check if plugin is compatible with current grid-table version."
-  (when (boundp 'grid-table-version)
-    (if (version<= "1.0" grid-table-version)
-        t
-      (message "Warning: Plugin may not be compatible with grid-table %s" grid-table-version))))
-```
-
-### 5. Performance Optimization
-
-```elisp
-;; Cache rendering results
-(defvar my-renderer-cache (make-hash-table :test 'equal))
-
-(defun my-cached-renderer (value &optional cell-props)
-  "Cached renderer for better performance."
-  (let ((cache-key (format "%s-%s" value cell-props)))
-    (or (gethash cache-key my-renderer-cache)
-        (let ((result (my-renderer value cell-props)))
-          (puthash cache-key result my-renderer-cache)
-          result))))
-```
-
-## 🎉 Summary
-
-Through the grid-table plugin system, you can:
-
-1. **Extend rendering functionality** - Create custom cell renderers
-2. **Support new data formats** - Through data source type plugins
-3. **Add custom functionality** - Through feature plugins
-4. **Improve development efficiency** - Use provided tools and templates
-
-
+`grid-table-example-plugin.el` is older than the current view. Requiring
+it registers nothing until `grid-table-example-plugin-init` is called.
+Its data source, `grid-table-example-create-data-source`, fails with
+`wrong-type-argument`, so `grid-table-example-demo` fails too. Its three
+renderers are never used (see above), and
+`grid-table-example-highlight-duplicates` calls `grid-table-highlight-cell`,
+which does not exist. `grid-table-example-export-to-html` works. Use the
+example above, or `grid-table-csv.el`, as a model instead.

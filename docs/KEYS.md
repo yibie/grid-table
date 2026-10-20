@@ -1,3 +1,5 @@
+[English](KEYS.md) | [中文](KEYS_CN.md)
+
 # grid-table keys
 
 Every key of a grid buffer. The list follows `grid-table-etaf--keys` in

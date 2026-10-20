@@ -1,185 +1,110 @@
-# Grid Table Elisp Formula Feature Guide
+[English](ELISP_FORMULA_GUIDE.md) | [中文](ELISP_FORMULA_GUIDE_CN.md)
 
-## ⚠️ Warning
+# Lisp formulas
 
-**Before using this feature, please note that directly executing any Elisp code in a table is a huge security risk. If you open a .grid file containing malicious Elisp formulas, and enable the elisp feature, it may damage your system. Please only use this feature on files you fully trust.**
-
-**I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues. Please use this feature at your own risk. And eat your dog food.**
-
-## Introduction
-
-Grid Table now supports executing Elisp code in cells, which provides infinite possibilities for table calculations. By using the `elisp:` prefix, you can run any Elisp expression in a cell. This is only enabled in buffers with the variable `grid-table-allow-elisp` set to a non-nil value.
-
-## Basic Syntax
-
-The syntax for using Elisp formulas in cells is:
+A cell that starts with `=elisp:` holds an Emacs Lisp expression instead
+of a spreadsheet formula. The expression is read and evaluated, and its
+value is what the cell holds.
 
 ```
-=elisp:(your-elisp-code-here)
+=elisp:(+ 1 2)
 ```
 
-Note:
-- Must start with `=` (indicates this is a formula)
-- Followed by `elisp:` prefix
-- Followed by any valid Elisp expression
+The prefix comes right after `=`, in any case: `=ELISP:` works too.
 
-## Basic Examples
+## Turning it on
 
-### Mathematical Calculations
+Lisp formulas are off by default. While they are off, such a cell shows
+`#ERROR!`, and so does every cell that reads it.
 
-```elisp
-=elisp:(+ 10 20 30)           ; Result: 60
-=elisp:(* 7 8)                ; Result: 56
-=elisp:(/ 100 3.0)            ; Result: 33.333...
-=elisp:(expt 2 10)            ; Result: 1024
-```
+They are controlled by `grid-table-allow-elisp`, which is buffer-local
+and `nil` by default.
 
-### String Processing
+| To allow them | Do this |
+|---|---|
+| In every grid | `(setq-default grid-table-allow-elisp t)` in your init file. Lisp formulas are computed as soon as a grid opens. |
+| In one grid already open | `M-: (setq grid-table-allow-elisp t)` in its buffer, then `C-c C-r` to compute everything again. |
 
-```elisp
-=elisp:(format "Hello, %s!" "World")              ; Result: "Hello, World!"
-=elisp:(upcase "hello world")                     ; Result: "HELLO WORLD"
-=elisp:(length "Hello")                           ; Result: 5
-=elisp:(substring "Hello World" 0 5)              ; Result: "Hello"
-```
+Setting the variable from `grid-table-etaf-mode-hook` does not work: when
+a grid is shown, the view puts back the value the buffer had before, so
+the hook's value is lost. The variable is marked as risky, so Emacs
+asks before applying it from a file's local variables.
 
-### Date and Time
+The Org, Markdown and reStructuredText previews compute a grid outside
+its buffer, so there a Lisp formula shows `#ERROR!` unless the default
+value is `t`.
 
-```elisp
-=elisp:(format-time-string "%Y-%m-%d")            ; Current date
-=elisp:(format-time-string "%H:%M:%S")            ; Current time
-=elisp:(current-time-string)                      ; Full current time string
-```
+## The risk
 
-### Conditional Logic
+A Lisp formula can run any code with your user's rights: delete files,
+read your mail, start programs. Opening a `.grid` file with Lisp
+formulas computes them at once when they are allowed. Allow them only
+for files you wrote or trust, and prefer allowing them in one buffer
+over `setq-default`.
 
-```elisp
-=elisp:(if (> 10 5) "大于" "小于")                ; Result: "大于"
-=elisp:(cond ((> 10 5) "大") ((< 10 5) "小") (t "等于"))
-```
+## What the expression sees
 
-### List Operations
+The expression is evaluated with `eval`, with lexical binding. Every
+function and variable of your Emacs is available.
 
-```elisp
-=elisp:(length '(1 2 3 4 5))                     ; Result: 5
-=elisp:(apply '+ '(1 2 3 4 5))                   ; Result: 15
-=elisp:(mapconcat 'number-to-string '(1 2 3) ", ") ; Result: "1, 2, 3"
-```
+`(cell "B2")` reads a cell of the formula's own sheet:
 
-## Cell References
+| The cell holds | `cell` returns |
+|---|---|
+| A number, typed or computed | The number (`12`, not `"12"`) |
+| Text | The string |
+| A formula | Its computed value |
+| Nothing | `nil` |
 
-Elisp formulas can reference the values of other cells using the `cell` function:
+`cell` takes one cell written as text, such as `"B2"` or `"$B$2"`. It
+does not read ranges or other sheets: `(cell "Data!A1")` is `nil`.
 
-```elisp
-=elisp:(* (cell "A1") 2)                         ; Value of A1 cell multiplied by 2
-=elisp:(+ (cell "A1") (cell "B1"))               ; Value of A1 and B1 cells added
-=elisp:(if (> (cell "A1") 0) "正数" "负数或零")    ; Condition judgment based on the value of A1
-```
+## Values and errors
 
-### Example Table
+| The expression returns | The cell shows |
+|---|---|
+| A number | The number, in the general format (`(sqrt 2)` shows `1.4142135623731`) |
+| A string | The string |
+| `t` | `TRUE` |
+| `nil` | `FALSE` |
+| Anything else, such as a list | Not a value a cell can show; return a number or a string instead |
 
-| A | B | C | 
-|---|---|---|
-| 10 | 20 | =elisp:(+ (cell "A2") (cell "B2")) |
-| 5 | 3 | =elisp:(* (cell "A3") (cell "B3")) |
-| 100 | 7 | =elisp:(/ (cell "A4") (cell "B4")) |
+When the expression signals an error, the cell holds the text
+`Elisp Error: ` followed by the error message. That value is a string,
+not an error value, so `IFERROR` does not catch it, and a formula that
+does arithmetic on it shows `#VALUE!`.
 
-In this example:
-- C2 will display 30 (10 + 20)
-- C3 will display 15 (5 * 3)  
-- C4 will display 14.285... (100 / 7)
+Other formulas can read a Lisp formula's cell like any other: if `C2`
+holds `=elisp:(* 2 21)`, then `=C2+1` is `43`.
 
-## Error Handling
+## When it is computed
 
-If an Elisp code execution error occurs, the cell will display an error message:
+A Lisp formula is computed again at every edit, wherever the edit is,
+since grid-table cannot tell which cells the code reads. `C-c C-r`
+computes it too. Keep the code fast: slow code slows every keystroke
+that stores a cell.
 
-```elisp
-=elisp:(/ 1 0)                   ; Display: "Elisp Error: Arithmetic error"
-=elisp:(undefined-function)      ; Display: "Elisp Error: Symbol's function definition is void: undefined-function"
-```
+Copying, filling or moving a Lisp formula leaves its text as it is; the
+row and column numbers inside it are not adjusted.
 
-## Advanced Examples
+## Examples
 
-### Random Number Generation
+Each of these was evaluated in a grid where `B2` holds `12` and `A2`
+holds `pen`.
 
-```elisp
-=elisp:(random 100)                              ; Random integer between 0-99
-=elisp:(+ 1 (random 6))                          ; Simulate dice (1-6)
-```
+| Formula | Shows |
+|---|---|
+| `=elisp:(+ 1 2)` | `3` |
+| `=elisp:(upcase "hi")` | `HI` |
+| `=elisp:(string-join (list "a" "b") ", ")` | `a, b` |
+| `=elisp:(format-time-string "%Y-%m-%d")` | today's date, such as `2026-10-20` |
+| `=elisp:(> 3 2)` | `TRUE` |
+| `=elisp:(* 2 (cell "B2"))` | `24` |
+| `=elisp:(length (cell "A2"))` | `3` |
+| `=elisp:(/ 1 0)` | `Elisp Error: Arithmetic error` |
 
-### File Operations
-
-```elisp
-=elisp:(file-exists-p "/etc/passwd")             ; Check if file exists
-=elisp:(file-name-directory "/path/to/file.txt") ; Get directory name
-```
-
-### System Information
-
-```elisp
-=elisp:(system-name)                             ; Get system name
-=elisp:(user-login-name)                         ; Get current user name
-=elisp:(emacs-version)                           ; Get Emacs version
-```
-
-### Complex Calculation Example
-
-```elisp
-; Calculate factorial
-=elisp:(let ((n 5)) (apply '* (number-sequence 1 n)))
-
-; Generate the nth term of the Fibonacci sequence
-=elisp:(let ((n 10)) 
-         (if (<= n 2) 1
-           (let ((a 1) (b 1))
-             (dotimes (i (- n 2))
-               (let ((temp (+ a b)))
-                 (setq a b)
-                 (setq b temp)))
-             b)))
-```
-
-## Best Practices
-
-1. **Security First**: Only use Elisp formulas in trusted files
-2. **Simple and Clear**: Keep Elisp code simple and readable
-3. **Error Handling**: Consider possible error cases and use appropriate error handling
-4. **Performance Considerations**: Avoid performing time-consuming operations in formulas
-5. **Documentation**: Add comments to complex formulas
-
-## Comparison with Standard Formulas
-
-| Feature | Standard Formula | Elisp Formula |
-|------|----------|-----------|
-| Basic Math | `=A1+B1` | `=elisp:(+ (cell "A1") (cell "B1"))` |
-| Conditional Judgment | `=IF(A1>0, "正", "负")` | `=elisp:(if (> (cell "A1") 0) "正" "负")` |
-| String Operation | Limited | Unlimited (all Elisp string functions) |
-| Date and Time | `=TODAY()` | `=elisp:(format-time-string "%Y-%m-%d")` |
-| Flexibility | Limited by built-in functions | Full Elisp programming capabilities |
-
-## Notes
-
-1. Elisp formulas are more powerful than standard formulas, but also more complex
-2. Executing Elisp code may have security risks
-3. Complex Elisp code may affect table performance
-4. It is recommended to use standard formulas for simple calculations and Elisp formulas for advanced features
-
-## Troubleshooting
-
-### Common Errors
-
-1. **Syntax Error**: Ensure Elisp code syntax is correct
-2. **Reference Error**: Check if cell references are correct (e.g., "A1" instead of A1)
-3. **Function Not Defined**: Ensure the function is available in the current Emacs environment
-4. **Type Error**: Pay attention to data type matching
-
-### Debugging Tips
-
-1. Test Elisp code in Emacs' `*scratch*` buffer first
-2. Start with simple expressions and gradually increase complexity
-3. Pay attention to error messages, they usually point out the problem
-
----
-
-This feature brings infinite possibilities to Grid Table, allowing you to fully utilize the powerful features of Elisp to process table data. Remember to use it safely and enjoy the fun of programming!
-``
+Most of what these do has a spreadsheet function: `=UPPER("hi")`,
+`=TEXTJOIN(", ",,"a","b")`, `=TODAY()`, `=B2*2`, `=LEN(A2)`. Those work
+without turning anything on, follow references when rows move, and are
+computed only when what they read changes. Use a Lisp formula for what
+no function does.
