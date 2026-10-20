@@ -237,3 +237,67 @@
     (while (string-match (regexp-quote needle) haystack start)
       (setq count (1+ count) start (match-end 0)))
     count))
+
+(defun grid-table-test--block-file ()
+  "Save a small grid in a directory with a space and return its file."
+  (let ((file (expand-file-name "my table.grid" (make-temp-file "grid-block-" t))))
+    (grid-table-persistence--save-to-file
+     (make-default-data-source '("Name" "Qty") '(("Name" "Qty") ("a" "1") ("b" "=B2*2")))
+     file)
+    file))
+
+(defun grid-table-test--block-round-trip (setup insert refresh open)
+  "Insert a block, edit its file, refresh it and open it; return what happened.
+SETUP prepares the buffer; INSERT, REFRESH and OPEN are the plugin's commands.
+The result is (TEXT-AFTER-INSERT TEXT-AFTER-REFRESH OPENED-FILE FILE)."
+  (let ((file (grid-table-test--block-file)) opened)
+    (unwind-protect
+        (with-temp-buffer
+          (funcall setup)
+          (insert "Before\n")
+          (funcall insert file)
+          (insert "After\n")
+          (let ((inserted (buffer-string)))
+            (grid-table-persistence--save-to-file
+             (make-default-data-source '("Name" "Qty") '(("Name" "Qty") ("a" "1") ("c" "7")))
+             file)
+            (goto-char (point-min))
+            (re-search-forward "[|│] a ")
+            (funcall refresh)
+            (cl-letf (((symbol-function 'grid-table-find-file)
+                       (lambda (f) (setq opened f))))
+              (funcall open))
+            (list inserted (buffer-string) opened file)))
+      (delete-directory (file-name-directory file) t))))
+
+(ert-deftest grid-table-org-block-inserts-refreshes-and-opens ()
+  "An inserted Org block can be refreshed and opened, even with a space in its path."
+  (require 'grid-table-org)
+  (pcase-let ((`(,inserted ,refreshed ,opened ,file)
+               (grid-table-test--block-round-trip
+                #'org-mode #'grid-table-org-insert-block
+                #'grid-table-org-refresh-block #'grid-table-org-open-block)))
+    (should (string-match-p
+             (concat "^#\\+BEGIN_SRC grid-table :file \"" (regexp-quote file) "\"$")
+             inserted))
+    (should (string-match-p "| b +| 2 +|\n#\\+END_SRC\nAfter\n\\'" inserted))
+    (should (string-match-p "^#\\+BEGIN_SRC grid-table :file " refreshed))
+    (should (string-match-p "| c +| 7 +|\n#\\+END_SRC\nAfter\n\\'" refreshed))
+    (should-not (string-match-p "| b +| 2 +|" refreshed))
+    (should (equal opened file))))
+
+(ert-deftest grid-table-markdown-block-inserts-refreshes-and-opens ()
+  "An inserted Markdown block can be refreshed and opened, even with a space in its path."
+  (require 'grid-table-markdown)
+  (pcase-let ((`(,inserted ,refreshed ,opened ,file)
+               (grid-table-test--block-round-trip
+                #'ignore #'grid-table-markdown-insert-block
+                #'grid-table-markdown-refresh-block #'grid-table-markdown-open-block)))
+    (should (string-match-p
+             (concat "^```grid-view file=\"" (regexp-quote file) "\"$")
+             inserted))
+    (should (string-match-p "\n```\nAfter\n\\'" inserted))
+    (should (string-match-p "│ c +│ 7 +│" refreshed))
+    (should-not (string-match-p "│ b +│ 2 +│" refreshed))
+    (should (string-match-p "\n```\nAfter\n\\'" refreshed))
+    (should (equal opened file))))

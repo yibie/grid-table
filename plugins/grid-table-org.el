@@ -26,16 +26,24 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
       preview)))
 
 (defun grid-table-org-insert-block (file-path)
-  "Insert a grid-table source block with preview for FILE-PATH."
+  "Insert a grid-table source block previewing the grid FILE-PATH.
+`grid-table-org-refresh-block' draws the preview again and
+`grid-table-org-open-block' opens the grid."
   (interactive
    (list (read-file-name "Grid file: ")))
-  (let ((inhibit-read-only t))
-    (let* ((fpath (expand-file-name file-path))
-           (preview (grid-table-org--render-preview-from-file fpath nil default-directory)))
-      (insert (format "# Table generated from: %s\n" fpath))
-      (insert preview)
-      (unless (string-suffix-p "\n" preview)
-        (insert "\n")))))
+  (let* ((fpath (expand-file-name file-path))
+         (preview (grid-table-org--render-preview-from-file fpath nil default-directory)))
+    (unless (bolp) (insert "\n"))
+    (insert (format "#+BEGIN_SRC grid-table :file %s\n"
+                    (grid-table-org--quote-path fpath)))
+    (insert preview)
+    (unless (string-suffix-p "\n" preview)
+      (insert "\n"))
+    (insert "#+END_SRC\n")))
+
+(defun grid-table-org--quote-path (path)
+  "Return PATH as a block's header line writes it, quoted when it has spaces."
+  (if (string-match-p "[ \t]" path) (format "\"%s\"" path) path))
 
 (defun grid-table-org--convert-images-to-org-links (data-source image-base-dir org-file-dir)
   "Convert all image cells in DATA-SOURCE to Org-mode [[file:]] links."
@@ -200,63 +208,74 @@ This function is called from grid-table-org--process-row, which handles wrapping
     (format "[[file:%s]]" (replace-regexp-in-string "\\\\" "/" relative-path))))
 
 (defun grid-table-org--find-current-block ()
-  "Return (BEGIN-POS . END-POS) for current grid-table src block, or nil."
+  "Return (BEGIN . END) of the grid-table src block at point, or nil.
+BEGIN is the start of its #+BEGIN_SRC line and END the start of its
+#+END_SRC line."
   (save-excursion
     (let ((element (org-element-at-point)))
       (when (and (eq (org-element-type element) 'src-block)
-                 (string= (org-element-property :language element) "grid-table"))
-        (cons (org-element-property :begin element)
-              (org-element-property :end element))))))
+                 (equal (org-element-property :language element) "grid-table"))
+        (let ((begin (org-element-property :begin element)))
+          (goto-char (org-element-property :end element))
+          (when (re-search-backward "^[ \t]*#\\+END_SRC" begin t)
+            (let ((end (match-beginning 0)))
+              (goto-char begin)
+              (when (re-search-forward "^[ \t]*#\\+BEGIN_SRC" end t)
+                (cons (line-beginning-position) end)))))))))
+
+(defun grid-table-org--header-arg (params name)
+  "Return the value of the header argument NAME in PARAMS, or nil.
+A value with spaces is written in double quotes."
+  (when (string-match (concat "\\(?:^\\|[ \t]\\)" (regexp-quote name)
+                              "[ \t]+\\(?:\"\\([^\"]+\\)\"\\|\\([^ \t]+\\)\\)")
+                      params)
+    (or (match-string 1 params) (match-string 2 params))))
 
 (defun grid-table-org--get-file-params-at-begin ()
-  "Parse :file and optional :pic-dir from current line if it's a grid-table src block."
-  (save-excursion
-    (let ((line (buffer-substring-no-properties (line-beginning-position)
-                                                (line-end-position)))
-          result)
-      (when (string-match "^#\\+BEGIN_SRC\\s-+grid-table\\(.*\\)$" line)
-        (let ((params (match-string 1 line)))
-          (setf result (list :file nil :pic-dir nil))
-          ;; Parse :file parameter
-          (when (string-match ":file\\s-+\\([^\\s-][^:]*?\\)\\(?:\\s-\\|$\.*\)?" params)
-            (setf (plist-get result :file) (expand-file-name (match-string 1 params))))
-          ;; Parse :pic-dir parameter
-          (when (string-match ":pic-dir\\s-+\\([^\\s-][^:]*?\\)\\(?:\\s-\\|$\.*\)?" params)
-            (setf (plist-get result :pic-dir) (expand-file-name (match-string 1 params))))
-          result)))))
+  "Return (:file FILE :pic-dir DIR) of the #+BEGIN_SRC grid-table line at point.
+Either is nil when the line does not give it; the result is nil when the
+line is not such a line."
+  (let ((line (buffer-substring-no-properties (line-beginning-position)
+                                              (line-end-position)))
+        (case-fold-search t))
+    (when (string-match "^[ \t]*#\\+BEGIN_SRC[ \t]+grid-table\\(.*\\)$" line)
+      (let* ((params (match-string 1 line))
+             (file (grid-table-org--header-arg params ":file"))
+             (pic-dir (grid-table-org--header-arg params ":pic-dir")))
+        (list :file (and file (expand-file-name file))
+              :pic-dir (and pic-dir (expand-file-name pic-dir)))))))
+
+(defun grid-table-org--block-file ()
+  "Return the bounds and header arguments of the grid-table block at point."
+  (let ((bounds (grid-table-org--find-current-block)))
+    (unless bounds (user-error "Not inside a grid-table src block"))
+    (let ((params (save-excursion
+                    (goto-char (car bounds))
+                    (grid-table-org--get-file-params-at-begin))))
+      (unless (plist-get params :file)
+        (user-error "Missing :file parameter on src block line"))
+      (cons bounds params))))
 
 (defun grid-table-org-refresh-block ()
-  "Refresh the current grid-table src block preview from its :file and :pic-dir."
+  "Draw the preview of the grid-table src block at point again from its :file."
   (interactive)
-  (save-excursion
-    (let* ((bounds (grid-table-org--find-current-block)))
-      (unless bounds (error "Not inside a grid-table src block"))
-      (goto-char (car bounds))
-      (let* ((file-params (grid-table-org--get-file-params-at-begin))
-             (file (plist-get file-params :file))
-             (pic-dir (plist-get file-params :pic-dir)))
-        (unless file (error "Missing :file parameter on src block line"))
-        (let ((preview (grid-table-org--render-preview-from-file file pic-dir default-directory)))
-          (forward-line 1)
-          (let ((content-start (point)))
-            (goto-char (cdr bounds))
-            (forward-line -1)
-            (let ((inhibit-read-only t))
-              (delete-region content-start (point)))
-            (goto-char content-start)
-            (insert preview)))))))
+  (pcase-let* ((`((,begin . ,end) . ,params) (grid-table-org--block-file))
+               (preview (grid-table-org--render-preview-from-file
+                         (plist-get params :file) (plist-get params :pic-dir)
+                         default-directory)))
+    (save-excursion
+      (goto-char begin)
+      (forward-line 1)
+      (let ((inhibit-read-only t))
+        (delete-region (point) end)
+        (insert preview)
+        (unless (string-suffix-p "\n" preview)
+          (insert "\n"))))))
 
 (defun grid-table-org-open-block ()
-  "Open the grid file referenced by the current grid-table src block."
+  "Open the grid file of the grid-table src block at point."
   (interactive)
-  (save-excursion
-    (let* ((bounds (grid-table-org--find-current-block)))
-      (unless bounds (error "Not inside a grid-table src block"))
-      (goto-char (car bounds))
-      (let* ((file-params (grid-table-org--get-file-params-at-begin))
-             (file (plist-get file-params :file)))
-        (unless file (error "Missing :file parameter on src block line"))
-        (grid-table-find-file file)))))
+  (grid-table-find-file (plist-get (cdr (grid-table-org--block-file)) :file)))
 
 (provide 'grid-table-org)
 
