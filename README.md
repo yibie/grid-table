@@ -144,6 +144,26 @@ Run the tests with `make test-model` (the model, the formulas and the text table
 
 **🎯 Tip**: Use `C-n`/`C-p` for vertical movement, `TAB` for horizontal movement
 
+### ⌨️ Prefer the keyboard to the mouse
+
+On macOS the window system sometimes never hands Emacs the mouse button's
+release.  The drag then goes on after the button is up: a selection keeps
+following the pointer, or a chart keeps moving, until the next click.  It
+happens most with `tooltip-mode` on, and grid-table hides tooltips while
+a drag lasts, which makes it rare, but it can still happen.  If it does,
+click once or press `Esc`; `C-/` undoes a chart moved by mistake.
+
+The keyboard does the same work without that risk:
+
+| 🎯 Instead of dragging to… | ⌨️ Use |
+| -------------------------- | ------ |
+| Select a range             | `S-↑` `S-↓` `S-←` `S-→`, or `C-x h` for the whole sheet |
+| Move a chart               | Put the cursor on a cell, then `C-c k m` |
+| Resize a chart             | `C-c k z` |
+| Pick a chart               | `C-c k n` |
+
+Column widths can so far be changed only by dragging a column's edge.
+
 ## 🧮 Formula Complete Guide
 
 ### Basic Syntax Comparison Table
