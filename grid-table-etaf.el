@@ -528,9 +528,14 @@ references stays as small as the window."
           (puthash key ref grid-table-etaf--slot-refs)))))
 
 (defun grid-table-etaf--cell-at-gesture (state gesture)
-  "Return the model (ROW . COL) under the pointer of GESTURE in STATE."
-  (let* ((event (plist-get gesture :event))
-         (position (and (consp event) (posn-point (event-start event))))
+  "Return the model (ROW . COL) under the pointer of GESTURE in STATE.
+The pointer is where the gesture last saw it, in pixels; an event's own
+start is no use at the release, whose start is the press, taken before
+the grid was drawn again."
+  (let* ((xy (plist-get gesture :position))
+         (window (plist-get gesture :window))
+         (position (and (consp xy) (window-live-p window)
+                        (posn-point (posn-at-x-y (car xy) (cdr xy) window))))
          (runtime (grid-table-etaf--runtime
                    (grid-table-etaf--state-buffer state)))
          (ref (and (integerp position) runtime

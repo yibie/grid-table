@@ -2001,6 +2001,39 @@ cell in the way makes such a formula #SPILL!."
         (should (eq show-help-function #'tooltip-show-help))
         (should-not grid-table-etaf--drag-help)))))
 
+;; A drag's release starts where the press did, taken before the grid was
+;; drawn again; the cell it ends on is the one under the pointer's pixels.
+(ert-deftest grid-table-etaf-drag-ends-on-the-cell-under-the-pointer ()
+  (grid-table-etaf-test--with-grid (8 5)
+    (set-window-buffer (selected-window) (current-buffer))
+    (let* ((window (selected-window))
+           (state grid-table-etaf--state)
+           (xy (cl-loop for y below (window-body-height window t)
+                        thereis
+                        (cl-loop for x below (window-body-width window t)
+                                 when (equal (grid-table-etaf--cell-at-gesture
+                                              state (list :position (cons x y)
+                                                          :window window))
+                                             '(3 . 2))
+                                 return (cons x y))))
+           ;; The press's start, at the first cell drawn.
+           (stale (cl-loop for y below 10
+                           for posn = (posn-at-x-y 5 y window)
+                           when (equal (grid-table-etaf--cell-at-gesture
+                                        state (list :position (posn-x-y posn)
+                                                    :window window))
+                                       '(0 . 0))
+                           return posn))
+           (handler (grid-table-etaf--drag-cell (current-buffer) 0 0)))
+      (should (and xy stale))
+      (funcall handler (list :phase 'start :event (list 'down-mouse-1 stale)
+                             :window window :position '(0 . 0)))
+      (funcall handler (list :phase 'end :event (list 'drag-mouse-1 stale stale)
+                             :window window :position xy))
+      (should (equal (grid-table-etaf--cursor) '(3 . 2)))
+      (should (equal (etaf-value (grid-table-etaf--state-anchor state))
+                     '(0 . 0))))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
