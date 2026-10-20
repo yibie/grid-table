@@ -2034,6 +2034,85 @@ cell in the way makes such a formula #SPILL!."
       (should (equal (etaf-value (grid-table-etaf--state-anchor state))
                      '(0 . 0))))))
 
+;; A drag-selection resting against a window edge goes on past it, the
+;; window scrolling, as a spreadsheet's does.
+(ert-deftest grid-table-etaf-drag-selection-scrolls-at-the-window-edge ()
+  (grid-table-etaf-test--with-grid (40 30 60 12)
+    (let* ((state grid-table-etaf--state)
+           (handler (grid-table-etaf--drag-cell (current-buffer) 2 1))
+           (edge (lambda (edges)
+                   (funcall handler (list :phase 'edge :edges edges
+                                          :window (selected-window)
+                                          :position '(0 . 0)))))
+           (last-row (lambda ()
+                       (car (last (grid-table-etaf--visible-rows
+                                   state
+                                   (etaf-value (grid-table-etaf--state-top state))
+                                   (grid-table-etaf--visible-cols
+                                    state
+                                    (etaf-value (grid-table-etaf--state-left state))))))))
+           (shown (funcall last-row)))
+      (funcall handler '(:phase start :delta (0 . 0)))
+      ;; The first step is from the window's edge, not from the cursor.
+      (funcall edge '(bottom))
+      (should (equal (grid-table-etaf--cursor) (cons (1+ shown) 1)))
+      (should (> (etaf-value (grid-table-etaf--state-top state)) 0))
+      (dotimes (_ 3) (funcall edge '(bottom)))
+      (should (equal (grid-table-etaf--cursor) (cons (+ 4 shown) 1)))
+      (funcall edge '(right))
+      (should (> (cdr (grid-table-etaf--cursor)) 2))
+      (should (> (etaf-value (grid-table-etaf--state-left state)) 0))
+      (dotimes (_ 40) (funcall edge '(top left)))
+      (should (equal (grid-table-etaf--cursor) '(0 . 0)))
+      (should (equal (etaf-value (grid-table-etaf--state-top state)) 0))
+      (should (equal (etaf-value (grid-table-etaf--state-left state)) 0))
+      ;; The anchor stays where the drag began.
+      (should (equal (etaf-value (grid-table-etaf--state-anchor state))
+                     '(2 . 1))))))
+
+;; A drag-selection reaching into frozen columns brings back the columns
+;; scrolled out of sight between.
+(ert-deftest grid-table-etaf-drag-selection-into-frozen-columns-unscrolls ()
+  (grid-table-etaf-test--with-grid (40 30 60 12)
+    (let ((state grid-table-etaf--state)
+          (handler (grid-table-etaf--drag-cell (current-buffer) 3 8)))
+      (grid-table-etaf-goto 2 2)
+      (grid-table-etaf-freeze-panes)
+      (grid-table-etaf-goto 3 8)
+      (etaf-set-value (grid-table-etaf--state-left state) 6)
+      (funcall handler '(:phase start :delta (0 . 0)))
+      (cl-letf (((symbol-function 'grid-table-etaf--cell-at-gesture)
+                 (lambda (&rest _) '(3 . 0))))
+        (funcall handler '(:phase move :delta (0 . 0))))
+      (should (equal (grid-table-etaf--cursor) '(3 . 0)))
+      (should (= (etaf-value (grid-table-etaf--state-left state)) 2)))))
+
+;; A chart dragged against a window edge scrolls the sheet under it and
+;; goes as far again, landing there as one undo step.
+(ert-deftest grid-table-etaf-chart-drag-scrolls-at-the-window-edge ()
+  (grid-table-etaf-test--with-grid (60 3 120 16)
+    (let* ((source grid-table--data-source)
+           (state grid-table-etaf--state)
+           (drag (lambda (phase &rest more)
+                   (funcall (grid-table-etaf--drag-chart (current-buffer) 0)
+                            (append (list :phase phase :delta '(0 . 0)) more)))))
+      (grid-table-etaf-goto 0 0)
+      (grid-table-etaf-goto 5 1 t)
+      (grid-table-etaf-insert-chart 'column)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 3)))
+      (funcall drag 'start)
+      (dotimes (_ 5) (funcall drag 'edge :edges '(bottom)))
+      (should (= (etaf-value (grid-table-etaf--state-top state)) 5))
+      ;; Drawn where it would land while the drag goes on.
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(5 . 3)))
+      (dotimes (_ 2) (funcall drag 'edge :edges '(top)))
+      (funcall drag 'end)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(3 . 3)))
+      (should-not grid-table-etaf--chart-drag)
+      (should (equal grid-table-etaf--chart-drag-scroll '(0 . 0)))
+      (grid-table-etaf-undo)
+      (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 3))))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

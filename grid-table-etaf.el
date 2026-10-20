@@ -572,7 +572,61 @@ held; dragging extends the selection to the cell under the pointer."
              (let ((cell (grid-table-etaf--cell-at-gesture state gesture)))
                (when (and cell
                           (not (equal cell (grid-table-etaf--cursor))))
-                 (grid-table-etaf-goto (car cell) (cdr cell) t))))))))))
+                 (grid-table-etaf-goto (car cell) (cdr cell) t)
+                 (grid-table-etaf--unscroll-into-frozen state))))
+            ('edge (grid-table-etaf--drag-past-edge state gesture))))))))
+
+(defun grid-table-etaf--drag-past-edge (state gesture)
+  "Extend STATE's selection one cell past the window edges of GESTURE.
+A drag-selection resting against an edge of the window goes on into the
+rows or columns beyond it, the window scrolling to show them, as long as
+the pointer stays there.  The step is from the window's edge, not from
+the selection, which may have been left short of it.  Along an axis
+whose edge it does not touch the selection follows the cell under the
+pointer."
+  (let* ((edges (plist-get gesture :edges))
+         (cursor (grid-table-etaf--cursor))
+         (under (grid-table-etaf--cell-at-gesture state gesture))
+         (frozen (grid-table-frozen (grid-table-etaf--source state)))
+         (left (etaf-value (grid-table-etaf--state-left state)))
+         (top (etaf-value (grid-table-etaf--state-top state)))
+         (cols (grid-table-etaf--visible-cols state left))
+         (rows (grid-table-etaf--visible-rows state top cols))
+         (row (cond ((memq 'top edges)
+                     (grid-table-etaf--step-row
+                      state (min (car cursor) (max top (car frozen))) -1))
+                    ((memq 'bottom edges)
+                     (grid-table-etaf--step-row
+                      state (max (car cursor) (car (last rows))) 1))
+                    (under (car under))
+                    (t (car cursor))))
+         (col (cond ((memq 'left edges)
+                     (grid-table-etaf--step-col
+                      state (min (cdr cursor) (max left (cdr frozen))) -1))
+                    ((memq 'right edges)
+                     (grid-table-etaf--step-col
+                      state (max (cdr cursor) (car (last cols))) 1))
+                    (under (cdr under))
+                    (t (cdr cursor)))))
+    (when (and row col (not (equal (cons row col) cursor)))
+      (grid-table-etaf-goto row col t))
+    (grid-table-etaf--unscroll-into-frozen state)))
+
+(defun grid-table-etaf--unscroll-into-frozen (state)
+  "Scroll STATE's window back to the start when its cursor is in a frozen pane.
+A drag-selection reaching into the frozen rows or columns takes in what
+lies between them and where it began, so the cells scrolled out of
+sight between come back."
+  (let* ((cursor (grid-table-etaf--cursor))
+         (frozen (grid-table-frozen (grid-table-etaf--source state)))
+         (left (grid-table-etaf--state-left state))
+         (top (grid-table-etaf--state-top state)))
+    (when (and (< (cdr cursor) (cdr frozen))
+               (> (etaf-value left) (cdr frozen)))
+      (etaf-set-value left (cdr frozen)))
+    (when (and (< (car cursor) (car frozen))
+               (> (etaf-value top) (car frozen)))
+      (etaf-set-value top (car frozen)))))
 
 (defun grid-table-etaf--select (cursor anchor)
   "Select from ANCHOR to CURSOR, both (ROW . COL), without scrolling."
@@ -951,7 +1005,8 @@ position, the node key and the paint state of the cell."
            :border-bottom (or (plist-get spec :line-bottom) line)
            :ref (plist-get spec :ref)
            :on-drag (grid-table-etaf--drag-cell
-                     (grid-table-etaf--state-buffer state) row col))
+                     (grid-table-etaf--state-buffer state) row col)
+           :drag-edge t)
      (list
       (if image
           (etaf-node 'image
@@ -1637,7 +1692,8 @@ columns shown."
                                  (when (buffer-live-p buffer)
                                    (with-current-buffer buffer
                                      (grid-table-etaf--select-chart state index))))
-                     :on-drag (grid-table-etaf--drag-chart buffer index)))
+                     :on-drag (grid-table-etaf--drag-chart buffer index)
+                     :drag-edge t))
               (list
                (if (display-graphic-p)
                    (etaf-node 'image
@@ -1675,6 +1731,46 @@ It is (CHARTS . GEOMETRY), GEOMETRY as in `grid-table-etaf--chart-boxes'.
 It lives in the buffer, not in the handler: the grid redraws as the drag
 starts, and each redraw makes a new handler.")
 
+(defvar-local grid-table-etaf--chart-drag-scroll '(0 . 0)
+  "How far the sheet has scrolled under a chart drag, as (PIXELS . PIXELS).
+The chart goes as far again as the pointer has moved.")
+
+(defun grid-table-etaf--scroll-past-edges (state edges)
+  "Scroll STATE's window one row or column toward each of EDGES.
+EDGES name window edges, of `left', `right', `top' and `bottom'.  Frozen
+rows and columns stay.  Return how far the cells moved under the window,
+as (PIXELS . PIXELS), right and down positive."
+  (let* ((frozen (grid-table-frozen (grid-table-etaf--source state)))
+         (top-ref (grid-table-etaf--state-top state))
+         (left-ref (grid-table-etaf--state-left state))
+         (top (max (car frozen) (etaf-value top-ref)))
+         (left (max (cdr frozen) (etaf-value left-ref)))
+         (lines (grid-table-etaf--line-pixels))
+         (dx 0) (dy 0) next)
+    (cond ((and (memq 'bottom edges)
+                (not (eql top (setq next (grid-table-etaf--step-row
+                                          state top 1)))))
+           (setq dy (* lines (grid-table-etaf--row-lines state top nil nil)))
+           (etaf-set-value top-ref next))
+          ((and (memq 'top edges)
+                (not (eql top (setq next (grid-table-etaf--step-row
+                                          state top -1))))
+                (>= next (car frozen)))
+           (setq dy (- (* lines (grid-table-etaf--row-lines state next nil nil))))
+           (etaf-set-value top-ref next)))
+    (cond ((and (memq 'right edges)
+                (not (eql left (setq next (grid-table-etaf--step-col
+                                           state left 1)))))
+           (setq dx (grid-table-etaf--col-pixels state left))
+           (etaf-set-value left-ref next))
+          ((and (memq 'left edges)
+                (not (eql left (setq next (grid-table-etaf--step-col
+                                           state left -1))))
+                (>= next (cdr frozen)))
+           (setq dx (- (grid-table-etaf--col-pixels state next)))
+           (etaf-set-value left-ref next)))
+    (cons dx dy)))
+
 (defun grid-table-etaf--move-chart-box (index geometry)
   "Put the box of chart INDEX where GEOMETRY says, without a redraw."
   (ignore-errors
@@ -1683,13 +1779,22 @@ starts, and each redraw makes a new handler.")
            (intern (format "grid-table-etaf-chart-%d" index))
            geometry)))
 
+(defun grid-table-etaf--chart-drag-delta (gesture)
+  "Return how far a chart drag GESTURE moves its chart over the cells.
+That is the pointer's move and the sheet's scroll under it."
+  (let ((delta (or (plist-get gesture :delta) '(0 . 0)))
+        (scroll grid-table-etaf--chart-drag-scroll))
+    (cons (+ (car delta) (car scroll)) (+ (cdr delta) (cdr scroll)))))
+
 (defun grid-table-etaf--end-chart-drag (state index start)
   "Finish dragging chart INDEX of STATE, which started at START.
 The box goes back where the last redraw put it, so that the redraw now
 puts it where the charts say; a redraw leaves alone what it drew the
 same."
-  (setq grid-table-etaf--chart-drag nil)
-  (grid-table-etaf--move-chart-box index (cdr start))
+  (setq grid-table-etaf--chart-drag nil
+        grid-table-etaf--chart-drag-scroll '(0 . 0))
+  (grid-table-etaf--move-chart-box
+   index (or (cdr (assq index grid-table-etaf--chart-boxes)) (cdr start)))
   (grid-table-etaf--bump state))
 
 (defun grid-table-etaf--dragged-chart (state chart delta)
@@ -1727,7 +1832,8 @@ it back and does nothing more."
                (start grid-table-etaf--chart-drag))
           (pcase (grid-table-etaf--drag-phase gesture)
             ('start
-             (setq grid-table-etaf--chart-drag
+             (setq grid-table-etaf--chart-drag-scroll '(0 . 0)
+                   grid-table-etaf--chart-drag
                    (cons (copy-tree (grid-table-charts source))
                          (cdr (assq index grid-table-etaf--chart-boxes))))
              (unless (eql grid-table-etaf--chart index)
@@ -1747,12 +1853,31 @@ it back and does nothing more."
                                           (+ (cadr (plist-get geometry :top))
                                              (round (cdr delta)
                                                     (grid-table-etaf--line-pixels)))))))))
+            ('edge
+             ;; Resting against a window edge, the sheet scrolls under the
+             ;; chart, which is drawn where it would land.
+             (when start
+               (let ((moved (grid-table-etaf--scroll-past-edges
+                             state (plist-get gesture :edges)))
+                     (scroll grid-table-etaf--chart-drag-scroll))
+                 (unless (equal moved '(0 . 0))
+                   (setq grid-table-etaf--chart-drag-scroll
+                         (cons (+ (car scroll) (car moved))
+                               (+ (cdr scroll) (cdr moved))))
+                   (let ((new (copy-tree (car start))))
+                     (setf (nth index new)
+                           (grid-table-etaf--dragged-chart
+                            state (nth index (car start))
+                            (grid-table-etaf--chart-drag-delta gesture)))
+                     (grid-table-set-charts source new)
+                     (grid-table-etaf--bump state))))))
             ('end
              (when start
                (let ((new (copy-tree (car start))))
                  (setf (nth index new)
                        (grid-table-etaf--dragged-chart
-                        state (nth index (car start)) (plist-get gesture :delta)))
+                        state (nth index (car start))
+                        (grid-table-etaf--chart-drag-delta gesture)))
                  (grid-table-set-charts source new)
                  (unless (equal new (car start))
                    (grid-table-etaf--record state (list 'charts (car start) new)))
