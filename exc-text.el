@@ -10,6 +10,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'exc-obsolete)
 
 (declare-function exc-get-merges "exc")
 (declare-function exc-get-display-value-at "exc")

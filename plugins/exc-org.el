@@ -5,6 +5,7 @@
 (require 'org)
 (require 'org-element)
 (require 'cl-lib)
+(require 'exc-obsolete)
 
 (defcustom exc-org-image-column-width 20
   "Default display width of image column in Org table preview (in characters)."

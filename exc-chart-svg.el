@@ -24,6 +24,7 @@
 (require 'svg)
 (require 'exc-calc)
 (require 'exc-format)
+(require 'exc-obsolete)
 
 (defconst exc-chart-svg-types
   '((column . "Column") (column-stacked . "Stacked column")

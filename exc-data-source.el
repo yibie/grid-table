@@ -2,6 +2,7 @@
 
 (require 'cl-lib)
 (require 'exc-data-model)
+(require 'exc-obsolete)
 
 ;;;----------------------------------------------------------------------
 ;;; Default Data Source Implementation (using a function bundle)

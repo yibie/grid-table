@@ -3,6 +3,7 @@
 (require 'cl-lib)
 (require 'exc-parser) ; For parsing formulas
 (require 'exc-calc)   ; For evaluating formulas
+(require 'exc-obsolete)
 
 
 ;;;----------------------------------------------------------------------

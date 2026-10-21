@@ -23,6 +23,7 @@
 (require 'etaf)
 (require 'exc)
 (require 'exc-chart-svg)
+(require 'exc-obsolete)
 
 (defface exc-etaf-header-face
   '((t :inherit mode-line-inactive))

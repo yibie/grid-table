@@ -28,6 +28,7 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'exc-calc)
+(require 'exc-obsolete)
 
 (declare-function calc-eval "calc" (str &optional separator &rest args))
 

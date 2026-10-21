@@ -3,6 +3,7 @@
 (require 'exc-parser)
 (require 'exc-format)
 (require 'exc-calc-classes)
+(require 'exc-obsolete)
 
 (defvar exc-calc-functions)
 (defvar exc-allow-elisp)

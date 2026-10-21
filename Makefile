@@ -2,7 +2,8 @@ EMACS ?= emacs
 # Directory holding the ecss, ebox and etaf checkouts; test-etaf needs it.
 ETAF_SRC ?=
 
-MODEL_TESTS = test/exc-merge-test.el \
+MODEL_TESTS = test/exc-obsolete-test.el \
+	test/exc-merge-test.el \
 	test/exc-render-characterization-test.el \
 	test/exc-vertical-model-test.el \
 	test/exc-vertical-render-test.el \

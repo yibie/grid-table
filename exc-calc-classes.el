@@ -23,6 +23,7 @@
 ;; repeat, in turn.
 
 ;;; Code:
+(require 'exc-obsolete)
 
 (defconst exc-calc-argument-classes
   (let ((table (make-hash-table :test #'equal)))

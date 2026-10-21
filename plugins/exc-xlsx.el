@@ -18,6 +18,7 @@
 (require 'color)
 (require 'exc)
 (require 'exc-plugins)
+(require 'exc-obsolete)
 
 (declare-function exc-xlsx-module-sheets "exc-xlsx-module")
 (declare-function exc-xlsx-module-read "exc-xlsx-module")

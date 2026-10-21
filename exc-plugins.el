@@ -1,6 +1,7 @@
 ;;; exc-plugins.el --- Plugin system for exc -*- lexical-binding: t -*-
 
 (require 'cl-lib)
+(require 'exc-obsolete)
 
 ;;;----------------------------------------------------------------------
 ;;; Plugin System

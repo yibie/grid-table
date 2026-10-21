@@ -14,6 +14,7 @@
 (require 'exc-calc)
 (require 'exc-calc-math)
 (require 'exc-calc-lookup)
+(require 'exc-obsolete)
 
 ;;;----------------------------------------------------------------------
 ;;; Taking text apart

@@ -2,6 +2,7 @@
 
 (require 'cl-lib)
 (require 'exc-plugins)
+(require 'exc-obsolete)
 
 ;;;----------------------------------------------------------------------
 ;;; API Configuration

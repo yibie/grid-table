@@ -20,6 +20,7 @@
 (require 'exc-chart)
 (require 'exc-chart-svg)
 (require 'exc-plugins)
+(require 'exc-obsolete)
 
 ;; Public version identifier.
 (defconst exc-version "0.5.0")

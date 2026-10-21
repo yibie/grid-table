@@ -2,6 +2,7 @@
 
 (require 'eieio)
 (require 'cl-lib)
+(require 'exc-obsolete)
 
 ;;;----------------------------------------------------------------------
 ;;; Token Definitions

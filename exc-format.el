@@ -23,6 +23,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'exc-obsolete)
 
 (defconst exc-format-date-patterns
   '("yyyy-mm-dd" "yyyy/mm/dd" "mm/dd/yyyy" "dd/mm/yyyy" "yyyy年m月d日"
