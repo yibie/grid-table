@@ -1,5 +1,5 @@
 ;;; grid-table.el --- Grid table for displaying and editing tabular data -*- lexical-binding: t -*-
-;; Version: 0.4.0
+;; Version: 0.5.0
 ;; Package-Requires: ((emacs "29.1"))
 
 (require 'cl-lib)
@@ -22,7 +22,7 @@
 (require 'grid-table-plugins)
 
 ;; Public version identifier.
-(defconst grid-table-version "0.4.0")
+(defconst grid-table-version "0.5.0")
 
 ;;;----------------------------------------------------------------------
 ;;; Helper functions for data source access
