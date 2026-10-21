@@ -70,11 +70,12 @@ computed again.  The view uses it to recalculate and show them.")
 (defvar grid-calc--calc-waiting (make-hash-table :test 'equal)
   "For each text sent to the other Emacs, the formulas waiting for it.")
 
-;; One of the other Emacsen: its process, the job it is computing as
-;; (ID . TEXT), what it has written of an answer line not yet ended,
-;; and the timer that stops the job when it takes too long.
+;; One of the other Emacsen: its process, whether it has said it is
+;; ready, the job it is computing as (ID . TEXT), what it has written of
+;; an answer line not yet ended, and the timer that stops the job when
+;; it takes too long.
 (cl-defstruct (grid-calc--worker (:constructor grid-calc--worker-make))
-  process job (output "") timer)
+  process ready job (output "") timer)
 
 (defvar grid-calc--calc-queue nil
   "The texts waiting for one of the other Emacsen to be free.")
@@ -128,7 +129,8 @@ PRINTED is what `calc-eval' gave, or (error MESSAGE) for Calc failing."
 (defun grid-calc--calc-start (worker)
   "Start WORKER's Emacs, unless it is running."
   (unless (process-live-p (grid-calc--worker-process worker))
-    (setf (grid-calc--worker-output worker) "")
+    (setf (grid-calc--worker-output worker) ""
+          (grid-calc--worker-ready worker) nil)
     (setf (grid-calc--worker-process worker)
           (make-process
            :name "grid-table-calc"
@@ -167,9 +169,17 @@ PRINTED is what `calc-eval' gave, or (error MESSAGE) for Calc failing."
         (process-send-string
          (grid-calc--worker-process worker)
          (concat (prin1-to-string (list id text grid-calc--calc-modes)) "\n"))
-        (setf (grid-calc--worker-timer worker)
-              (run-at-time grid-calc-calc-timeout nil #'grid-calc--calc-too-long
-                           worker id))))))
+        (grid-calc--calc-clock worker)))))
+
+(defun grid-calc--calc-clock (worker)
+  "Start timing WORKER's job, once its Emacs is ready.
+The job waits in the Emacs's input while it starts, which is not
+counted against `grid-calc-calc-timeout'."
+  (when (and (grid-calc--worker-ready worker) (grid-calc--worker-job worker)
+             (not (grid-calc--worker-timer worker)))
+    (setf (grid-calc--worker-timer worker)
+          (run-at-time grid-calc-calc-timeout nil #'grid-calc--calc-too-long
+                       worker (car (grid-calc--worker-job worker))))))
 
 (defun grid-calc--calc-done (worker answer)
   "Give ANSWER to what waits for WORKER's job, and send it the next one."
@@ -197,6 +207,9 @@ PRINTED is what `calc-eval' gave, or (error MESSAGE) for Calc failing."
            (line (substring pending 0 (match-beginning 0))))
       (setf (grid-calc--worker-output worker) (substring pending (match-end 0)))
       (pcase (ignore-errors (car (read-from-string line)))
+        ('(ready)
+         (setf (grid-calc--worker-ready worker) t)
+         (grid-calc--calc-clock worker))
         (`(,id ,printed)
          (when (eql id (car (grid-calc--worker-job worker)))
            (grid-calc--calc-done worker (grid-calc--calc-value printed))))))))
