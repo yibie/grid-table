@@ -500,9 +500,27 @@ empty ones, and stops at the most columns a sheet may have."
 ;;;----------------------------------------------------------------------
 
 (defun grid-table-etaf--face-color (face attribute)
-  "Return FACE's color for ATTRIBUTE as a string, or nil."
+  "Return FACE's color for ATTRIBUTE as a string, or nil.
+The faces that paint the cursor, the selection and the headers give
+their background a foreground that reads on it when they name none:
+left to a terminal's own, which may be light on a dark screen, the
+text could vanish on a pale fill."
   (let ((color (face-attribute face attribute nil t)))
-    (and (stringp color) color)))
+    (cond ((stringp color) color)
+          ((and (eq attribute :foreground)
+                (memq face '(grid-table-etaf-cursor-face
+                             grid-table-etaf-selection-face
+                             grid-table-etaf-header-face)))
+           (let* ((background (face-attribute face :background nil t))
+                  (rgb (and (stringp background)
+                            (not (string-prefix-p "unspecified" background))
+                            (color-defined-p background)
+                            (color-name-to-rgb background))))
+             (and rgb
+                  (if (> (+ (* 0.299 (nth 0 rgb)) (* 0.587 (nth 1 rgb))
+                            (* 0.114 (nth 2 rgb)))
+                         0.5)
+                      "black" "white")))))))
 
 (defun grid-table-etaf--numeric-p (value)
   "Return non-nil when VALUE should be right-aligned as a number."
