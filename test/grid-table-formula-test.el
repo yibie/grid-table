@@ -4522,7 +4522,7 @@ after it in the same Emacs still has its answer."
   (grid-table-formula-test--calc-async
     (let* ((grid-calc-calc-timeout 0.3) (grid-calc-calc-workers 1)
            (model (grid-model-create
-                   1 2 '(("=CALC(\"vsum(index(5000000))\")" "=CALC(\"2+3\")")))))
+                   1 2 '(("=CALC(\"sum(sqrt(k), k, 1, 1000000)\")" "=CALC(\"2+3\")")))))
       (grid-model-get-computed-value model 0 0)
       (should (= (grid-table-formula-test--calc-wait 2) 2))
       (grid-table-calc-evaluate model)
