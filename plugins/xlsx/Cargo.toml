@@ -1,9 +1,9 @@
 [package]
-name = "grid-table-xlsx-module"
+name = "exc-xlsx-module"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "Emacs dynamic module that reads and writes xlsx files for grid-table"
+description = "Emacs dynamic module that reads and writes xlsx files for exc"
 publish = false
 
 [lib]
@@ -22,7 +22,7 @@ opt-level = "s"
 lto = true
 strip = true
 
-# umya-spreadsheet 3.1.1 with the fixes grid-table needs, kept in vendor/
+# umya-spreadsheet 3.1.1 with the fixes exc needs, kept in vendor/
 # (see vendor/umya-spreadsheet/GRID-TABLE.md).
 [patch.crates-io]
 umya-spreadsheet = { path = "vendor/umya-spreadsheet" }

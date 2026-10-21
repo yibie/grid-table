@@ -1,8 +1,8 @@
-//! Emacs dynamic module that reads and writes xlsx files for grid-table.
+//! Emacs dynamic module that reads and writes xlsx files for exc.
 //!
-//! The module knows nothing about grid-table's model.  Reading returns a
+//! The module knows nothing about exc's model.  Reading returns a
 //! printed Lisp form describing one sheet; writing takes a flat text of
-//! records.  `plugins/grid-table-xlsx.el` does the mapping on both sides.
+//! records.  `plugins/exc-xlsx.el` does the mapping on both sides.
 
 use emacs::{defun, Env, Result};
 use std::fmt::Write;
@@ -37,7 +37,7 @@ const FIELD: char = '\u{1f}';
 /// Separates the items of a list inside a field.
 const ITEM: char = '\u{1d}';
 
-#[emacs::module(name = "grid-table-xlsx-module")]
+#[emacs::module(name = "exc-xlsx-module")]
 fn init(_: &Env) -> Result<()> {
     Ok(())
 }
@@ -111,7 +111,7 @@ fn rgb(color: &Color, theme: &Theme) -> Option<String> {
         .then(|| rgb.to_ascii_uppercase())
 }
 
-/// Append the parts of STYLE grid-table has a counterpart for.
+/// Append the parts of STYLE exc has a counterpart for.
 /// A differential style (of a conditional format) keeps its fill in the
 /// pattern's background color; a cell style keeps it in the foreground.
 fn push_style(out: &mut String, style: &Style, theme: &Theme, differential: bool) {
@@ -174,7 +174,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
                 }
             }
             // What the writer last computed for the formula, to check
-            // grid-table's own result against.
+            // exc's own result against.
             match cell.raw_value() {
                 CellRawValue::Numeric(number) if number.is_finite() => {
                     write!(out, " :cached {number:?}")?;
@@ -198,7 +198,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             let value = cell.value();
             quote(out, &if text { unescape_x(&value) } else { value.to_string() });
             // Text that reads as something else, such as 007 or =A1,
-            // must stay text; grid-table decides which text that is.
+            // must stay text; exc decides which text that is.
             if text {
                 keyword(out, ":text", "1");
             }
@@ -210,7 +210,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             }
         }
         push_style(out, cell.style(), theme, false);
-        // A link inside the workbook is written #Sheet2!A1, as grid-table
+        // A link inside the workbook is written #Sheet2!A1, as exc
         // keeps it.
         if let Some(link) = cell.hyperlink() {
             if link.location() {
@@ -279,7 +279,7 @@ fn push_sheet(out: &mut String, sheet: &Worksheet, theme: &Theme) -> Result<()> 
             write!(out, "{} ", column.col_num() - 1)?;
         }
     }
-    // Only list validations: the others have nowhere to go in grid-table.
+    // Only list validations: the others have nowhere to go in exc.
     out.push_str(") :validations (");
     if let Some(validations) = sheet.data_validations() {
         for validation in validations.data_validation_list() {
@@ -513,7 +513,7 @@ fn read(path: String, sheet: String) -> Result<String> {
 }
 
 /// The custom document property that keeps the grid title of SHEET.
-/// Excel shows a sheet's name only; grid-table's title rides along in
+/// Excel shows a sheet's name only; exc's title rides along in
 /// the workbook's custom properties, where Excel leaves it alone.
 fn title_property(sheet: &str) -> String {
     format!("grid-table title: {}", sheet)
@@ -643,7 +643,7 @@ fn clear(sheet: &mut Worksheet) {
     }
     sheet.merge_cells_mut().clear();
     sheet.comments_mut().clear();
-    // Charts grid-table reads in are written back from it; the others
+    // Charts exc reads in are written back from it; the others
     // stay as they are.
     let name = sheet.name().to_string();
     sheet
@@ -662,7 +662,7 @@ fn clear(sheet: &mut Worksheet) {
 /// Give SHEET the tables PAYLOAD lists, when it lists them: after a U
 /// record, T NAME TOP LEFT BOTTOM RIGHT HEADER-ROWS TOTALS-ROWS COLUMN...
 /// for each, zero-based and inclusive.  A table the sheet has keeps what
-/// grid-table does not know of it, such as its style and its columns'
+/// exc does not know of it, such as its style and its columns'
 /// totals; one not listed goes, and one the sheet lacks is added.
 fn tables(sheet: &mut Worksheet, payload: &str) {
     let records: Vec<Vec<&str>> = payload
@@ -825,7 +825,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                             cell.set_error(text);
                         }
                         _ => {
-                            // grid-table gives text with _xHHHH_ escapes already.
+                            // exc gives text with _xHHHH_ escapes already.
                             cell.set_value_string(text);
                         }
                     }
@@ -908,7 +908,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     if !validations.data_validation_list().is_empty() {
         sheet.set_data_validations(validations);
     }
-    // grid-table lets a later rule win; in a workbook priority 1 wins.
+    // exc lets a later rule win; in a workbook priority 1 wins.
     let count = conditionals.len() as i32;
     for (index, record) in conditionals.iter().enumerate() {
         let fields: Vec<&str> = record.split(FIELD).collect();
@@ -917,9 +917,9 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
     Ok(())
 }
 
-/// What grid-table takes from a chart of a workbook.
+/// What exc takes from a chart of a workbook.
 struct ChartInfo {
-    /// The grid-table type, such as column or bar-stacked
+    /// The exc type, such as column or bar-stacked
     kind: String,
     title: String,
     /// The zero-based (ROW, COL) of the cells the chart's corners sit on
@@ -943,7 +943,7 @@ enum SeriesName {
     Text(String),
 }
 
-/// Describe CHART of the sheet named SHEET, or None when grid-table
+/// Describe CHART of the sheet named SHEET, or None when exc
 /// cannot hold it: a type it does not draw, or data on another sheet.
 fn chart_info(chart: &Chart, sheet: &str) -> Option<ChartInfo> {
     let space = chart.chart_space().chart();
@@ -1094,7 +1094,7 @@ fn chart_sheets(chart: &Chart) -> Vec<String> {
 
 /// Build the chart a G record describes.
 ///
-/// FIELDS are: G, the grid-table type, the cells its top left and bottom
+/// FIELDS are: G, the exc type, the cells its top left and bottom
 /// right corners sit on, each with how far into its column the corner
 /// sits in EMU as a second item when it is not on the edge, its title, the cells naming the series (items
 /// of a list) and the range of the category labels, then the data ranges as the

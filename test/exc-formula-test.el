@@ -1,0 +1,4547 @@
+;;; exc-formula-test.el --- Formula engine tests -*- lexical-binding: t; -*-
+
+(setq load-prefer-newer t)
+
+(require 'ert)
+(require 'exc)
+
+(defun exc-formula-test--values (rows)
+  "Return the computed values of a model built from ROWS of raw strings."
+  (let* ((cols (length (car rows)))
+         (model (exc-model-create (length rows) cols rows)))
+    (cl-loop for row below (length rows) collect
+             (cl-loop for col below cols collect
+                      (exc-model-get-computed-value model row col)))))
+
+(defun exc-formula-test--eval (formula &rest cells)
+  "Return the value of FORMULA in A1 of a row whose other cells are CELLS."
+  (caar (exc-formula-test--values (list (cons formula cells)))))
+
+(defun exc-formula-test--grid (formula rows cols)
+  "Return a ROWS by COLS sheet of raw values with FORMULA in its first cell."
+  (cons (cons formula (make-list (1- cols) ""))
+        (make-list (1- rows) (make-list cols ""))))
+
+(defun exc-formula-test--should-be (case)
+  "Check that the formula in CASE gives the value it is paired with."
+  (let* ((model (exc-model-create 1 3 (list (list (car case) "" ""))))
+         (value (exc-model-get-computed-value model 0 0))
+         (want (cdr case)))
+    (should (if (numberp want)
+                (and (numberp value)
+                     (< (abs (- value want)) (* 1e-9 (max 1 (abs want)))))
+              (and (stringp value) (equal value want))))))
+
+(ert-deftest exc-formula-offset-takes-empty-arguments-as-excel-does ()
+  ;; An empty height or width keeps the size of the reference; an
+  ;; empty row or column offset is 0.
+  (dolist (case '(("=SUM(OFFSET(B1:D1,0,0,))" . 7)
+                  ("=SUM(OFFSET(B1:D1,0,0,,2))" . 3)
+                  ("=SUM(OFFSET(B1:D1,,1))" . 6)
+                  ("=SUM(OFFSET(B1:D1,0,0,1,))" . 7)))
+    (should (equal (exc-formula-test--eval (car case) "1" "2" "4")
+                   (cdr case)))))
+
+(ert-deftest exc-formula-subtotal-counts-error-values ()
+  ;; As COUNT and COUNTA do; the other functions give the error.
+  (dolist (case '(("=SUBTOTAL(3,B1:D1)" . 3)
+                  ("=SUBTOTAL(2,B1:D1)" . 1)
+                  ("=SUBTOTAL(103,B1:D1)" . 3)
+                  ("=SUBTOTAL(9,B1:D1)" . "#DIV/0!")
+                  ("=AGGREGATE(3,4,B1:D1)" . 3)))
+    (should (equal (exc-formula-test--eval (car case) "1" "=1/0" "x")
+                   (cdr case)))))
+
+(ert-deftest exc-formula-sums-and-means-keep-every-digit ()
+  ;; Excel keeps a whole double, only showing 15 digits: a formula
+  ;; that reads the sum or the mean sees all of it.
+  (should (equal (exc-formula-test--eval "=SUM(0.1,0.2)") 0.30000000000000004))
+  (should (equal (exc-formula-test--eval "=AVERAGE(1,2,2)*3") 5))
+  (should (eq (exc-formula-test--eval "=SUM(0.1,0.2)=0.3") t))
+  (should (equal (exc-formula-test--eval "=SUM(0.1,0.2)&\"\"") "0.3")))
+
+(ert-deftest exc-formula-unions-hold-every-area ()
+  ;; A union in a union adds its areas, duplicates and all; the range
+  ;; and intersection operators take in each area of a union.
+  (dolist (case '(("=SUM(((B1,C1),C1))" . 5)
+                  ("=SUM((B1,(B1,C1)))" . 4)
+                  ("=SUM(B1:(C1,D1))" . 7)
+                  ("=SUM((B1,C1):D1)" . 7)
+                  ("=SUM((B1:C1,D1) C1:D1)" . 6)
+                  ("=SUM(B1 (C1,D1))" . "#NULL!")
+                  ("=SUM((B1,C1%))" . "#VALUE!")
+                  ("=COUNT((B1,C1%))" . 0)
+                  ("=AREAS((B1,(C1,D1)))" . 3)
+                  ("=RANK(B1,(B1,C1,D1),1)" . 1)
+                  ("=RANK.AVG(C1,(B1:C1,C1:D1))" . 2.5)
+                  ("=SUM((B1,IFS(TRUE,C1)))" . 3)
+                  ("=SUM((B1,SWITCH(2,1,C1,D1)))" . 5)))
+    (should (equal (exc-formula-test--eval (car case) "1" "2" "4")
+                   (cdr case)))))
+
+(ert-deftest exc-formula-operators-follow-spreadsheet-rules ()
+  (should (equal (exc-formula-test--eval "=2^3") 8))
+  (should (equal (exc-formula-test--eval "=(-2)^3") -8))
+  (should (equal (exc-formula-test--eval "=(-4)^-1") -0.25))
+  ;; An odd root of a negative number is real: see the POWER workbook.
+  (should (equal (exc-formula-test--eval "=(-8)^(1/3)") -2))
+  (should (equal (exc-formula-test--eval "=(-8)^(1/2)") "#NUM!"))
+  (should (equal (exc-formula-test--eval "=-5") -5))
+  (should (equal (exc-formula-test--eval "=+5") 5))
+  (should (equal (exc-formula-test--eval "=--5") 5))
+  (should (equal (exc-formula-test--eval "=-B1*2" "3") -6))
+  (should (equal (exc-formula-test--eval "=10/4") 2.5))
+  (should (equal (exc-formula-test--eval "=10/5") 2))
+  (should (equal (exc-formula-test--eval "=MOD(7,4)") 3))
+  (should (equal (exc-formula-test--eval "=200*5%") 10))
+  (should (equal (exc-formula-test--eval "=1+2*3") 7))
+  (should (equal (exc-formula-test--eval "=(1+2)*3") 9))
+  (should (equal (exc-formula-test--eval "=B1&\"x\"" "1") "1x"))
+  (should (equal (exc-formula-test--eval "=\"a\"&1+1") "a2")))
+
+(ert-deftest exc-formula-comparisons-coerce-numbers ()
+  (should (eq (exc-formula-test--eval "=B1<=5" "5") t))
+  (should (eq (exc-formula-test--eval "=B1>=6" "5") nil))
+  (should (eq (exc-formula-test--eval "=B1<>5" "5") nil))
+  (should (eq (exc-formula-test--eval "=B1<>6" "5") t))
+  (should (eq (exc-formula-test--eval "=B1=5" "5") t))
+  (should (eq (exc-formula-test--eval "=B1=5" "5.0") t))
+  (should (eq (exc-formula-test--eval "=B1=\"apple\"" "Apple") t))
+  (should (equal (exc-formula-test--eval "=IF(B1<=5,\"low\",\"high\")" "3")
+                 "low"))
+  (should (equal (exc-formula-test--eval "=IF(TRUE,1,2)") 1))
+  (should (equal (exc-formula-test--eval "=IF(false,1,2)") 2)))
+
+(ert-deftest exc-formula-references-accept-anchors-and-case ()
+  (should (equal (exc-formula-test--eval "=$B$1+B$1+$B1" "4") 12))
+  (should (equal (exc-formula-test--eval "=sum(b1:c1)" "4" "5") 9))
+  (should (equal (exc-formula-test--eval "=SUM($B$1:$C$1)" "4" "5") 9)))
+
+(ert-deftest exc-formula-columns-past-z-resolve ()
+  (should (= (exc-calc-col-letter-to-number "A") 0))
+  (should (= (exc-calc-col-letter-to-number "Z") 25))
+  (should (= (exc-calc-col-letter-to-number "AA") 26))
+  (should (= (exc-calc-col-letter-to-number "AB") 27))
+  (should (= (exc-calc-col-letter-to-number "BA") 52))
+  (dolist (col '(0 25 26 27 52 701 702))
+    (should (= (exc-calc-col-letter-to-number
+                (exc-calc-col-number-to-letter col))
+               col)))
+  (let ((row (append (list "=AB1*2") (make-list 26 "") (list "21"))))
+    (should (equal (caar (exc-formula-test--values (list row))) 42))))
+
+(ert-deftest exc-formula-order-does-not-depend-on-position ()
+  ;; A1 reads B1, which reads C1: both sit after their reader.
+  (should (equal (car (exc-formula-test--values
+                       '(("=B1+1" "=C1+1" "5"))))
+                 '(7 6 "5")))
+  (let* ((model (exc-model-create 1 3 '(("=B1+1" "=C1+1" "5")))))
+    (exc-model-set-raw-value model 0 2 "10")
+    (should (equal (exc-model-get-computed-value model 0 0) 12))
+    (should (equal (exc-model-get-computed-value model 0 1) 11))))
+
+(ert-deftest exc-formula-cycles-are-reported-not-computed ()
+  (should (equal (car (exc-formula-test--values
+                       '(("=B1+1" "=A1+1" "=C1" "7"))))
+                 '("#CYCLE!" "#CYCLE!" "#CYCLE!" "7")))
+  ;; A cell reading a cycle from outside is an error too, not a number.
+  (should (equal (car (exc-formula-test--values
+                       '(("=B1*2" "=C1+1" "=B1+1"))))
+                 '("#CYCLE!" "#CYCLE!" "#CYCLE!"))))
+
+(ert-deftest exc-formula-errors-stay-in-their-cell ()
+  (should (equal (car (exc-formula-test--values
+                       '(("=NOPE(1)" "=1/0" "=A1+1" "=1+" "=1 2" "ok"))))
+                 '("#NAME?" "#DIV/0!" "#NAME?" "#ERROR!" "#ERROR!" "ok")))
+  (should (equal (exc-formula-test--eval "=IFERROR(1/0,\"none\")")
+                 "none"))
+  (should (equal (exc-formula-test--eval "=IFERROR(B1,0)" "=1/0") 0))
+  (should (equal (exc-formula-test--eval "=SUM(B1:C1)" "=1/0" "2")
+                 "#DIV/0!"))
+  ;; Fixing the cause clears the error everywhere.
+  (let ((model (exc-model-create 1 2 '(("=B1+1" "=1/0")))))
+    (should (equal (exc-model-get-computed-value model 0 0) "#DIV/0!"))
+    (exc-model-set-raw-value model 0 1 "=1/1")
+    (should (equal (exc-model-get-computed-value model 0 0) 2))))
+
+(ert-deftest exc-formula-aggregates-count-zeros ()
+  (should (equal (exc-formula-test--eval "=AVERAGE(B1:D1)" "1" "0" "2")
+                 1))
+  (should (equal (exc-formula-test--eval "=MIN(B1:D1)" "1" "0" "2") 0))
+  (should (equal (exc-formula-test--eval "=SUM(B1:D1)" "1" "x" "") 1)))
+
+(ert-deftest exc-formula-count-counts-numbers ()
+  ;; COUNT used to be shadowed by the frequency chart, now COUNTPLOT.
+  (should (equal (exc-formula-test--eval "=COUNT(B1:E1)" "1" "x" "0" "")
+                 2))
+  (should (plist-get (exc-formula-test--eval
+                      "=COUNTPLOT(B1:D1,\"Fruit\")" "a" "b" "a")
+                     :exc-chart)))
+
+(ert-deftest exc-formula-several-values-feed-aggregates ()
+  (let ((data '(("x" "10" "b") ("y" "20" "a") ("x" "5" "B") ("z" "" "c")
+                ("x" "1" ""))))
+    (cl-flet ((value (formula)
+                (caar (exc-formula-test--values
+                       (cons (list formula "" "") data)))))
+      (should (equal (value "=SUM(UNIQUE(B2:B6))") 36))
+      ;; Text compares without case; a blank is one more value, not counted.
+      (should (equal (value "=COUNTA(UNIQUE(C2:C6))") 3))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A6=\"x\"))") 16))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A6=\"q\"))") "#CALC!"))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A6=\"q\",0))") 0))
+      (should (equal (value "=SUM(FILTER(B2:B6,A2:A5=\"x\"))") "#VALUE!"))
+      ;; Comparisons and arithmetic go element by element.
+      (should (equal (value "=SUM((A2:A6=\"x\")*B2:B6)") 16))
+      (should (equal (value "=MAX(SORT(B2:B6))") 20))
+      ;; Several values spill over the cells below and to the right;
+      ;; here the data is in the way.
+      (should (equal (value "=UNIQUE(A2:B6)") "#SPILL!"))
+      (should (equal (value "=B2:B4") "#SPILL!"))
+      (should (equal (value "=B3:B3") 20))
+      (should (equal (value "=UNIQUE(A2:A2)") "x")))))
+
+(ert-deftest exc-formula-multi-branch-functions-return ()
+  (should (equal (exc-formula-test--eval
+                  "=IFS(B1>5,\"big\",B1>1,\"mid\",TRUE,\"small\")" "3")
+                 "mid"))
+  (should (equal (car (car (exc-formula-test--values
+                            '(("=VLOOKUP(\"b\",B1:C2,2,FALSE)" "a" "1")
+                              ("" "b" "2")))))
+                 2))
+  (should (equal (car (car (exc-formula-test--values
+                            '(("=COUNTIFS(B1:B3,\">1\",C1:C3,\"x\")" "1" "x")
+                              ("" "2" "x")
+                              ("" "3" "y")))))
+                 1))
+  (should (equal (car (car (exc-formula-test--values
+                            '(("=SUMIFS(B1:B3,C1:C3,\"x\")" "1" "x")
+                              ("" "2" "x")
+                              ("" "3" "y")))))
+                 3)))
+
+(ert-deftest exc-formula-restructure-follows-cells ()
+  ;; Row 3 is index 2.  Inserting there pushes row 3 and below down.
+  (should (equal (exc-calc-restructure-formula "=A2+A3+$A$4" 'row 2 1)
+                 "=A2+A4+$A$5"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A2:A5)" 'row 2 1)
+                 "=SUM(A2:A6)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A2:A5)" 'row 5 1)
+                 "=SUM(A2:A5)"))
+  ;; Deleting row 3.
+  (should (equal (exc-calc-restructure-formula "=A2+A3+A4" 'row 2 -1)
+                 "=A2+#REF!+A3"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A2:A5)" 'row 2 -1)
+                 "=SUM(A2:A4)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A3:A5)" 'row 2 -1)
+                 "=SUM(A3:A4)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A2:A3)" 'row 2 -1)
+                 "=SUM(A2:A2)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A3:B3)" 'row 2 -1)
+                 "=SUM(#REF!)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(A5:A2)" 'row 2 -1)
+                 "=SUM(A4:A2)"))
+  ;; Columns: C is index 2.
+  (should (equal (exc-calc-restructure-formula "=B1+C1+$D1" 'col 2 1)
+                 "=B1+D1+$E1"))
+  (should (equal (exc-calc-restructure-formula "=SUM(B1:D1)+Z9" 'col 2 -1)
+                 "=SUM(B1:C1)+Y9"))
+  (should (equal (exc-calc-restructure-formula "=C1&\"C1\"" 'col 2 -1)
+                 "=#REF!&\"C1\""))
+  (should (equal (exc-calc-restructure-formula "plain C1" 'col 2 -1)
+                 "plain C1")))
+
+(ert-deftest exc-formula-structural-edits-rewrite-references ()
+  (let* ((rows '(("n" "double" "sum")
+                 ("1" "=A2*2" "=SUM(A2:A4)")
+                 ("2" "=A3*2" "")
+                 ("3" "=A4*2" "")))
+         (model (exc-model-create 4 3 rows))
+         (raw (lambda (model row col)
+                (exc-cell-raw-input (exc-model-get-cell model row col)))))
+    (should (equal (exc-model-get-computed-value model 1 2) 6))
+    ;; A row inserted before the second data row.
+    (let ((added (exc-model-add-row model 1)))
+      (should (equal (funcall raw added 1 1) "=A2*2"))
+      (should (equal (funcall raw added 3 1) "=A4*2"))
+      (should (equal (funcall raw added 1 2) "=SUM(A2:A5)"))
+      (should (equal (exc-model-get-computed-value added 4 1) 6))
+      (should (equal (exc-model-get-computed-value added 1 2) 6)))
+    ;; The second data row deleted.
+    (let ((deleted (exc-model-delete-row model 1)))
+      (should (equal (funcall raw deleted 2 1) "=A3*2"))
+      (should (equal (funcall raw deleted 1 2) "=SUM(A2:A3)"))
+      (should (equal (exc-model-get-computed-value deleted 1 2) 4)))
+    ;; A column inserted at the front, then the old first column deleted.
+    (let ((added (exc-model-add-column model 0)))
+      (should (equal (funcall raw added 1 2) "=B2*2"))
+      (should (equal (funcall raw added 1 3) "=SUM(B2:B4)"))
+      (should (equal (exc-model-get-computed-value added 1 3) 6))
+      (let ((deleted (exc-model-delete-column added 1)))
+        (should (equal (funcall raw deleted 1 1) "=#REF!*2"))
+        (should (equal (funcall raw deleted 1 2) "=SUM(#REF!)"))))))
+
+(ert-deftest exc-formula-reads-other-sheets ()
+  (should (equal (exc-parser-parse "Sheet2!A1+1")
+                 '(BINARY-OP + (CELL-REF "A1" "Sheet2") (NUMBER 1))))
+  (should (equal (exc-parser-parse "SUM('My Sheet'!a1:b2)")
+                 '(FUNCTION-CALL "SUM" ((RANGE (CELL-REF "A1" "My Sheet")
+                                               (CELL-REF "B2" "My Sheet"))))))
+  (should (equal (exc-parser-parse "销售!E6*2")
+                 '(BINARY-OP * (CELL-REF "E6" "销售") (NUMBER 2))))
+  (should (equal (exc-parser-parse "'It''s'!$A$1") '(CELL-REF "$A$1" "It's")))
+  ;; LibreOffice quotes each end of a reference through sheets.
+  (should (equal (exc-parser-parse "'a b':'it''s'!A1")
+                 '(CELL-REF "A1" "a b:it's")))
+  (let* ((a (exc-model-create 3 2 '(("x" "y") ("1" "=B!A1+1")
+                                     ("=A2*2" "=VLOOKUP(\"k\",b!A3:B3,2,FALSE)"))))
+         (b (exc-model-create 3 2 '(("10" "=A!A3") ("=SUM(A!A2:A3)" "=Nope!A1")
+                                     ("k" "found"))))
+         (sheets `(("A" . ,a) ("B" . ,b)))
+         (exc-calc-sheets (lambda (name) (cdr (assoc-string name sheets t)))))
+    (exc-calc-evaluate-models (list a b))
+    (should (equal (exc-model-get-computed-value a 1 1) 11))
+    (should (equal (exc-model-get-computed-value a 2 1) "found"))
+    ;; B!B1 reads a formula of the other sheet, computed on the way.
+    (should (equal (exc-model-get-computed-value b 0 1) 2))
+    (should (equal (exc-model-get-computed-value b 1 0) 3))
+    (should (equal (exc-model-get-computed-value b 1 1) "#REF!")))
+  ;; Without sheets to look in, the reference has nowhere to go.
+  (let ((alone (exc-model-create 1 1 '(("=Other!A1")))))
+    (should (equal (exc-model-get-computed-value alone 0 0) "#REF!")))
+  ;; A cycle through two sheets is a cycle.
+  (let* ((a (exc-model-create 1 1 '(("=B!A1"))))
+         (b (exc-model-create 1 1 '(("=A!A1"))))
+         (sheets `(("A" . ,a) ("B" . ,b)))
+         (exc-calc-sheets (lambda (name) (cdr (assoc-string name sheets t)))))
+    (exc-calc-evaluate-models (list a b))
+    (should (equal (exc-model-get-computed-value a 0 0) "#CYCLE!"))
+    (should (equal (exc-model-get-computed-value b 0 0) "#CYCLE!"))))
+
+(ert-deftest exc-formula-cell-names-the-file-and-sheet ()
+  ;; CELL("filename") names a workbook's file and sheet once it has a
+  ;; file, as Excel does once a workbook is saved; !A1 is A1 on the
+  ;; sheet the formula is worked out on, as a name may say.
+  (should (equal (exc-parser-parse "CELL(\"filename\",!A1)")
+                 '(FUNCTION-CALL "CELL" ((STRING "filename") (CELL-REF "A1")))))
+  (let* ((one (make-exc-default-data-source '("") '(("=CELL(\"filename\",A1)"))))
+         (two (make-exc-default-data-source
+               '("") '(("=MID(CELL(\"filename\"),FIND(\"]\",CELL(\"filename\"))+1,99)"))))
+         (workbook (exc-workbook-create (list (cons "One" one) (cons "Two" two)))))
+    (should (equal (exc-get-computed-value-at one 0 0) ""))
+    (setf (exc-workbook-file workbook) "/data/Book.xlsx")
+    (exc-workbook-recalculate workbook t)
+    (should (equal (exc-get-computed-value-at one 0 0) "/data/[Book.xlsx]One"))
+    (should (equal (exc-get-computed-value-at two 0 0) "Two"))))
+
+(ert-deftest exc-formula-rewrites-respect-sheets ()
+  (should (equal (exc-calc-shift-formula
+                  "=Sheet2!A1+'My Sheet'!$B$2+销售!C3:D4" 1 1)
+                 "=Sheet2!B2+'My Sheet'!$B$2+销售!D4:E5"))
+  ;; Only references into the sheet that changed move.
+  (should (equal (exc-calc-restructure-formula "=A3+Sheet2!A3+Data!A3" 'row 1 1)
+                 "=A4+Sheet2!A3+Data!A3"))
+  (should (equal (exc-calc-restructure-formula
+                  "=A3+Sheet2!A3+Data!A3" 'row 1 1 "sheet2")
+                 "=A4+Sheet2!A4+Data!A3"))
+  (should (equal (exc-calc-restructure-formula
+                  "=A3+Sheet2!A3+SUM(Data!A1:A3)" 'row 1 1 "Sheet2" "Data")
+                 "=A3+Sheet2!A3+SUM(Data!A1:A4)"))
+  (should (equal (exc-calc-restructure-formula
+                  "=Data!A2" 'row 1 -1 "Sheet2" "Data")
+                 "=Data!#REF!"))
+  (should (equal (exc-calc-rename-sheet-in-formula
+                  "=Sheet2!A1+sheet2!B2:C3+Other!A1+\"Sheet2!A1\""
+                  "Sheet2" "My Data")
+                 "='My Data'!A1+'My Data'!B2:C3+Other!A1+\"Sheet2!A1\""))
+  (should (equal (exc-calc-rename-sheet-in-formula
+                  "='My Data'!A1" "My Data" "Plain")
+                 "=Plain!A1")))
+
+(ert-deftest exc-workbook-keeps-sheets-together ()
+  (let* ((data (make-exc-default-data-source
+                (list "n" "v")
+                '(("n" "v") ("1" "=Totals!A2+1") ("2" "5") ("3" "6")) "Data"))
+         (workbook (exc-workbook-ensure data))
+         (totals (exc-workbook-new-sheet workbook "Totals"))
+         (file (make-temp-file "exc-workbook-" nil ".grid")))
+    (unwind-protect
+        (progn
+          (should (equal (exc-workbook-sheet-names workbook)
+                         '("Data" "Totals")))
+          (exc-set-raw-value-at totals 1 0 "=SUM(Data!A2:A4)")
+          (should (equal (exc-get-computed-value-at totals 1 0) 6))
+          ;; Each sheet reads the other; an edit in one reaches both.
+          (should (equal (exc-get-computed-value-at data 1 1) 7))
+          (exc-set-raw-value-at data 2 0 "20")
+          (should (equal (exc-get-computed-value-at totals 1 0) 24))
+          (should (equal (exc-get-computed-value-at data 1 1) 25))
+          (funcall (gethash :delete-row data) data 2)
+          (should (equal (exc-get-raw-value-at totals 1 0)
+                         "=SUM(Data!A2:A3)"))
+          (should (equal (exc-get-computed-value-at totals 1 0) 21))
+          (should (equal (exc-workbook-name-problem workbook "data")
+                         "There is already a sheet called data"))
+          (should (exc-workbook-name-problem workbook "a:b"))
+          ;; A name longer than one can type here may come from a file.
+          (let ((long (make-string 40 ?x)))
+            (should (exc-workbook-name-problem workbook long))
+            (should-not (exc-workbook-name-problem workbook long nil t))
+            (should (equal (exc-workbook-sheet-name
+                            (car (exc-workbook-sheets
+                                  (exc-workbook-create
+                                   (list (cons long (make-exc-default-data-source
+                                                     '("") '(("1"))))
+                                         (cons "Other"
+                                               (make-exc-default-data-source
+                                                '("")
+                                                `((,(format "=%s!A1+1" long))))))
+                                   t))))
+                           long)))
+          (should (equal (exc-workbook-fresh-name workbook) "Sheet1"))
+          (should (equal (exc-workbook-fresh-name workbook "Data") "Sheet1"))
+          ;; A name with an apostrophe or an exclamation mark is a name.
+          (let ((odd (exc-workbook-new-sheet workbook "It's Q1!")))
+            (exc-set-raw-value-at odd 0 0 "7")
+            (exc-set-raw-value-at totals 2 0 "='It''s Q1!'!A1*2")
+            (should (equal (exc-get-computed-value-at totals 2 0) 14)))
+          ;; Several sheets are saved together and come back together.
+          (let ((inhibit-message t))
+            (exc-persistence--save-to-file totals file))
+          (let* ((back (exc-persistence-create-data-source-from-file
+                        file))
+                 (sheets (exc-workbook-sheets (exc-workbook-of back))))
+            (should (equal (exc-workbook-sheet-name back) "Totals"))
+            (should (equal (mapcar #'exc-workbook-sheet-name sheets)
+                           '("Data" "Totals" "It's Q1!")))
+            (should (equal (exc-get-computed-value-at back 2 0) 14))
+            (should (equal (gethash :title (car sheets)) "Data"))
+            (should (equal (exc-get-computed-value-at back 1 0) 21))
+            (should (equal (exc-get-computed-value-at (car sheets) 1 1) 22)))
+          ;; One sheet alone is saved as it always was.
+          (exc-workbook-remove-sheet
+           workbook (exc-workbook-sheet workbook "It's Q1!"))
+          (exc-workbook-remove-sheet workbook data)
+          (should (equal (exc-get-computed-value-at totals 1 0) "#REF!"))
+          (should-not
+           (eq (car-safe (exc-persistence--file-data totals))
+               'grid-table-file))
+          (should-error (exc-workbook-remove-sheet workbook totals)))
+      (delete-file file))))
+
+(ert-deftest exc-workbook-reference-through-sheets ()
+  (cl-flet ((month (name value)
+              (make-exc-default-data-source
+               (list "n" "v") `(("n" "v") (,value "x")) name)))
+    (let* ((jan (month "Jan" "1"))
+           (workbook (exc-workbook-ensure jan))
+           (feb (exc-workbook-add-sheet workbook (month "Feb" "2") "Feb"))
+           (mar (exc-workbook-add-sheet workbook (month "Mar" "3") "Mar"))
+           (total (exc-workbook-new-sheet workbook "Total")))
+      (exc-workbook-recalculate workbook t)
+      (exc-set-raw-value-at total 0 0 "=SUM(Jan:Mar!A2)")
+      (exc-set-raw-value-at total 0 1 "=COUNTA(Mar:Jan!A2:B2)")
+      (exc-set-raw-value-at total 0 2 "=SUM(Jan:Nope!A2)")
+      (exc-set-raw-value-at total 0 3 "=MAX('Feb:Mar'!A2)")
+      (should (equal (exc-get-computed-value-at total 0 0) 6))
+      (should (equal (exc-get-computed-value-at total 0 1) 6))
+      (should (equal (exc-get-computed-value-at total 0 2) "#REF!"))
+      (should (equal (exc-get-computed-value-at total 0 3) 3))
+      ;; An edit to a sheet in between reaches the total.
+      (exc-set-raw-value-at feb 1 0 "20")
+      (should (equal (exc-get-computed-value-at total 0 0) 24))
+      ;; A sheet moved in between is taken in.
+      (let ((apr (exc-workbook-add-sheet workbook (month "Apr" "100") "Apr")))
+        (exc-workbook-recalculate workbook t)
+        (should (equal (exc-get-computed-value-at total 0 0) 24))
+        (exc-workbook-move-sheet workbook apr -2)
+        (should (equal (exc-workbook-sheet-names workbook)
+                       '("Jan" "Feb" "Apr" "Mar" "Total")))
+        (should (equal (exc-get-computed-value-at total 0 0) 124)))
+      ;; Taking out an end draws the span in; renaming one follows it.
+      (exc-workbook-remove-sheet workbook mar)
+      (should (equal (exc-get-raw-value-at total 0 0) "=SUM(Jan:Apr!A2)"))
+      (should (equal (exc-get-raw-value-at total 0 3) "=MAX(Feb:Apr!A2)"))
+      (should (equal (exc-get-computed-value-at total 0 0) 121))
+      (exc-workbook-rename-sheet workbook jan "Q1 Start")
+      (should (equal (exc-get-raw-value-at total 0 0)
+                     "=SUM('Q1 Start:Apr'!A2)"))
+      (should (equal (exc-get-computed-value-at total 0 0) 121))))
+  ;; A sheet named like a cell goes in apostrophes, so A1:Sheet2!B3 is
+  ;; a range from A1.
+  (should (equal (exc-parser-parse "SUM(A1:Sheet2!B3)")
+                 '(FUNCTION-CALL "SUM" ((RANGE-OP (CELL-REF "A1")
+                                                  (CELL-REF "B3" "Sheet2"))))))
+  (should (equal (exc-calc-sheet-prefix "S1:S3") "'S1:S3'!")))
+
+(ert-deftest exc-formula-shift-moves-relative-references ()
+  (should (equal (exc-calc-shift-formula "=B2+C2" 1 0) "=B3+C3"))
+  (should (equal (exc-calc-shift-formula "=B2+C2" 0 2) "=D2+E2"))
+  (should (equal (exc-calc-shift-formula "=$B$2+B$2+$B2+B2" 3 1)
+                 "=$B$2+C$2+$B5+C5"))
+  (should (equal (exc-calc-shift-formula "=SUM(A1:B2)*LOG10(Z9)" 1 1)
+                 "=SUM(B2:C3)*LOG10(AA10)"))
+  (should (equal (exc-calc-shift-formula "=A1&\"A1 stays\"" 1 0)
+                 "=A2&\"A1 stays\""))
+  (should (equal (exc-calc-shift-formula "=A1+B2" -1 -1) "=#REF!+A1"))
+  (should (equal (exc-calc-shift-formula "plain A1" 1 1) "plain A1"))
+  (should (equal (exc-calc-shift-formula "=elisp:(cell \"A1\")" 1 1)
+                 "=elisp:(cell \"A1\")")))
+
+(ert-deftest exc-formula-elisp-reads-cells ()
+  (let* ((exc-allow-elisp t)
+         (source (make-exc-default-data-source
+                  '("" "" "" "")
+                  '(("5" "7" "=elisp:(+ (cell \"A1\") (cell \"B1\"))"
+                     "=ELISP:(* 2 (cell \"C1\"))")))))
+    (should (equal (exc-get-computed-value-at source 0 2) 12))
+    ;; The prefix is read whatever its case, as a function's name is.
+    (should (equal (exc-get-computed-value-at source 0 3) 24)))
+  (let ((exc-allow-elisp nil))
+    (should (equal (exc-get-computed-value-at
+                    (make-exc-default-data-source '("") '(("=elisp:(cell \"A1\")")))
+                    0 0)
+                   "#ERROR!"))))
+
+;;;----------------------------------------------------------------------
+;;; Sorting
+;;;----------------------------------------------------------------------
+
+(defun exc-formula-test--sorted-column (values order)
+  "Return column A below its header after sorting VALUES in ORDER."
+  (let* ((rows (cons '("h") (mapcar #'list values)))
+         (sorted (exc-model-sort-by-column
+                  (exc-model-create (length rows) 1 rows) 0 order)))
+    (cl-loop for row from 1 below (length rows) collect
+             (exc-cell-raw-input (exc-model-get-cell sorted row 0)))))
+
+(ert-deftest exc-sort-orders-numbers-by-value ()
+  (should (equal (exc-formula-test--sorted-column
+                  '("10" "9" "100" "-1" "2.5") 'ascending)
+                 '("-1" "2.5" "9" "10" "100")))
+  (should (equal (exc-formula-test--sorted-column
+                  '("10" "9" "100") 'descending)
+                 '("100" "10" "9"))))
+
+(ert-deftest exc-sort-puts-numbers-before-text-and-blanks-last ()
+  (should (equal (exc-formula-test--sorted-column
+                  '("pear" "" "3" "Apple" "20" "banana") 'ascending)
+                 '("3" "20" "Apple" "banana" "pear" "")))
+  (should (equal (exc-formula-test--sorted-column
+                  '("pear" "" "3" "Apple" "20" "banana") 'descending)
+                 '("pear" "banana" "Apple" "20" "3" ""))))
+
+(ert-deftest exc-sort-uses-formula-results-and-is-stable ()
+  ;; Column B computes from column A; sorting by B orders by the results.
+  (let* ((model (exc-model-create
+                 4 2 '(("h" "h") ("b" "=10*3") ("a" "=5+5") ("c" "=10*3"))))
+         (sorted (exc-model-sort-by-column model 1 'ascending)))
+    (should (equal (cl-loop for row from 1 to 3 collect
+                            (exc-cell-raw-input
+                             (exc-model-get-cell sorted row 0)))
+                   ;; Equal results keep their original order.
+                   '("a" "b" "c")))))
+
+(ert-deftest exc-formulas-follow-spreadsheet-conventions ()
+  (let* ((source (make-exc-default-data-source
+                  '("" "" "" "")
+                  '(("1" "2" "3" "") ("4" "5" "6" "") ("" "" "" ""))))
+         (value (lambda (formula)
+                  (exc-set-raw-value-at source 2 3 formula)
+                  (exc-get-computed-value-at source 2 3))))
+    ;; Aggregates take any number of values and ranges.
+    (should (equal (funcall value "=SUM(1,2,3)") 6))
+    (should (equal (funcall value "=SUM(A1:A2,B1)") 7))
+    (should (equal (funcall value "=AVERAGE(1,2)") 1.5))
+    (should (equal (funcall value "=MAX(1,5,3)") 5))
+    (should (equal (funcall value "=MIN(A1:C1,0)") 0))
+    (should (equal (funcall value "=COUNT(A1:C2,7)") 7))
+    (should (equal (funcall value "=COUNTA(A1:B2,\"x\")") 5))
+    ;; IF only evaluates the branch it picks.
+    (should (equal (funcall value "=IF(TRUE,1,1/0)") 1))
+    (should (equal (funcall value "=IF(FALSE,1/0,2)") 2))
+    (should (equal (funcall value "=IF(1/0,1,2)") "#DIV/0!"))
+    ;; A percent sign divides by 100.
+    (should (equal (funcall value "=10%") 0.1))
+    (should (equal (funcall value "=A2*50%") 2))
+    (should (equal (funcall value "=-10%") -0.1))
+    (should (equal (funcall value "=MOD(7,3)") 1))
+    ;; ROUND takes a half away from zero.
+    (should (equal (funcall value "=ROUND(2.5,0)") 3))
+    (should (equal (funcall value "=ROUND(-2.5,0)") -3))
+    (should (equal (funcall value "=ROUND(1.005,2)") 1.01))
+    ;; Whole columns and whole rows.
+    (should (equal (funcall value "=SUM(A:A)") 5))
+    (should (equal (funcall value "=SUM(B:C)") 16))
+    (should (equal (funcall value "=SUM($1:$2)") 21))
+    (should (equal (funcall value "=SUM(D:D)") "#CYCLE!"))
+    ;; XLOOKUP
+    (should (equal (funcall value "=XLOOKUP(4,A:A,C:C)") 6))
+    (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2,\"none\")") "none"))
+    (should (equal (funcall value "=XLOOKUP(9,A1:A2,B1:B2)") "#N/A"))
+    (should (equal (funcall value "=XLOOKUP(1,A1:A2,B1:B2,1/0)") 2))))
+
+(ert-deftest exc-formula-rewrites-follow-whole-columns-and-rows ()
+  ;; Copying moves the relative ones.
+  (should (equal (exc-calc-shift-formula "=SUM(A:A)+SUM($B:C)+SUM(2:3)" 1 1)
+                 "=SUM(B:B)+SUM($B:D)+SUM(3:4)"))
+  (should (equal (exc-calc-shift-formula "=SUM(A:A)" 0 -1) "=SUM(#REF!:#REF!)"))
+  ;; A column inserted or deleted moves them, a row leaves them alone.
+  (should (equal (exc-calc-restructure-formula "=SUM(B:C)+SUM(2:5)" 'col 0 1)
+                 "=SUM(C:D)+SUM(2:5)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(B:C)+SUM(2:5)" 'row 0 1)
+                 "=SUM(B:C)+SUM(3:6)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(B:D)" 'col 2 -1)
+                 "=SUM(B:C)"))
+  (should (equal (exc-calc-restructure-formula "=SUM(B:B)+1" 'col 1 -1)
+                 "=SUM(#REF!)+1"))
+  ;; A renamed sheet keeps them.
+  (should (equal (exc-calc-rename-sheet-in-formula
+                  "=SUM(Data!A:A)+SUM('Old one'!2:2)" "Data" "New data")
+                 "=SUM('New data'!A:A)+SUM('Old one'!2:2)"))
+  ;; Names and text are not ranges.
+  (should (equal (exc-calc-shift-formula "=LOG10(A1)&\"A:A\"" 0 1)
+                 "=LOG10(B1)&\"A:A\"")))
+
+(ert-deftest exc-sheet-without-a-header-row ()
+  (let ((source (make-exc-default-data-source
+                 '("" "")
+                 '(("pear" "3") ("apple" "=B1*2") ("fig" "1")))))
+    (should (exc-header-row-p source))
+    ;; With a header row the first row stays where it is.
+    (funcall (gethash :sort-by-column source) source 0 'ascending)
+    (should (equal (exc-get-raw-value-at source 0 0) "pear"))
+    (should (equal (exc-get-raw-value-at source 1 0) "apple"))
+    ;; Without one it is sorted like any other row.
+    (exc-set-header-row source nil)
+    (funcall (gethash :sort-by-column source) source 0 'ascending)
+    (should (equal (mapcar (lambda (row) (exc-get-raw-value-at source row 0))
+                           '(0 1 2))
+                   '("apple" "fig" "pear")))
+    ;; A formula that moved with its row still reads the same distance up.
+    (should (equal (exc-get-raw-value-at source 0 1) "=#REF!*2"))
+    (exc-set-raw-value-at source 0 1 "7")
+    ;; A row can go above the first row, and the first row can go.
+    (funcall (gethash :add-row source) source -1)
+    (should (equal (exc-get-row-count source) 4))
+    (should (equal (exc-get-raw-value-at source 0 0) ""))
+    (should (equal (exc-get-raw-value-at source 1 0) "apple"))
+    (exc-set-raw-value-at source 3 1 "=B2+1")
+    (funcall (gethash :delete-row source) source -1)
+    (should (equal (exc-get-raw-value-at source 0 0) "apple"))
+    (should (equal (exc-get-raw-value-at source 2 1) "=B1+1"))
+    (should (equal (exc-get-computed-value-at source 2 1) 8))
+    ;; A merge may reach down from the first row.
+    (exc-set-raw-value-at source 1 0 "")
+    (exc-source-merge-cells source 0 0 1 0)
+    (should (equal (exc-get-merges source) '((0 0 1 0))))
+    ;; It keeps the header row from coming back.
+    (should-error (exc-set-header-row source t) :type 'user-error)
+    ;; The setting and the merge are saved with the grid.
+    (let ((file (make-temp-file "exc-noheader-" nil ".grid")))
+      (unwind-protect
+          (progn
+            (exc-persistence--save-to-file source file)
+            (let ((back (exc-persistence-create-data-source-from-file
+                         file)))
+              (should-not (exc-header-row-p back))
+              (should (equal (exc-get-merges back) '((0 0 1 0))))))
+        (delete-file file)))
+    (exc-source-unmerge-cell source 0 0)
+    (exc-set-header-row source t)
+    (should (exc-header-row-p source))
+    (should-error (funcall (gethash :merge-cells source) source 0 0 1 0))))
+
+;;;----------------------------------------------------------------------
+;;; Number formats and dates
+;;;----------------------------------------------------------------------
+
+(ert-deftest exc-formats-show-numbers ()
+  (should (equal (exc-format-display 1234.5 '(number 2 t)) "1,234.50"))
+  (should (equal (exc-format-display -1234567 '(number 0 t)) "-1,234,567"))
+  (should (equal (exc-format-display 2.5 '(number 0 nil)) "3"))
+  (should (equal (exc-format-display "0.125" '(percent 1)) "12.5%"))
+  (should (equal (exc-format-display -3.5 '(currency 2 "$")) "-$3.50"))
+  (should (equal (exc-format-display "text" '(number 2 t)) "text"))
+  ;; The general format hides the noise of binary fractions.
+  (should (equal (exc-format-display (+ 0.1 0.2) nil) "0.3"))
+  (should (equal (exc-format-display 3.0 nil) "3"))
+  (should (equal (exc-format-display t nil) "TRUE"))
+  ;; Dates are serial numbers.
+  (should (= (exc-format-date-to-serial 2026 10 12) 46307))
+  (should (= (exc-format-date-to-serial 2024 2 29) 45351))
+  (should (equal (exc-format-display 46307 '(date "yyyy-mm-dd")) "2026-10-12"))
+  (should (equal (exc-format-display 45351 '(date "m/d/yyyy")) "2/29/2024"))
+  (should (equal (exc-format-display 46307.75 '(date "yyyy-mm-dd hh:mm"))
+                 "2026-10-12 18:00"))
+  (should (equal (exc-format-display 46307 '(date "yyyy年m月d日"))
+                 "2026年10月12日"))
+  ;; Spreadsheet format codes come in and go back out.
+  (should (equal (exc-format-from-code "#,##0.00") '(number 2 t)))
+  (should (equal (exc-format-from-code "0.0%") '(percent 1)))
+  (should (equal (exc-format-from-code "\"¥\"#,##0.00") '(currency 2 "¥")))
+  (should (equal (exc-format-from-code "yyyy\\-mm\\-dd") '(date "yyyy-mm-dd")))
+  (should (equal (exc-format-from-code "@") '(text)))
+  (should-not (exc-format-from-code "General"))
+  (should (equal (exc-format-from-code "[$-409]mmmm d, yyyy")
+                 '(date "yyyy-mm-dd" "[$-409]mmmm d, yyyy")))
+  (should (equal (exc-format-from-code "0.00E+00") '(code "0.00E+00")))
+  (dolist (format '((number 2 t) (number 0 nil) (percent 1) (date "yyyy/mm/dd")
+                    (date "yyyy年m月d日") (text) (code "0.00E+00")
+                    (date "yyyy-mm-dd" "[$-409]mmmm d, yyyy")))
+    (should (equal (exc-format-from-code (exc-format-to-code format))
+                   format))))
+
+(ert-deftest exc-typed-dates-and-percentages-become-numbers ()
+  (let ((source (make-exc-default-data-source
+                 '("" "") '(("h" "") ("" "") ("" "") ("" "")))))
+    (exc-enter-value source 1 0 "2026-10-13")
+    (should (equal (exc-get-raw-value-at source 1 0) "46308"))
+    (should (equal (exc-get-display-value-at source 1 0) "2026-10-13"))
+    (should (equal (exc-edit-text source 1 0) "2026-10-13"))
+    (exc-set-raw-value-at source 1 1 "=A2+7")
+    (should (equal (exc-get-computed-value-at source 1 1) 46315))
+    ;; A date that does not exist is not one.
+    (exc-enter-value source 2 0 "2026-02-30")
+    (should (equal (exc-get-raw-value-at source 2 0) "2026-02-30"))
+    (exc-enter-value source 2 0 "12.5%")
+    (should (equal (exc-get-raw-value-at source 2 0) "0.125"))
+    (should (equal (exc-get-display-value-at source 2 0) "12.5%"))
+    (should (equal (exc-edit-text source 2 0) "12.5%"))
+    ;; A cell that has a format keeps it.
+    (exc-enter-value source 2 0 "50%")
+    (should (equal (exc-get-display-value-at source 2 0) "50.0%"))
+    (exc-enter-value source 2 1 "$1,234.5")
+    (should (equal (exc-get-display-value-at source 2 1) "$1,234.5"))
+    (should (equal (exc-get-raw-value-at source 2 1) "1234.5"))
+    ;; Text typed after an apostrophe is never a number to a range.
+    (exc-enter-value source 3 0 "'007")
+    (should (equal (exc-get-display-value-at source 3 0) "007"))
+    (exc-set-raw-value-at source 3 1 "=COUNT(A4:A4)")
+    (should (equal (exc-get-computed-value-at source 3 1) 0))
+    (exc-set-raw-value-at source 3 1 "=A4+1")
+    (should (equal (exc-get-computed-value-at source 3 1) 8))
+    ;; So is a number typed into a cell with the text format, which keeps
+    ;; it after an apostrophe; a number already there stays a number.
+    (exc-set-style-at source 0 1 '(:format (text)))
+    (exc-set-raw-value-at source 0 1 "12")
+    (exc-set-raw-value-at source 0 0 "=COUNT(B1:B1)")
+    (should (equal (exc-get-computed-value-at source 0 0) 1))
+    (exc-enter-value source 0 1 "12")
+    (should (equal (exc-get-raw-value-at source 0 1) "'12"))
+    (should (equal (exc-edit-text source 0 1) "12"))
+    (should (equal (exc-get-computed-value-at source 0 0) 0))
+    (exc-enter-value source 0 1 "twelve")
+    (should (equal (exc-get-raw-value-at source 0 1) "twelve"))
+    (exc-enter-value source 0 1 "'q")
+    (should (equal (exc-get-raw-value-at source 0 1) "''q"))
+    (should (equal (exc-get-display-value-at source 0 1) "'q"))
+    (exc-enter-value source 0 1 "12")
+    ;; The formats are saved with the grid and come back.
+    (let ((file (make-temp-file "exc-format-" nil ".grid")))
+      (unwind-protect
+          (progn
+            (exc-persistence--save-to-file source file)
+            (let ((back (exc-persistence-create-data-source-from-file
+                         file)))
+              (should (equal (exc-get-display-value-at back 1 0) "2026-10-13"))
+              (should (equal (exc-get-display-value-at back 2 0) "50.0%"))
+              (should (equal (exc-get-display-value-at back 3 0) "007"))
+              (should (equal (exc-get-computed-value-at back 0 0) 0))
+              (should (equal (exc-get-computed-value-at back 3 1) 8))))
+        (delete-file file)))
+    ;; A source that keeps no styles stores what was typed.
+    (let ((plain (copy-hash-table source)))
+      (remhash :set-style-at plain)
+      (should (equal (exc-read-entry plain 1 1 "2026-10-13")
+                     '("2026-10-13" . keep))))))
+
+(ert-deftest exc-date-functions-work-on-serial-numbers ()
+  (let* ((source (make-exc-default-data-source
+                  '("" "") '(("46307" "2026-03-05") ("" ""))))
+         (value (lambda (formula)
+                  (exc-set-raw-value-at source 1 0 formula)
+                  (exc-get-computed-value-at source 1 0)))
+         (shown (lambda (formula)
+                  (exc-set-raw-value-at source 1 0 formula)
+                  (exc-get-display-value-at source 1 0))))
+    (should (equal (funcall value "=DATE(2026,10,12)") 46307))
+    (should (equal (funcall value "=DATE(2026,10,12)+1") 46308))
+    (should (equal (funcall value "=TODAY()+1") (1+ (exc-format-today))))
+    ;; A formula that starts by computing a date is shown as one.
+    (should (equal (funcall shown "=DATE(2026,10,12)+1") "2026-10-13"))
+    (should (equal (funcall shown "=EOMONTH(A1,1)") "2026-11-30"))
+    (should (equal (funcall shown "=EDATE(DATE(2026,1,31),1)") "2026-02-28"))
+    (should (equal (funcall value "=YEAR(A1)") 2026))
+    (should (equal (funcall value "=MONTH(A1)") 10))
+    (should (equal (funcall value "=DAY(A1)") 12))
+    (should (equal (funcall value "=WEEKDAY(A1)") 2))
+    ;; Dates kept as text in older sheets are still read.
+    (should (equal (funcall value "=MONTH(B1)") 3))
+    (should (equal (funcall value "=DATEVALUE(B1)")
+                   (exc-format-date-to-serial 2026 3 5)))
+    (should (equal (funcall value "=DAYS(A1,B1)") 221))
+    (should (equal (funcall value "=TEXT(A1,\"yyyy/mm/dd\")") "2026/10/12"))
+    (should (equal (funcall value "=TEXT(0.256,\"0.0%\")") "25.6%"))
+    (should (equal (funcall value "=VALUE(\"12.5%\")") 0.125))
+    ;; Arithmetic reads a number with spaces around it, but not a date;
+    ;; DATEVALUE reads the date all the same.
+    (should (equal (funcall value "=\" 10 \"+1") 11))
+    (should (equal (funcall value "=\" 2024-01-10 \"+1") "#VALUE!"))
+    (should (equal (funcall value "=\"2024-01-10\"+1") 45302))
+    (should (equal (funcall value "=DATEVALUE(\" 2024-01-10 \")") 45301))
+    ;; Text such as 1/2/2024 names the month first, or the day first
+    ;; where the region writes it so.
+    (should (equal (funcall value "=DATEVALUE(\"1/2/2024\")") 45293))
+    (should (equal (funcall value "=DATEVALUE(\"15/1/2024\")") "#VALUE!"))
+    (let ((exc-calc-date-order 'day-month-year))
+      (should (equal (funcall value "=DATEVALUE(\"1/2/2024\")") 45323))
+      (should (equal (funcall value "=DATEVALUE(\"15/1/2024\")") 45306))
+      (should (equal (funcall value "=DATEVALUE(\"29/02/1900\")") 60))
+      (should (equal (funcall value "=DATEVALUE(\"2024-01-15\")") 45306)))
+    ;; CHAR reads codes past 127 as Windows-1252 does.
+    (should (equal (funcall value "=CHAR(65)") "A"))
+    (should (equal (funcall value "=CHAR(128)") "€"))
+    (should (equal (funcall value "=CHAR(200)") "È"))
+    (should (equal (funcall value "=CHAR(256)") "#VALUE!"))
+    (should (equal (funcall value "=CODE(CHAR(128))") 128))
+    (should (equal (funcall value "=CODE(\"È\")") 200))
+    ;; The first argument that fails gives the error.
+    (should (equal (funcall value "=FLOOR(\"x\",1/0)") "#VALUE!"))
+    (should (equal (funcall value "=FLOOR(1/0,\"x\")") "#DIV/0!"))))
+
+(ert-deftest exc-sort-keeps-a-formula-reading-its-own-row ()
+  (let* ((model (exc-model-create
+                 4 4 '(("Key" "Amount" "Double" "Share")
+                       ("b" "10" "=B2*2" "=B2/$B$4+Rates!B2")
+                       ("a" "20" "=B3*2" "=SUM(B$2:B3)")
+                       ("" "30" "" ""))))
+         (sorted (exc-model-sort-by-column model 0 'ascending))
+         (raw (lambda (row col)
+                (exc-cell-raw-input (exc-model-get-cell sorted row col)))))
+    (should (equal (funcall raw 1 0) "a"))
+    ;; Each row still doubles its own amount.
+    (should (equal (funcall raw 1 2) "=B2*2"))
+    (should (equal (funcall raw 2 2) "=B3*2"))
+    (should (equal (exc-model-get-computed-value sorted 1 2) 40))
+    (should (equal (exc-model-get-computed-value sorted 2 2) 20))
+    ;; Anchored parts and references into another sheet stay.
+    (should (equal (funcall raw 2 3) "=B3/$B$4+Rates!B2"))
+    (should (equal (funcall raw 1 3) "=SUM(B$2:B2)"))))
+
+(ert-deftest exc-sort-moves-references-naming-the-sorted-sheet ()
+  (let* ((workbook (exc-workbook--create))
+         (orders (make-exc-default-data-source
+                  '("" "" "" "")
+                  '(("Key" "Amount" "Double" "Rated")
+                    ("b" "10" "=Orders!B2*2" "=B2*Rates!B2")
+                    ("a" "20" "='orders'!B3*2" "=B3*Rates!B3"))))
+         (rates (make-exc-default-data-source
+                 '("" "") '(("Key" "Rate") ("b" "0.9") ("a" "0.5")))))
+    (exc-workbook-add-sheet workbook orders "Orders")
+    (exc-workbook-add-sheet workbook rates "Rates")
+    (exc-workbook-recalculate workbook)
+    (funcall (gethash :sort-by-column orders) orders 0 'ascending)
+    ;; A reference naming the sheet itself follows its row, where a
+    ;; spreadsheet that leaves it behind reads another row's amount.
+    (should (equal (exc-get-raw-value-at orders 1 2) "='orders'!B2*2"))
+    (should (equal (exc-get-raw-value-at orders 2 2) "=Orders!B3*2"))
+    (should (equal (exc-get-computed-value-at orders 1 2) 40))
+    (should (equal (exc-get-computed-value-at orders 2 2) 20))
+    ;; The other sheet did not move, so references into it stay.
+    (should (equal (exc-get-raw-value-at orders 1 3) "=B2*Rates!B3"))
+    (should (equal (exc-get-computed-value-at orders 1 3) 10))
+    (should (equal (exc-get-computed-value-at orders 2 3) 9))))
+
+;;;----------------------------------------------------------------------
+;;; Cell styles and conditional formats
+;;;----------------------------------------------------------------------
+
+(defun exc-formula-test--source ()
+  "Return a 4x3 source: a header row and rows keyed c, a, b in column A."
+  (make-exc-default-data-source
+   '("" "" "")
+   '(("name" "n" "x") ("c" "3" "") ("a" "1" "") ("b" "2" ""))))
+
+(ert-deftest exc-styles-follow-their-cells-through-structure-changes ()
+  (let ((source (exc-formula-test--source)))
+    (exc-set-style-at source 2 1 '(:bold t :color "#ff0000"))
+    (should (equal (exc-get-style-at source 2 1) '(:bold t :color "#ff0000")))
+    (should-not (exc-get-style-at source 1 1))
+    ;; Inserting above moves the style down with its cell.
+    (funcall (gethash :add-row source) source 0)
+    (should (equal (exc-get-raw-value-at source 3 0) "a"))
+    (should (plist-get (exc-get-style-at source 3 1) :bold))
+    (should-not (exc-get-style-at source 2 1))
+    (funcall (gethash :delete-row source) source 0)
+    (should (plist-get (exc-get-style-at source 2 1) :bold))
+    (funcall (gethash :add-column source) source 0)
+    (should (plist-get (exc-get-style-at source 2 2) :bold))
+    (funcall (gethash :delete-column source) source 0)
+    (should (plist-get (exc-get-style-at source 2 1) :bold))
+    ;; Sorting by name puts row "a" first among the data rows.
+    (funcall (gethash :sort-by-column source) source 0 'ascending)
+    (should (equal (exc-get-raw-value-at source 1 0) "a"))
+    (should (plist-get (exc-get-style-at source 1 1) :bold))
+    (should-not (exc-get-style-at source 2 1))
+    ;; Deleting the styled row drops the style with it.
+    (funcall (gethash :delete-row source) source 0)
+    (should-not (exc-get-style-at source 1 1))
+    ;; Clearing removes the entry.
+    (exc-set-style-at source 0 0 '(:italic t))
+    (exc-set-style-at source 0 0 nil)
+    (should-not (exc-get-style-at source 0 0))))
+
+(ert-deftest exc-conditional-formats-apply-by-value ()
+  (let ((source (exc-formula-test--source)))
+    (exc-set-conditional-formats
+     source '((1 1 3 1 ">" "1" (:background "#ffff00"))
+              (1 1 3 1 ">=" "3" (:bold t :background "#ff0000"))))
+    (exc-set-style-at source 1 1 '(:italic t))
+    ;; 3 satisfies both rules: the later one wins where they overlap and
+    ;; the cell's own style stays.
+    (should (equal (exc-effective-style source 1 1)
+                   '(:italic t :background "#ff0000" :bold t)))
+    (should-not (exc-effective-style source 2 1))
+    (should (equal (exc-effective-style source 3 1)
+                   '(:background "#ffff00")))
+    ;; The rule follows the value, not the cell.
+    (exc-set-raw-value-at source 2 1 "9")
+    (should (plist-get (exc-effective-style source 2 1) :bold))
+    ;; Rows inserted above shift the range; deleting it all drops the rule.
+    (funcall (gethash :add-row source) source 0)
+    (should (equal (seq-take (car (exc-get-conditional-formats source)) 4)
+                   '(2 1 4 1)))
+    (should (equal (exc-effective-style source 1 1) nil))
+    (dotimes (_ 3) (funcall (gethash :delete-row source) source 1))
+    (should-not (exc-get-conditional-formats source))))
+
+(ert-deftest exc-conditional-operators-match ()
+  (should (exc-conditional-match-p "=" "apple" "Apple"))
+  (should-not (exc-conditional-match-p "=" "" ""))
+  (should (exc-conditional-match-p "<>" "1" "2"))
+  (should (exc-conditional-match-p "<=" "5" 5))
+  (should-not (exc-conditional-match-p ">" "5" "text"))
+  (should (exc-conditional-match-p "contains" "rr" "Error"))
+  (should (exc-conditional-match-p "empty" "" nil))
+  (should (exc-conditional-match-p "error" "" "#DIV/0!"))
+  (should-not (exc-conditional-match-p "error" "" "fine")))
+
+(ert-deftest exc-formats-round-trip-through-a-version-4-file ()
+  (let ((source (exc-formula-test--source))
+        (file (make-temp-file "exc-formats-" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Without formats the file stays in the oldest format.
+          (exc-persistence--save-to-file source file)
+          (should (keywordp (car (with-temp-buffer
+                                   (insert-file-contents file)
+                                   (read (current-buffer))))))
+          (exc-set-style-at source 2 1 '(:bold t :align center))
+          (exc-set-conditional-formats
+           source '((1 1 3 1 ">" "1" (:background "#ffff00"))))
+          (exc-source-merge-cells source 1 1 1 2)
+          (exc-persistence--save-to-file source file)
+          (let ((saved (with-temp-buffer
+                         (insert-file-contents file)
+                         (read (current-buffer)))))
+            (should (eq (car saved) 'grid-table-file))
+            (should (= (plist-get (cdr saved) :version) 4)))
+          (let ((loaded (exc-persistence-create-data-source-from-file
+                         file)))
+            (should (equal (exc-get-style-at loaded 2 1)
+                           '(:bold t :align center)))
+            (should (equal (exc-get-conditional-formats loaded)
+                           '((1 1 3 1 ">" "1" (:background "#ffff00")))))
+            (should (equal (exc-get-merges loaded) '((1 1 1 2))))
+            (should (equal (exc-get-raw-value-at loaded 3 0) "b"))))
+      (delete-file file))))
+
+(ert-deftest exc-save-writes-everything-whatever-the-print-settings ()
+  ;; A print length or level set by the user, or by a tool talking to
+  ;; Emacs, must not cut the saved rows down to `...'.
+  (let ((source (exc-formula-test--source))
+        (file (make-temp-file "exc-print-" nil ".grid")))
+    (unwind-protect
+        (progn
+          (let ((print-length 2) (print-level 1) (print-circle t))
+            (exc-persistence--save-to-file source file))
+          (should-not (with-temp-buffer
+                        (insert-file-contents file)
+                        (search-forward "..." nil t)))
+          (let ((loaded (exc-persistence-create-data-source-from-file
+                         file)))
+            (should loaded)
+            (should (= (exc-get-row-count loaded) 4))
+            (should (= (exc-get-column-count loaded) 3))
+            (should (equal (exc-get-raw-value-at loaded 3 0) "b"))
+            (should (equal (exc-get-raw-value-at loaded 1 1) "3"))))
+      (delete-file file))))
+
+;; Found by an independent review: results that looked right and were not.
+(ert-deftest exc-formula-large-numbers-round-to-themselves ()
+  (should (equal (exc-format-display 5000000000 '(currency 2 "$"))
+                 "$5,000,000,000.00"))
+  (should (= (exc-format-round 1000000000000) 1000000000000))
+  (should (= (exc-format-round 1e15) 1000000000000000))
+  (should (equal (exc-format-edit-text "0.5" '(percent 0)) "50%"))
+  ;; A product a hair short of a half still rounds as the half.
+  (should (= (exc-format-round (* 1.005 100)) 101))
+  (should (= (exc-format-round -2.5) -3))
+  (should (equal (exc-formula-test--values
+                  '(("=ROUND(1234567890.125,2)" "=ROUND(2.5,0)" "=INT(-1.5)"
+                     "=INT(1.5)")))
+                 '((1234567890.13 3 -2 1)))))
+
+(ert-deftest exc-formula-index-stays-inside-its-range ()
+  (should (equal (exc-formula-test--values
+                  '(("1" "2" "3" "=INDEX(A1:A2,3)" "=INDEX(A1:C1,2)")
+                    ("4" "5" "6" "=INDEX(A1:C3,2,3)" "=INDEX(A1:A3,3)")
+                    ("7" "8" "9" "=INDEX(A1:C3,0,1)" "=INDEX(A1:C3,2,4)")))
+                 ;; A whole column of INDEX is several values, which
+                 ;; would spill past the bottom of the sheet.
+                 '(("1" "2" "3" "#REF!" 2)
+                   ("4" "5" "6" 6 7)
+                   ("7" "8" "9" "#SPILL!" "#REF!")))))
+
+(ert-deftest exc-formula-index-below-1-is-value ()
+  (should (equal (exc-formula-test--eval "=INDEX({1,2;3,4},-1)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=INDEX({1,2;3,4},1,-1)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=INDEX({1,2;3,4},-1,9)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=INDEX({1,2;3,4},1,9)") "#REF!")))
+
+(ert-deftest exc-formula-match-compares-numbers-by-value ()
+  (should (equal (exc-formula-test--values
+                  '(("10" "20" "30" "=MATCH(20,A1:C1,0)" "=MATCH(\"B\",A2:C2,0)")
+                    ("a" "b" "c" "=MATCH(99,A1:C1,0)" "")))
+                 '(("10" "20" "30" 2 2)
+                   ("a" "b" "c" "#N/A" "")))))
+
+(ert-deftest exc-formula-text-is-no-number-in-arithmetic ()
+  (should (equal (exc-formula-test--eval "=\"abc\"*2") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=B1*2" "abc") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=-B1" "abc") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=ROUND(B1,1)" "abc") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=IFERROR(B1*2,\"-\")" "abc")
+                 "-"))
+  ;; An empty cell is 0, text that reads as a number or a date is one.
+  (should (equal (exc-formula-test--eval "=B1+1" "") 1))
+  (should (equal (exc-formula-test--eval "=B1*2" "21") 42))
+  (should (equal (exc-formula-test--eval "=\"3\"+4") 7))
+  (should (equal (exc-formula-test--eval "=TRUE+1") 2))
+  (should (equal (exc-formula-test--eval "=B1+1" "2026-10-13") 46309))
+  ;; Aggregates still pass over text.
+  (should (equal (exc-formula-test--eval "=SUM(B1:D1)" "1" "abc" "2") 3))
+  (should (equal (exc-formula-test--eval "=SQRT(-1)") "#NUM!")))
+
+(ert-deftest exc-formula-vlookup-finds-the-row-not-above ()
+  (let ((rows '(("=VLOOKUP(25,B1:C3,2)" "10" "low")
+                ("=VLOOKUP(5,B1:C3,2)" "20" "mid")
+                ("=VLOOKUP(99,B1:C3,2,TRUE)" "30" "high")
+                ("=VLOOKUP(20,B1:C3,2,FALSE)" "" "")
+                ("=VLOOKUP(25,B1:C3,2,FALSE)" "" "")
+                ("=VLOOKUP(20,B1:C3,3)" "" ""))))
+    (should (equal (mapcar #'car (exc-formula-test--values rows))
+                   '("mid" "#N/A" "high" "mid" "#N/A" "#REF!")))))
+
+(ert-deftest exc-formula-sorted-lookup-takes-a-blank-for-0 ()
+  ;; A3 is blank: sought among sorted values it is 0, matched exactly
+  ;; it is nothing.  An index past the table is looked at only when the
+  ;; value is found.
+  (should (equal (car (exc-formula-test--values
+                       '(("0" "a" "=VLOOKUP(A3,A1:B2,2)" "=MATCH(A3,A1:A2)"
+                          "=LOOKUP(A3,A1:A2,B1:B2)" "=MATCH(A3,A1:A2,0)"
+                          "=VLOOKUP(A3,B1:B2,0)")
+                         ("1" "b" "" "" "" "" "")
+                         ("" "" "" "" "" "" ""))))
+                 '("0" "a" "a" 1 "a" "#N/A" "#N/A"))))
+
+(ert-deftest exc-formula-match-down-stops-at-an-equal-value ()
+  ;; Values read from the first, the search stops at the first below
+  ;; WANTED or after the run of those equal to it.
+  (should (equal (exc-formula-test--eval "=MATCH(0,{0,1,2,3,4},-1)") 1))
+  (should (equal (exc-formula-test--eval "=MATCH(-1,{0,1,2,3,4},-1)") 5))
+  (should (equal (exc-formula-test--eval "=MATCH(2,{0,1,2,3,4},-1)") "#N/A"))
+  (should (equal (exc-formula-test--eval "=MATCH(3,{5,3,3,1},-1)") 3)))
+
+(ert-deftest exc-formula-lookup-reads-a-table-for-its-results ()
+  ;; Values of several columns are looked along the first; results of
+  ;; several rows and columns are #N/A.
+  (should (equal (exc-formula-test--eval
+                  "=LOOKUP(3,{1,\"a\";3,\"c\";5,\"e\"},{10;30;50})")
+                 30))
+  (should (equal (exc-formula-test--eval
+                  "=LOOKUP(3,{1,\"a\";3,\"c\";5,\"e\"},{10,1;30,3;50,5})")
+                 "#N/A")))
+
+(ert-deftest exc-formula-sorted-lookup-halves-as-excel-does ()
+  ;; In values not sorted Excel's search by halves lands where a search
+  ;; from the start does not; these are what Excel gave.
+  (should (equal (exc-formula-test--eval
+                  "=LOOKUP(\"DOUBLE\",{\"DOUBLE\",\"BLANK\",\"STRING\",\"REF\",\"AREA\"},{1,2,3,4,5})")
+                 1))
+  (should (equal (car (nth 2 (exc-formula-test--values
+                              '(("INTEGRAL" "DOUBLE" "BLANK" "STRING" "REF" "AREA" "")
+                                ("1" "2" "3" "4" "5" "6" "")
+                                ("=HLOOKUP(\"STRING\",A1:G2,2,TRUE)" "" "" "" "" "" "")))))
+                 4))
+  ;; Of equal values the last is taken; none before the first is #N/A.
+  (should (equal (exc-formula-test--eval "=MATCH(5,{1,5,5,5,9},1)") 4))
+  (should (equal (exc-formula-test--eval "=MATCH(0,{1,5,9},1)") "#N/A"))
+  ;; Blanks below the values are passed over.
+  (should (equal (nth 2 (exc-formula-test--values
+                         '(("1" "3" "5" "" "")
+                           ("a" "b" "c" "" "")
+                           ("=HLOOKUP(4,A1:E2,2)" "=MATCH(9,A1:E1)" "" "" ""))))
+                 '("b" 3 "" "" "")))
+  ;; XLOOKUP's search by halves orders numbers before text.
+  (should (equal (exc-formula-test--eval
+                  "=XLOOKUP(46523,{9700;\"xyz\";\"xyz\";160726;204100;510300},{0.1;0.22;0.24;0.32;0.35;0.37},0,1,2)")
+                 0.22))
+  (should (equal (exc-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},0,1,-2)") 2))
+  (should (equal (exc-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},0,-1,-2)") 3))
+  (should (equal (exc-formula-test--eval "=XLOOKUP(6,{9;7;5;3},{1;2;3;4},\"none\",0,-2)") "none")))
+
+(ert-deftest exc-formula-takes-one-value-where-excel-wants-a-number ()
+  ;; MODE takes a value written directly, or one cell, as an array of
+  ;; one, so text or a blank there is #VALUE!, as Excel gives.
+  (dolist (case '(("=MODE(B1,\"1\",2,3)" . "#VALUE!")
+                  ("=MODE(\"1\",1,1/0,2,3)" . "#VALUE!")
+                  ("=MODE(B1,2,2,E1)" . "#VALUE!")
+                  ("=MODE(B1:D1,1,1)" . 1)
+                  ("=DEVSQ(C1:D1)" . "#NUM!")
+                  ("=DEVSQ(B1)" . 0)
+                  ;; So with SUMPRODUCT of single cells.
+                  ("=SUMPRODUCT(C1:C1,B1:B1)" . "#VALUE!")
+                  ("=SUMPRODUCT(C1:D1,B1:C1)" . 0)
+                  ("=SUMPRODUCT(E1:E1,B1:B1)" . 0)
+                  ;; A workbook before a plain sheet name is not quoted.
+                  ("=ADDRESS(2,3,3,TRUE,\"[Book1]Sheet1\")" . "[Book1]Sheet1!$C2")
+                  ("=ADDRESS(2,3,3,TRUE,\"[Book1]My Sheet\")" . "'[Book1]My Sheet'!$C2")
+                  ;; An empty sheet name, or a blank cell, leaves a bare !.
+                  ("=ADDRESS(2,3,3,TRUE,\"\")" . "!$C2")
+                  ("=ADDRESS(2,3,4,TRUE,E1)" . "!C2")))
+    (should (equal (exc-formula-test--eval (car case) "1" "x" "y" "")
+                   (cdr case)))))
+
+(ert-deftest exc-formula-common-functions ()
+  (should (equal (exc-formula-test--values
+                  '(("=TRUNC(1.59)" "=TRUNC(-1.59,1)" "=FLOOR(7,2)"
+                     "=CEILING(7,2)" "=MROUND(7,2)" "=FLOOR(0.35,0.1)"
+                     "=CEILING(7.2)" "=FLOOR(1,0)")))
+                 '((1 -1.5 6 8 8 0.3 8 "#DIV/0!"))))
+  (should (equal (exc-formula-test--values
+                  '(("3" "1" "x" "4" "=MEDIAN(A1:D1)" "=MEDIAN(A1:D1,10)")
+                    ("2" "5" "7" "1" "=LARGE(A1:D1,2)" "=SMALL(A1:D1,1)")
+                    ("=RANK(3,A1:D1)" "=RANK(3,A1:D1,1)" "=RANK(9,A1:D1)"
+                     "=LARGE(A1:D1,5)" "=SUMPRODUCT(A1:D1,A2:D2)"
+                     "=SUMPRODUCT(A1:B1,A2:D2)")))
+                 '(("3" "1" "x" "4" 3 3.5)
+                   ("2" "5" "7" "1" 3 1)
+                   (2 2 "#N/A" "#NUM!" 15 "#VALUE!")))))
+
+(ert-deftest exc-typing-a-number-into-a-percentage ()
+  (let ((source (make-exc-default-data-source '("" "") '(("" "")))))
+    (exc-enter-value source 0 0 "12.5%")
+    (exc-enter-value source 0 0 "50")
+    (should (equal (exc-get-raw-value-at source 0 0) "0.5"))
+    (should (equal (exc-get-display-value-at source 0 0) "50.0%"))
+    ;; A cell with another format takes the number as typed.
+    (exc-enter-value source 0 1 "50")
+    (should (equal (exc-get-raw-value-at source 0 1) "50"))))
+
+;;;----------------------------------------------------------------------
+;;; Recalculating only what an edit reaches
+;;;----------------------------------------------------------------------
+
+(defun exc-formula-test--all-values (model)
+  "Return every computed value of MODEL, row by row."
+  (cl-loop for row below (exc-data-model-rows model) collect
+           (cl-loop for col below (exc-data-model-cols model) collect
+                    (exc-model-get-computed-value model row col))))
+
+(defun exc-formula-test--fresh-values (model)
+  "Return what MODEL's cells are worth when every one is computed anew."
+  (exc-formula-test--all-values
+   (exc-model-create (exc-data-model-rows model) (exc-data-model-cols model)
+                      (exc-model-get-all-raw-values model)
+                      nil (exc-model--same-styles model))))
+
+(defun exc-formula-test--computed (thunk)
+  "Return how many cells calling THUNK computes."
+  (let* ((count 0)
+         (spy (lambda (&rest _) (setq count (1+ count)))))
+    (advice-add 'exc-calc--parsed :before spy)
+    (advice-add 'exc-calc--typed-value :before spy)
+    (unwind-protect (funcall thunk)
+      (advice-remove 'exc-calc--parsed spy)
+      (advice-remove 'exc-calc--typed-value spy))
+    count))
+
+(ert-deftest exc-edit-computes-only-what-it-reaches ()
+  (let ((model (exc-model-create
+                4 4 '(("1" "=A1*2" "=B1+1" "9")
+                      ("2" "=SUM(A1:A3)" "=B2*10" "9")
+                      ("3" "=D4" "=A:A" "9")
+                      ("4" "" "" "9")))))
+    ;; A cell nothing reads: it alone is computed.
+    (should (= (exc-formula-test--computed
+                (lambda () (exc-model-set-raw-value model 0 3 "5")))
+               1))
+    ;; D4 is read by B3 only.
+    (should (= (exc-formula-test--computed
+                (lambda () (exc-model-set-raw-value model 3 3 "6")))
+               2))
+    (should (equal (exc-model-get-computed-value model 2 1) 6))
+    ;; A1 reaches B1, C1, the sum, what reads the sum, and the column.
+    (should (= (exc-formula-test--computed
+                (lambda () (exc-model-set-raw-value model 0 0 "10")))
+               6))
+    (should (equal (exc-formula-test--all-values model)
+                   (exc-formula-test--fresh-values model)))
+    (should (equal (exc-model-get-computed-value model 1 2) 150))))
+
+(ert-deftest exc-edit-follows-a-formula-that-reads-other-cells-now ()
+  (let ((model (exc-model-create 2 3 '(("1" "2" "=A1+1") ("" "" "=C1*2")))))
+    (exc-model-set-raw-value model 0 2 "=B1+1")
+    (should (equal (exc-model-get-computed-value model 1 2) 6))
+    ;; A1 is no longer read, B1 is.
+    (should (= (exc-formula-test--computed
+                (lambda () (exc-model-set-raw-value model 0 0 "50")))
+               1))
+    (exc-model-set-raw-value model 0 1 "7")
+    (should (equal (exc-model-get-computed-value model 1 2) 16))
+    ;; A formula replaced by a number is read like any number.
+    (exc-model-set-raw-value model 0 2 "100")
+    (should (equal (exc-model-get-computed-value model 1 2) 200))
+    (exc-model-set-raw-value model 0 1 "8")
+    (should (equal (exc-model-get-computed-value model 1 2) 200))))
+
+(ert-deftest exc-edit-makes-and-breaks-cycles-and-errors ()
+  (let ((model (exc-model-create 2 3 '(("1" "=A1+1" "=B1+1") ("=C1" "" "")))))
+    (exc-model-set-raw-value model 0 0 "=C1")
+    (should (equal (exc-formula-test--all-values model)
+                   '(("#CYCLE!" "#CYCLE!" "#CYCLE!") ("#CYCLE!" "" ""))))
+    (exc-model-set-raw-value model 0 0 "5")
+    (should (equal (exc-formula-test--all-values model)
+                   '(("5" 6 7) (7 "" ""))))
+    (exc-model-set-raw-value model 0 0 "=1/0")
+    (should (equal (exc-model-get-computed-value model 1 0) "#DIV/0!"))
+    (exc-model-set-raw-value model 0 0 "2")
+    (should (equal (exc-model-get-computed-value model 1 0) 4))))
+
+(ert-deftest exc-edit-recomputes-what-nothing-announces ()
+  (let ((calls 0))
+    (puthash "TICK" (lambda (_model) (setq calls (1+ calls)))
+             exc-calc-functions)
+    (unwind-protect
+        (let ((model (exc-model-create
+                      2 3 '(("1" "=TICK()" "=B1+0")
+                            ("=NOW()" "=A2+0" "x")))))
+          ;; A function that may read anything, and a clock, are
+          ;; computed at every recalculation, with what reads them.
+          (let ((before calls))
+            (exc-model-set-raw-value model 1 2 "y")
+            (should (= calls (1+ before)))
+            (should (equal (exc-model-get-computed-value model 0 2) calls)))
+          (should (numberp (exc-model-get-computed-value model 1 1)))
+          ;; The text format leaves a number that is there a number.
+          (exc-model-set-raw-value model 0 0 "5")
+          (exc-model-set-raw-value model 1 2 "=SUM(A1:A1)")
+          (should (equal (exc-model-get-computed-value model 1 2) 5))
+          (exc-model-set-style model 0 0 '(:format (text)))
+          (exc-calc-evaluate model)
+          (should (equal (exc-model-get-computed-value model 1 2) 5)))
+      (remhash "TICK" exc-calc-functions))))
+
+(ert-deftest exc-edit-reaches-other-sheets ()
+  (let* ((workbook (exc-workbook--create))
+         (data (make-exc-default-data-source
+                '("" "") '(("1" "=A1*2") ("2" "=Sums!A1"))))
+         (sums (make-exc-default-data-source
+                '("" "") '(("=SUM(Data!A1:A2)" "=A1+1") ("=Data!B1" "k")))))
+    (exc-workbook-add-sheet workbook data "Data")
+    (exc-workbook-add-sheet workbook sums "Sums")
+    (exc-workbook-recalculate workbook t)
+    (should (equal (exc-get-computed-value-at sums 0 1) 4))
+    (exc-set-raw-value-at data 0 0 "10")
+    (should (equal (exc-get-computed-value-at sums 0 0) 12))
+    (should (equal (exc-get-computed-value-at sums 0 1) 13))
+    (should (equal (exc-get-computed-value-at sums 1 0) 20))
+    (should (equal (exc-get-computed-value-at data 1 1) 12))
+    ;; A row put in, which makes the model anew, then an edit.
+    (funcall (gethash :add-row data) data 0)
+    (should (equal (exc-get-raw-value-at sums 0 0) "=SUM(Data!A1:A3)"))
+    (exc-set-raw-value-at data 1 0 "100")
+    (should (equal (exc-get-computed-value-at sums 0 0) 112))
+    ;; A sheet renamed, then an edit.
+    (exc-workbook-rename-sheet workbook data "Raw")
+    (exc-set-raw-value-at data 0 0 "1")
+    (should (equal (exc-get-computed-value-at sums 0 0) 103))
+    (should (equal (exc-get-computed-value-at sums 1 0) 2))))
+
+;;;----------------------------------------------------------------------
+;;; Spilling
+;;;----------------------------------------------------------------------
+
+(ert-deftest exc-formula-several-values-spill ()
+  (let ((model (exc-model-create 6 3)))
+    (cl-flet ((column (col)
+                (cl-loop for row below 6
+                         collect (exc-model-get-computed-value model row col))))
+      ;; The values go down the cells below, which stay empty.
+      (exc-model-set-raw-value model 0 0 "=SEQUENCE(3)")
+      (should (equal (column 0) '(1 2 3 "" "" "")))
+      (should (equal (nth 0 (nth 1 (exc-model-get-all-raw-values model))) ""))
+      ;; A formula reads a spilled cell, and a spill as a whole.
+      (exc-model-set-raw-value model 5 1 "=SUM(A1:A3)")
+      (exc-model-set-raw-value model 4 1 "=ROWS(A1#)")
+      (should (equal (column 1) '("" "" "" "" 3 6)))
+      ;; Something in the way: #SPILL!, and the readers follow.
+      (exc-model-set-raw-value model 2 0 "x")
+      (should (equal (column 0) '("#SPILL!" "" "x" "" "" "")))
+      (should (equal (column 1) '("" "" "" "" "#REF!" "#SPILL!")))
+      ;; Out of the way again.
+      (exc-model-set-raw-value model 2 0 "")
+      (should (equal (column 0) '(1 2 3 "" "" "")))
+      ;; Fewer values leave the cells they no longer reach empty.
+      (exc-model-set-raw-value model 0 0 "=SEQUENCE(2)")
+      (should (equal (column 0) '(1 2 "" "" "" "")))
+      (should (equal (column 1) '("" "" "" "" 2 3)))
+      ;; Past the bottom of the sheet.
+      (exc-model-set-raw-value model 3 2 "=SEQUENCE(4)")
+      (should (equal (column 2) '("" "" "" "#SPILL!" "" ""))))))
+
+(ert-deftest exc-formula-array-formula-fills-its-range ()
+  (let ((model (exc-model-create
+                3 4 '(("1" "=A1:A2*10" "=A1:A3+1" "=7")
+                      ("2" "" "" "")
+                      ("x" "" "" "")))))
+    (exc-model-set-arrays model '(((0 . 1) . "B1:B3") ((0 . 2) . "C1:C2")
+                                   ((0 . 3) . "D1:D3")))
+    (exc-model-set-raw-value model 1 2 "own")
+    (cl-flet ((column (col)
+                (cl-loop for row below 3
+                         collect (exc-model-get-computed-value model row col))))
+      ;; Past its values an array formula shows #N/A; a single value
+      ;; fills every cell; a cell holding something keeps it.
+      (should (equal (column 1) '(10 20 "#N/A")))
+      (should (equal (column 2) '(2 "own" "")))
+      (should (equal (column 3) '(7 7 7)))
+      ;; A one-cell array formula that comes out FALSE shows FALSE.
+      (exc-model-set-raw-value model 2 2 "=1>2")
+      (exc-model-set-arrays model '(((2 . 2) . "C3")))
+      (should (equal (exc-model-get-computed-value model 2 2) nil)))))
+
+(ert-deftest exc-formula-empty-arguments-and-isformula-ranges ()
+  (let ((model (exc-model-create 3 3 '(("=1" "" "") ("2" "" "") ("=3" "" "")))))
+    (cl-flet ((value (formula)
+                (exc-model-set-raw-value model 0 2 formula)
+                (exc-model-get-computed-value model 0 2)))
+      ;; A dynamic-array function takes its default for an empty
+      ;; argument; an older one takes it as 0.
+      (should (equal (value "=INDEX(SORT(A1:A3,,-1),1)") 3))
+      (should (equal (value "=ROWS(SEQUENCE(2,,5))") 2))
+      (should (equal (value "=ROUND(2.5,)") 3))
+      ;; ISFORMULA over a range answers for each cell.
+      (should (equal (value "=INDEX(ISFORMULA(A1:A3),1)") t))
+      (should (equal (value "=INDEX(ISFORMULA(A1:A3),2)") nil))
+      (should (equal (value "=ISFORMULA(A3)") t))
+      ;; A number joined into text loses every trailing zero.
+      (should (equal (value "=8.4&\"!\"") "8.4!"))
+      (should (equal (value "=0.125&\"\"") "0.125"))
+      ;; IFERROR over several values replaces each error on its own.
+      (should (equal (value "=INDEX(IFERROR({1;2}/{0;1},{8;9}),1)") 8))
+      (should (equal (value "=INDEX(IFERROR({1;2}/{0;1},{8;9}),2)") 2))
+      (should (equal (value "=IFNA(1/0,3)") "#DIV/0!"))
+      ;; A spill reference followed by a space intersects what comes next.
+      (exc-model-set-raw-value model 0 1 "=SEQUENCE(3)")
+      (should (equal (value "=B1# B2") 2)))))
+
+(ert-deftest exc-formula-spill-read-before-its-formula ()
+  ;; A1 comes before B4 in the sheet but reads what B4 spills.
+  (let ((model (exc-model-create
+                6 2 '(("=B5*10" "") ("" "") ("" "") ("" "=SEQUENCE(2)")
+                      ("" "") ("" "")))))
+    (should (equal (exc-model-get-computed-value model 0 0) 20))))
+
+(ert-deftest exc-formula-file-formula-reads-a-spill ()
+  ;; A1 and A2 are a workbook file's formulas; B4, which they come
+  ;; first to compute, is not, and spills all the same.
+  (let ((model (exc-model-create
+                6 2 '(("=B5*10" "") ("=SUM(B4#)" "") ("" "")
+                      ("" "=SEQUENCE(2)") ("" "") ("" "")))))
+    (exc-model-set-legacy model '((0 . 0) (1 . 0)))
+    (exc-calc-forget model)
+    (exc-model-recalculate-all model)
+    (should (equal (exc-calc-spill-range model 3 1) "B4:B5"))
+    (should (equal (exc-model-get-computed-value model 0 0) 20))
+    (should (equal (exc-model-get-computed-value model 1 0) 3))))
+
+(ert-deftest exc-formula-file-formula-takes-one-value-where-excel-does ()
+  ;; A workbook file's formula takes one value of a range wherever
+  ;; Excel's classes for its functions say so, inside arguments too.
+  ;; Each answer is Excel's for a formula in E2 that is no array formula.
+  (cl-flet ((value (formula &optional (row 1) (col 4))
+              (let ((model (exc-model-create
+                            6 5 '(("1" "-7" ">0" "" "") ("-2" "" "<0" "" "")
+                                  ("3" "" ">5" "" "") ("" "" "" "" "")
+                                  ("" "" "" "" "") ("" "" "" "" "")))))
+                (exc-model-set-raw-value model row col formula)
+                (exc-model-set-legacy model (list (cons row col)))
+                (exc-calc-forget model)
+                (exc-model-recalculate-all model)
+                (exc-model-get-computed-value model row col))))
+    (pcase-dolist (`(,formula ,expected)
+                   '(("=SUM(A1:A3*2)" -4) ("=SUMPRODUCT(A1:A3*2)" 4)
+                     ("=SUM(LEN(A1:A3))" 2) ("=SUMPRODUCT(--ISNUMBER(A1:A3))" 3)
+                     ("=SUM(IF(A1:A3>0,1,0))" 0) ("=SUMPRODUCT(IF(A1:A3>0,1,0))" 0)
+                     ("=MAX(INDEX(A1:A3,0))" 3) ("=SUM(INDEX(A1:A3*2,0))" 4)
+                     ("=SUMIF(A1:A3,C1:C3)" -2) ("=SUMPRODUCT(SUMIF(A1:A3,C1:C3))" 2)
+                     ("=ABS(IF(TRUE,A1:A3))" 2) ("=TRANSPOSE(A1:A3)" -2)
+                     ("=MAX(ABS(A1:A3))" 2) ("=SUMPRODUCT(ABS(A1:A3))" 6)
+                     ("=SUMPRODUCT((A1:A3>0)*1)" 2) ("=COUNTIF(A1:A3,A1:A3)" 1)
+                     ("=AGGREGATE(14,6,A1:A3/(A1:A3>0),1)" 3)
+                     ("=ROW(A1:A3)" 1) ("=SUM({1,2,3})" 6) ("=ABS({-1,-2})" 1)
+                     ;; What a function computes stays several values.
+                     ("=SUM(ABS({-1,-2}))" 3) ("=TYPE(A1:A3)" 64)
+                     ("=SUM(SIGN(FREQUENCY(IF(A1:A3<0,MATCH(A1:A3,A1:A3,0)),ROW(A1:A3))))"
+                      1)))
+      (should (equal (list formula (value formula)) (list formula expected))))
+    ;; A row of cells gives the one in the formula's column.
+    (should (equal (value "=ABS(A1:C1)" 4 1) 7))
+    ;; A formula outside the range's rows has none of them.
+    (should (equal (value "=ABS(A1:A3)" 4 4) "#VALUE!"))))
+
+(ert-deftest exc-formula-text-shows-where-a-file-formula-takes-one-value ()
+  ;; Excel shows an @ where a workbook file's formula takes one value
+  ;; of what may be several, and none where it takes them all.
+  (cl-flet ((text (formula)
+              (let ((model (exc-model-create
+                            3 3 '(("1" "2" "") ("3" "4" "") ("" "" "")))))
+                (exc-model-set-raw-value model 0 2 formula)
+                (exc-model-set-raw-value model 2 0 "=FORMULATEXT(C1)")
+                (exc-model-set-legacy model '((0 . 2)))
+                (exc-calc-forget model)
+                (exc-model-recalculate-all model)
+                (exc-model-get-computed-value model 2 0))))
+    (pcase-dolist (`(,formula ,expected)
+                   '(("=A1:A2+B1:B2" "=@A1:A2+@B1:B2") ("=-A1:A2" "=-@A1:A2")
+                     ("=SUM(A1:A2*2)" "=SUM(@A1:A2*2)") ("=SUM(A1:B2)" "=SUM(A1:B2)")
+                     ("=SUMPRODUCT(A1:A2*2)" "=SUMPRODUCT(A1:A2*2)")
+                     ("=ANCHORARRAY(A1)" "=@A1#") ("=A1" "=A1") ("=A1:A1" "=A1:A1")
+                     ("=UNIQUE(A1:A2)" "=@UNIQUE(A1:A2)")
+                     ("=SINGLE((UNIQUE(A1:A2)))" "=@(UNIQUE(A1:A2))")
+                     ("=TYPE(ANCHORARRAY(A1))" "=TYPE(A1#)")
+                     ("=SUM((A1,B1))" "=SUM((A1,B1))") ("=\"A1:A2\"" "=\"A1:A2\"")))
+      (should (equal (list formula (text formula)) (list formula expected))))))
+
+(ert-deftest exc-formula-spill-moves-with-its-formula ()
+  (let* ((model (exc-model-create
+                 5 2 '(("" "=SUM(A3:A5)") ("" "") ("=SEQUENCE(3)" "")
+                       ("" "") ("" ""))))
+         (moved (exc-model-delete-row model 0)))
+    (should (equal (cl-loop for row below 4
+                            collect (exc-model-get-computed-value moved row 0))
+                   '("" 1 2 3)))
+    (should (equal (exc-model-get-computed-value moved 0 1) 6))))
+
+(ert-deftest exc-edits-give-what-computing-everything-gives-with-spills ()
+  (let* ((rows 10) (cols 5)
+         (formulas '("=SEQUENCE(2)" "=SEQUENCE(3,2)" "=A1:A3" "=SORT(B1:B4)"
+                     "=SUM(A1:B6)" "=A2+1" "=C4*2" "=COUNT(C1:C10)"
+                     "=ROWS(A1#)" "=B3" "=TRANSPOSE(A1:A3)"))
+         (pick (lambda ()
+                 (pcase (random 5)
+                   (0 (number-to-string (random 20)))
+                   ((or 1 2) (nth (random (length formulas)) formulas))
+                   (_ ""))))
+         model)
+    (random "grid-table-spills")
+    (setq model (exc-model-create
+                 rows cols
+                 (cl-loop repeat rows collect
+                          (cl-loop repeat cols collect (funcall pick)))))
+    (dotimes (_ 300)
+      (exc-model-set-raw-value model (random rows) (random cols)
+                                (funcall pick))
+      (should (equal (exc-formula-test--all-values model)
+                     (exc-formula-test--fresh-values model))))))
+
+(ert-deftest exc-edits-give-what-computing-everything-gives ()
+  (let* ((rows 12) (cols 6)
+         (formulas '("=A1+1" "=SUM(A1:C4)" "=B:B" "=SUM(2:3)" "=IF(A2>5,B3,C4)"
+                     "=INDEX(A1:C5,2,2)" "=VLOOKUP(3,A1:B9,2)" "=A1&B1"
+                     "=D5*2" "=E7+F8" "=AVERAGE(D1:F12)" "=MAX(A:A)"
+                     "=ROUND(C3/7,2)" "=A12" "=F1" "=COUNT(A1:F12)"
+                     "=XLOOKUP(2,A1:A9,B1:B9,0)" "=E1+E2+E3" "=\"x\"*2"))
+         (pick (lambda ()
+                 (pcase (random 4)
+                   (0 (number-to-string (random 20)))
+                   (1 (nth (random (length formulas)) formulas))
+                   (2 "")
+                   (_ (nth (random 3) '("a" "7" "2026-10-13"))))))
+         model)
+    (random "grid-table")
+    (setq model (exc-model-create
+                 rows cols
+                 (cl-loop repeat rows collect
+                          (cl-loop repeat cols collect (funcall pick)))))
+    (dotimes (_ 300)
+      (exc-model-set-raw-value model (random rows) (random cols)
+                                (funcall pick))
+      (should (equal (exc-formula-test--all-values model)
+                     (exc-formula-test--fresh-values model))))
+    ;; The same with the record of who reads what switched off.
+    (let ((exc-calc-incremental nil))
+      (exc-model-set-raw-value model 0 0 "3")
+      (should (equal (exc-formula-test--all-values model)
+                     (exc-formula-test--fresh-values model))))
+    (exc-model-set-raw-value model 0 0 "4")
+    (should (equal (exc-formula-test--all-values model)
+                   (exc-formula-test--fresh-values model)))))
+
+;; Formulas reading another sheet are computed when what they read changes,
+;; and only then.
+(ert-deftest exc-formula-graph-spans-sheets ()
+  (let* ((one (make-exc-default-data-source
+               '("" "" "") '(("1" "2" "3") ("4" "5" "6") ("7" "8" "9"))))
+         (two (make-exc-default-data-source
+               '("" "" "") '(("=S1!B2*2" "=SUM(S1!A:A)" "=A1+B1")
+                             ("=S2!A1+1" "" "") ("" "" ""))))
+         (workbook (exc-workbook-create (list (cons "S1" one) (cons "S2" two))))
+         (model (lambda (source) (gethash :model source))))
+    (should (equal (exc-get-computed-value-at two 0 0) 10))
+    (should (equal (exc-get-computed-value-at two 0 1) 12))
+    (should (equal (exc-get-computed-value-at two 1 0) 11))
+    ;; Neither the reference nor the self-named one is computed every time.
+    (should (consp (aref (exc-model-get-cell (funcall model two) 0 0)
+                         exc-cell--reads)))
+    (should (consp (aref (exc-model-get-cell (funcall model two) 1 0)
+                         exc-cell--reads)))
+    ;; An edit nothing on S2 reads computes S1's cell and no more.
+    (should (= (exc-formula-test--computed
+                (lambda () (exc-set-raw-value-at one 2 2 "90")))
+               1))
+    ;; An edit S2 reads reaches it, and what reads it there.
+    (exc-set-raw-value-at one 1 1 "50")
+    (should (equal (exc-get-computed-value-at two 0 0) 100))
+    (should (equal (exc-get-computed-value-at two 0 2) 112))
+    (exc-set-raw-value-at one 0 0 "100")
+    (should (equal (exc-get-computed-value-at two 0 1) 111))
+    ;; A formula that stops reading a cell is no longer reached from it.
+    (exc-set-raw-value-at two 0 0 "=S1!C1")
+    (should (equal (exc-get-computed-value-at two 0 0) 3))
+    (should (= (exc-formula-test--computed
+                (lambda () (exc-set-raw-value-at one 1 1 "60")))
+               1))
+    ;; A cycle across the sheets is found.
+    (exc-set-raw-value-at one 0 2 "=S2!A1")
+    (should (equal (exc-get-computed-value-at one 0 2) "#CYCLE!"))
+    (exc-set-raw-value-at two 0 0 "=S1!C2")
+    (should (equal (exc-get-computed-value-at one 0 2) 6))
+    (ignore workbook)))
+
+(ert-deftest exc-formula-graph-across-sheets-matches-full-recalc ()
+  (let* ((rows 8) (cols 4)
+         (formulas '("=A1+1" "=S1!B2*2" "=SUM(S2!A1:B4)" "=S2!C3" "=SUM(S1!A:A)"
+                     "=s1!D4+A2" "=COUNT(S2!A:D)" "=B2&S1!C1" "=MAX(S1!A1:D8)"))
+         (pick (lambda ()
+                 (pcase (random 4)
+                   (0 (number-to-string (random 20)))
+                   (1 (nth (random (length formulas)) formulas))
+                   (2 "")
+                   (_ "x"))))
+         (table (lambda ()
+                  (cl-loop repeat rows collect
+                           (cl-loop repeat cols collect (funcall pick)))))
+         sources)
+    (random "grid-table-sheets")
+    (setq sources (list (make-exc-default-data-source (make-list cols "") (funcall table))
+                        (make-exc-default-data-source (make-list cols "") (funcall table))))
+    (exc-workbook-create (list (cons "S1" (nth 0 sources))
+                                (cons "S2" (nth 1 sources))))
+    (cl-flet ((values (source)
+                (exc-formula-test--all-values (gethash :model source)))
+              (fresh ()
+                (let ((copies
+                       (mapcar (lambda (source)
+                                 (make-exc-default-data-source
+                                  (make-list cols "")
+                                  (cl-loop for row below rows collect
+                                           (cl-loop for col below cols collect
+                                                    (exc-get-raw-value-at
+                                                     source row col)))))
+                               sources)))
+                  (exc-workbook-create (list (cons "S1" (nth 0 copies))
+                                              (cons "S2" (nth 1 copies))))
+                  copies)))
+      (dotimes (_ 200)
+        (exc-set-raw-value-at (nth (random 2) sources) (random rows) (random cols)
+                               (funcall pick))
+        (let ((copies (fresh)))
+          (should (equal (mapcar #'values sources) (mapcar #'values copies))))))))
+
+(ert-deftest exc-formula-defined-names ()
+  (let* ((one (make-exc-default-data-source
+               '("" "") '(("Item" "Qty") ("a" "2") ("b" "3") ("=SUM(Qty)*Rate" ""))))
+         (two (make-exc-default-data-source
+               '("") '(("=INDEX(Qty,2)+VLOOKUP(\"b\",Table,2,FALSE)"))))
+         (workbook (exc-workbook-create (list (cons "Sheet1" one)
+                                               (cons "Two" two))))
+         (file (make-temp-file "exc-names" nil ".grid")))
+    (unwind-protect
+        (progn
+          (should (equal (exc-get-computed-value-at one 3 0) "#NAME?"))
+          (exc-workbook-define-name workbook "Qty" "=Sheet1!$B$2:$B$3")
+          (exc-workbook-define-name workbook "rate" "=Sheet1!$B$2")
+          (exc-workbook-define-name workbook "Table" "=Sheet1!$A$2:$B$3")
+          (should (equal (exc-get-computed-value-at one 3 0) 10))
+          (should (equal (exc-get-computed-value-at two 0 0) 6))
+          ;; An edit inside a name reaches the formulas using it.
+          (exc-set-raw-value-at one 1 1 "10")
+          (should (equal (exc-get-computed-value-at one 3 0) 130))
+          ;; Names follow their cells when lines move, and undo with them.
+          (let ((before (gethash :model one)))
+            (funcall (gethash :add-row one) one 1)
+            (should (equal (exc-workbook-name-definition workbook "QTY")
+                           "=Sheet1!$B$2:$B$4"))
+            (exc-workbook-model-restored one (gethash :model one) before)
+            (puthash :model before one)
+            (should (equal (exc-workbook-name-definition workbook "Qty")
+                           "=Sheet1!$B$2:$B$3")))
+          ;; Renaming the sheet renames it in the definitions.
+          (exc-workbook-rename-sheet workbook one "Data")
+          (should (equal (exc-workbook-name-definition workbook "Rate")
+                         "=Data!$B$2"))
+          (should (equal (exc-get-computed-value-at two 0 0) 6))
+          ;; Saved and read back.
+          (exc-persistence--save-to-file one file)
+          (let* ((loaded (exc-persistence-create-data-source-from-file file))
+                 (other (cadr (exc-workbook-sheets (exc-workbook-of loaded)))))
+            (should (equal (exc-workbook-names (exc-workbook-of loaded))
+                           (exc-workbook-names workbook)))
+            (should (equal (exc-get-computed-value-at other 0 0) 6)))
+          ;; A name can only be one that no reference takes.  It may
+          ;; share a function's name, as Excel allows: Rate is one.
+          (should (exc-calc-name-problem "TAX1"))
+          ;; Only starting like a cell, as Excel's own s2a1 does, is no harm.
+          (should-not (exc-calc-name-problem "Q1Sales"))
+          (should-not (exc-calc-name-problem "s2a1"))
+          ;; No sheet has a column GLOBAL, so Global1 is a name.
+          (should-not (exc-calc-name-problem "Global1"))
+          (should-not (exc-calc-name-problem "Sum"))
+          (should (exc-calc-name-problem "TRUE"))
+          (should-not (exc-calc-name-problem "Sales_2024"))
+          (exc-workbook-delete-name workbook "rate")
+          (should (equal (exc-get-computed-value-at one 3 0) "#NAME?")))
+      (delete-file file))))
+
+;; Tables a workbook file has, named by references such as T[Qty]
+(ert-deftest exc-formula-table-references ()
+  (let* ((one (make-exc-default-data-source
+               '("" "" "" "")
+               '(("Item" "Q1" "Price" "=SUM(Sales[Q1])")
+                 ("a" "2" "5" "=Sales[@Q1]*Sales[@Price]")
+                 ("b" "3" "7" "=Sales[@Q1]*2")
+                 ("Total" "=SUBTOTAL(109,[Q1])" "" "=ROWS(Sales[#All])")
+                 ("=Sales[[#Headers],[Price]]" "=COUNTA(Sales[[#Data],[#Totals],[Item]])"
+                  "=SUM(Sales[[Q1]:[Price]])" "=Sales[Nope]"))))
+         (workbook (exc-workbook-create (list (cons "One" one)))))
+    (setf (exc-workbook-tables workbook)
+          '(("Sales" "One" 0 0 3 2 1 1 ("Item" "Q1" "Price"))))
+    (exc-workbook-set-names workbook nil)
+    (should (equal (exc-get-computed-value-at one 0 3) 5))
+    (should (equal (exc-get-computed-value-at one 1 3) 10))
+    (should (equal (exc-get-computed-value-at one 2 3) 6))
+    (should (equal (exc-get-computed-value-at one 3 1) 5))
+    (should (equal (exc-get-computed-value-at one 3 3) 4))
+    (should (equal (exc-get-computed-value-at one 4 0) "Price"))
+    (should (equal (exc-get-computed-value-at one 4 1) 3))
+    (should (equal (exc-get-computed-value-at one 4 2) 17))
+    (should (equal (exc-get-computed-value-at one 4 3) "#REF!"))
+    ;; An edit inside the table reaches the formulas naming it.
+    (exc-set-raw-value-at one 1 1 "4")
+    (should (equal (exc-get-computed-value-at one 0 3) 7))
+    ;; What is inside the brackets names columns, so moving lines
+    ;; leaves it as it is.
+    (should (equal (exc-calc-shift-formula
+                    "=Sales[Q1]+B2+Sales[[#This Row],[Q1]]" 1 0)
+                   "=Sales[Q1]+B3+Sales[[#This Row],[Q1]]"))))
+
+;; A workbook file may give a name to one sheet only, define it by a
+;; formula, or leave its references unanchored, read as from A1.
+(ert-deftest exc-formula-names-as-a-workbook-file-has-them ()
+  (let* ((one (make-exc-default-data-source
+               '("" "" "") '(("1" "=Rate" "=Above") ("2" "=Two!Rate" "=Above")
+                             ("3" "=Twice" "=Loop"))))
+         (two (make-exc-default-data-source '("") '(("10") ("=Rate"))))
+         (workbook (exc-workbook-create (list (cons "One" one)
+                                               (cons "Two" two)))))
+    (setf (exc-workbook-local-names workbook)
+          '((("Two" . "Rate") . "=Two!$A$1")
+            (("One" . "Above") . "=One!$A1048576")))
+    (exc-workbook-set-names workbook '(("Rate" . "=One!$A$3")
+                                        ("Twice" . "=Rate*2")
+                                        ("Loop" . "=Loop+1")))
+    ;; The sheet's own name comes first; elsewhere the workbook's.
+    (should (equal (exc-get-computed-value-at one 0 1) 3))
+    (should (equal (exc-get-computed-value-at two 1 0) 10))
+    (should (equal (exc-get-computed-value-at one 1 1) 10))
+    ;; A name defined by a formula, and one defined by way of itself
+    (should (equal (exc-get-computed-value-at one 2 1) 6))
+    (should (equal (exc-get-computed-value-at one 2 2) "#NAME?"))
+    ;; $A1048576 read from row 2 is the row above it, going round
+    (should (equal (exc-get-computed-value-at one 1 2) 1))
+    (should (equal (exc-get-computed-value-at one 0 2) 0))
+    ;; It follows the cell it reads.
+    (exc-set-raw-value-at one 0 0 "5")
+    (should (equal (exc-get-computed-value-at one 1 2) 5))))
+
+;; A name read while another cell computes the same name is not read by
+;; way of itself: each cell reads it afresh.
+(ert-deftest exc-formula-name-read-down-a-chain ()
+  (let* ((one (make-exc-default-data-source
+               '("") '(("=Next") ("=Next") ("=Next") ("1"))))
+         (workbook (exc-workbook-create (list (cons "One" one)))))
+    (exc-workbook-set-names workbook '(("Next" . "=One!$A2+1")))
+    (exc-workbook-recalculate workbook t)
+    (should (equal (exc-get-computed-value-at one 0 0) 4))))
+
+;; A column each of whose cells reads the one below is computed from the
+;; top down, however long, as is a cycle longer than the formulas put on
+;; top of each other at a time.
+(ert-deftest exc-formula-long-chains-are-computed ()
+  (let* ((plain (make-exc-default-data-source
+                 '("") (append (cl-loop for row from 2 to 300
+                                        collect (list (format "=A%d+1" row)))
+                               '(("1")))))
+         (named (make-exc-default-data-source
+                 '("") (append (make-list 299 '("=Next")) '(("1")))))
+         (workbook (exc-workbook-create (list (cons "One" named))))
+         (cycle (make-exc-default-data-source
+                 '("") (cl-loop for row from 1 to 30
+                                collect (list (format "=A%d" (1+ (% row 30))))))))
+    (should (equal (exc-get-computed-value-at plain 0 0) 300))
+    (exc-workbook-set-names workbook '(("Next" . "=One!$A2+1")))
+    (exc-workbook-recalculate workbook t)
+    (should (equal (exc-get-computed-value-at named 0 0) 300))
+    ;; With less room, fewer formulas fit on top of each other.
+    (let ((max-lisp-eval-depth 400))
+      (exc-workbook-recalculate workbook t))
+    (should (equal (exc-get-computed-value-at named 0 0) 300))
+    (should (equal (exc-get-computed-value-at cycle 0 0) "#CYCLE!"))
+    (should (equal (exc-get-computed-value-at cycle 29 0) "#CYCLE!"))
+    ;; A cycle longer than formulas may go on top of each other
+    (let ((long (make-exc-default-data-source
+                 '("") (cl-loop for row from 1 to 300
+                                collect (list (format "=A%d+1"
+                                                      (1+ (% row 300))))))))
+      (dolist (row '(0 1 150 299))
+        (should (equal (exc-get-computed-value-at long row 0) "#CYCLE!"))))))
+
+(ert-deftest exc-formula-names-on-a-lone-sheet-are-saved ()
+  (let* ((source (make-exc-default-data-source
+                  '("" "") '(("x" "4") ("y" "=Four*2"))))
+         (workbook (exc-workbook-ensure source))
+         (file (make-temp-file "exc-lone-names" nil ".grid")))
+    (unwind-protect
+        (progn
+          (exc-workbook-define-name
+           workbook "Four"
+           (concat "=" (exc-calc-sheet-prefix (exc-workbook-sheet-name source))
+                   "$B$1"))
+          (should (equal (exc-get-computed-value-at source 1 1) 8))
+          (exc-persistence--save-to-file source file)
+          (let ((loaded (exc-persistence-create-data-source-from-file file)))
+            (should (equal (exc-get-computed-value-at loaded 1 1) 8))))
+      (delete-file file))))
+
+(ert-deftest exc-validations-follow-lines-and-files ()
+  (let* ((source (make-exc-default-data-source
+                  '("" "" "")
+                  '(("Size" "Pick" "Sizes") ("" "" "S") ("" "" "M") ("" "" "L"))))
+         (file (make-temp-file "exc-valid" nil ".grid")))
+    (unwind-protect
+        (progn
+          (exc-set-validations
+           source '((1 0 3 0 list ("Yes" "No")) (1 1 3 1 list "=$C$2:$C$4")))
+          (should (equal (exc-validation-options
+                          source (exc-validation-at source 2 1))
+                         '("S" "M" "L")))
+          (should (exc-validation-problem source 1 0 "maybe"))
+          (should-not (exc-validation-problem source 1 0 "yes"))
+          (should-not (exc-validation-problem source 1 1 "M"))
+          (should-not (exc-validation-problem source 0 0 "anything"))
+          ;; A row inserted above moves the ranges, and the list's cells.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (exc-validations source)
+                         '((2 0 4 0 list ("Yes" "No")) (2 1 4 1 list "=$C$3:$C$5"))))
+          (should (equal (exc-validation-options
+                          source (exc-validation-at source 3 1))
+                         '("S" "M" "L")))
+          ;; Sorting leaves them where they are.
+          (funcall (gethash :sort-by-column source) source 2 'ascending)
+          (should (equal (car (exc-validations source))
+                         '(2 0 4 0 list ("Yes" "No"))))
+          (exc-persistence--save-to-file source file)
+          (should (equal (exc-validations
+                          (exc-persistence-create-data-source-from-file file))
+                         (exc-validations source))))
+      (delete-file file))))
+
+;; The text table needs a data source and nothing else.
+(ert-deftest exc-tables-follow-inserted-and-deleted-lines ()
+  (let* ((data (make-exc-default-data-source
+                '("" "" "")
+                '(("Item" "Qty" "") ("a" "2" "") ("b" "3" "")
+                  ("" "" "=SUM(Table1[Qty])"))))
+         (workbook (exc-workbook-create (list (cons "Data" data))))
+         (table (lambda () (cdr (car (exc-workbook-tables workbook))))))
+    (setf (exc-workbook-tables workbook)
+          (list (list "Table1" "Data" 0 0 2 1 1 0 '("Item" "Qty"))))
+    (exc-workbook-recalculate workbook t)
+    (should (equal (exc-get-computed-value-at data 3 2) 5))
+    ;; A row above moves it; the table's name is no cell to move.
+    (let ((before (gethash :model data)))
+      (funcall (gethash :add-row data) data -1)
+      (should (equal (funcall table) '("Data" 1 0 3 1 1 0 ("Item" "Qty"))))
+      (should (equal (exc-get-raw-value-at data 4 2) "=SUM(Table1[Qty])"))
+      (should (equal (exc-get-computed-value-at data 4 2) 5))
+      ;; Undone, it goes back.
+      (exc-workbook-model-restored data (gethash :model data) before)
+      (puthash :model before data)
+      (should (equal (funcall table) '("Data" 0 0 2 1 1 0 ("Item" "Qty")))))
+    ;; A row inside makes it longer, a column inside wider, with a name
+    ;; in its header cell.
+    (funcall (gethash :add-row data) data 0)
+    (should (equal (funcall table) '("Data" 0 0 3 1 1 0 ("Item" "Qty"))))
+    (funcall (gethash :add-column data) data 1)
+    (should (equal (funcall table)
+                   '("Data" 0 0 3 2 1 0 ("Item" "Column1" "Qty"))))
+    (should (equal (exc-get-raw-value-at data 0 1) "Column1"))
+    (exc-set-raw-value-at data 1 2 "4")
+    (should (equal (exc-get-computed-value-at data 4 3) 9))
+    ;; Deleted lines inside make it smaller again.
+    (funcall (gethash :delete-column data) data 1)
+    (funcall (gethash :delete-row data) data 0)
+    (should (equal (funcall table) '("Data" 0 0 2 1 1 0 ("Item" "Qty"))))
+    (should (equal (exc-get-computed-value-at data 3 2) 5))
+    ;; Without its header row the table goes.
+    (funcall (gethash :delete-row data) data -1)
+    (should-not (exc-workbook-tables workbook))))
+
+(ert-deftest exc-text-follows-excel-format-codes ()
+  "TEXT writes numbers, fractions, times and dates as Excel does.
+The cases and what Excel made of them come from Apache POI's format
+test workbooks; a date's serial counts from 1904 where the workbook did."
+  (dolist (case
+           '(
+    (1900 12.34 "$#.#" "$12.3")
+    (1900 12.3 "\\a $#.00\" profit\"" "a $12.30 profit")
+    (1900 1234567 "#,##" "1,234,567")
+    (1900 1234567 ",0" ",1234567")
+    (1900 1234567 "0,000000" "1,234,567")
+    (1900 1234567 "?,?????????" "    1,234,567")
+    (1900 -1234567 "#,###" "-1,234,567")
+    (1900 -1234567 "0,0" "-1,234,567")
+    (1900 1234567 "0,0000000" "01,234,567")
+    (1900 -123456 "0,00000" "-123,456")
+    (1900 -1234567 "?,????????" "-  1,234,567")
+    (1900 -1234567 "?,??????" "-1,234,567")
+    (1900 -1234567 "0.#," "-1234.6")
+    (1900 -123.45 "0,0.00%%" "-1,234,500.00%%")
+    (1900 123456.789 "|#,e-#|" "|1e5|")
+    (1900 123456.789 "|0.0|e-|0|" "|1.2|e|5|")
+    (1900 123456.789 "|#e+#,|" "|1e+5|")
+    (1900 123456.789 "|0000.0000|e+|0|" "|0012.3457|e|+4|")
+    (1900 0.000123456789 "|#######.####|e+|#|" "|1234.5679|e|-7|")
+    (1900 0.00000123456789 "|####.####|e+|#|" "|123.4568|e|-8|")
+    (1900 0.0000123456789 "|?.?|e+|?|" "|1.2|e|-5|")
+    (1900 0 "|#|e-|#|" "|0|e|0|")
+    (1900 3.14159 "[h]:m:s.000" "75:23:53.376")
+    (1900 0.08546296296296296 "[mm]:ss.0" "123:04.0")
+    (1900 0 "\"It was \"[h]\" [yes, \"h\"] hours and \"mm:ss" "It was 0 [yes, 0] hours and 00:00")
+    (1900 -3.14159 "[s].000" "#VALUE!")
+    (1900 1 "[<10]#\" Wow\"" "1 Wow")
+    (1900 10 "[>10]#\" Big\"" "10")
+    (1900 1 "[<=10]#\" Wow\"" "1 Wow")
+    (1900 10 "[>=10]#\" Big\"" "10 Big")
+    (1900 1 "General" "1")
+    (1904 17816.607951388887 "d-m-y" "11-10-52")
+    (1904 17816.607951388887 "dddd-mmmm-yyyy" "Saturday-October-1952")
+    (1904 17816.607951388887 "hh:mm:ss a/p" "02:35:27 p")
+    (1904 17816.607951388887 "d-m-y h:m:s" "11-10-52 14:35:27")
+    (1904 1 "yyyy-mm-dd hh:mm:ss.000" "1904-01-02 00:00:00.000")
+    (1904 1.0032134017094 "yyyy-mm-dd hh:mm:ss.00" "1904-01-02 00:04:37.64")
+    (1900 23.75 "|#\\:#/#|" "|23:3/4|")
+    (1900 0 "|#\\:#/#|" "|0|")
+    (1900 -23.75 "|#-#-#\\:#/#|" "-|-2-3:3/4|")
+    (1900 1 "|#-#-#\\:#/#|" "|--1|")
+    (1900 0 "|#\\:#=/=#|" "|0|")
+    (1900 -23.75 "|#\\:#=/=?|" "-|23:3=/=4|")
+    (1900 23.75 "|#\\:#=/=0|" "|23:3=/=4|")
+    (1900 -1 "|#\\:#=/=0|" "-|1|")
+    (1900 1 "|#\\:? ?=/=#|" "|:1      |")
+    (1900 0 "|#\\:? ?=/=?|" "|:0      |")
+    (1900 23.75 "|#\\:? ?0#/000" "|2:3  03/004")
+    (1900 3.75 "|#_#/#|" "|15 /4|")))
+    (pcase-let ((`(,system ,value ,code ,expected) case))
+      (let ((exc-format-date-system system))
+        (should (equal (list value code
+                             (condition-case err
+                                 (exc-calc-format-code value code)
+                               (exc-calc-error (cadr err))))
+                       (list value code expected)))))))
+
+(ert-deftest exc-text-follows-excel-with-elapsed-times ()
+  "TEXT writes an elapsed time of any size, and refuses a negative one
+that has more fields than its hours, minutes or seconds.  The cases
+come from pycel's text test workbook."
+  (dolist (case '((71003160 "[hh]" "1704075840")
+                  (2958465 "[hh]" "71003160")
+                  (2958466 "h" "#VALUE!")
+                  (2958465 "h" "0")
+                  (-1 "[h]" "-24")
+                  (-1 "[h]:m" "#VALUE!")
+                  (0 "[h]:m" "0:0")
+                  (-1 "[m]:s" "#VALUE!")
+                  ;; A minus stands alone or not at all, so a fraction of
+                  ;; a second after [s] is #VALUE! for one.
+                  (-1 "[s].000" "#VALUE!")
+                  (0 "[s].000" "0.000")))
+    (pcase-let ((`(,value ,code ,expected) case))
+      (let ((model (exc-model-create 1 3 (list (list (number-to-string value) code
+                                                     "=TEXT(A1,B1)")))))
+        (should (equal (list value code (exc-model-get-computed-value model 0 2))
+                       (list value code expected)))))))
+
+(ert-deftest exc-text-reads-times-written-as-text ()
+  "TEXT reads a date or a time written as text before it writes it.
+The cases come from pycel's and IronCalc's TEXT test workbooks."
+  (dolist (case
+           '(;; A date and a time together.
+             ("2007-02-03 19:08:07.0123" "[h]" "938803")
+             ("2007-02-03 19:08:07.0123" "[m]" "56328188")
+             ("2007-02-03 19:08:07.0123" "[s]" "3379691287")
+             ;; The last of the fields may be up to 9999, and a fraction
+             ;; of it counts as seconds.
+             ("0:59:99" "#.#####" ".04212")
+             ("23:99" "#.#####" "1.02708")
+             ("23:9999" "#.#####" "7.90208")
+             ("0:0:9999" "#.#####" ".11573")
+             ("23:59:9999" "#.#####" "1.11503")
+             ("59:9999.0" "#.#####" ".1567")
+             ("23:59.012345" "#.#######" ".0166552")
+             ("59:9999.012345" "0.########" "0.15670153")
+             ("23:59." "#.###########" ".99930555556")
+             ;; Not a time, so it is left as it is.
+             ("60:99" "#.#####" "60:99")
+             ("24:99" "#.#####" "24:99")
+             ("23:10000" "#.#####" "23:10000")
+             ("23:60:9999" "#.#####" "23:60:9999")
+             ("23:59.:0" "#.###########" "23:59.:0")))
+    (pcase-let ((`(,value ,code ,expected) case))
+      (let ((model (exc-model-create 1 3 (list (list value code "=TEXT(A1,B1)")))))
+        (should (equal (list value code (exc-model-get-computed-value model 0 2))
+                       (list value code expected)))))))
+
+(ert-deftest exc-text-render-needs-no-buffer ()
+  (let* ((source (make-exc-default-data-source
+                  '("" "" "")
+                  '(("Item" "Qty" "Total") ("pear" "2" "=B2*3")
+                    ("wide" "" ""))))
+         (text (progn
+                 (exc-source-merge-cells source 2 0 2 2)
+                 (with-temp-buffer
+                   (let ((exc--data-source nil))
+                     (exc-text-render source))))))
+    (should (equal (split-string (substring-no-properties text) "\n" t)
+                   '("┌───┬───────┬───────┬───────┐"
+                     "│   │ A     │ B     │ C     │"
+                     "├───┼───────┼───────┼───────┤"
+                     "│1  │ Item  │ Qty   │ Total │"
+                     "├───┼───────┼───────┼───────┤"
+                     "│2  │ pear  │ 2     │ 6     │"
+                     "├───┼───────┴───────┴───────┤"
+                     "│3  │ wide                  │"
+                     "└───┴───────────────────────┘")))))
+
+(ert-deftest exc-text-writes-every-digit-and-literal-comma ()
+  "TEXT writes a whole number with no placeholder of its own, keeps a
+comma that is not a thousands separator, and takes a date code mixed
+with digits, or a quote that is never closed, for a mistake.  The cases
+come from pycel's and IronCalc's TEXT test workbooks."
+  (dolist (case
+           '(("1234.56" ".#" "1234.6")
+             ("1234.56" ".##0" "1234.560")
+             ("890123.456789" "#.#####00#0" "890123.45678900")
+             ("890123.456789" "0,x#.00.0" "89012x3.45.7")
+             ("890123.456789" "#x,0x#.00.0" "8901x,2x3.45.7")
+             ("890123.456789" "#x,0,#.00.0" "890,1x,23.45.7")
+             ("890123.456789" "#.###x,##" "890123.456x,79")
+             ("890123.456789" "#.###,x##" "890123.456x79")
+             ("890123.456789" "#,#.##.##,#" "890,123.45.679")
+             ("1234567890" "0,## ## ,##" "1,234,56 7,8 ,90")
+             ("1000000.555" "0 .  # ,0.00.0,00" "1000000 .  5 ,5.50.000")
+             ;; Letters that are no code of Excel's are written as they are.
+             ("0" "w;x;z@" "w")
+             ("-1" "w;x@" "-w")
+             ("X" "##.00;-  ##.0;\"ZERO\";->@<-@" "->X<-X")
+             ;; @ in a section that writes numbers is a mistake.
+             ("X" ";-  ##.0;\"ZERO\"@;\"X\"" "#VALUE!")
+             ;; So is a date code among digit placeholders, and a quote
+             ;; that is never closed.
+             ("41181" "mm###" "#VALUE!")
+             ("1.23" "#\"°F\"\"" "#VALUE!")
+             ;; A very small number takes an exponent.
+             ("-0.0000000025" "General" "-2.5E-09")))
+    (pcase-let ((`(,value ,code ,expected) case))
+      (let ((model (exc-model-create 1 3 (list (list value code "=TEXT(A1,B1)")))))
+        (should (equal (list value code (exc-model-get-computed-value model 0 2))
+                       (list value code expected)))))))
+
+(ert-deftest exc-dates-written-month-first ()
+  (should (= (exc-format-parse-date "10/13/2026") 46308))
+  (should (= (exc-format-parse-date "3/4/2026")
+             (exc-format-parse-date "2026-03-04")))
+  (should (= (exc-format-parse-date "10/13/2026 18:30")
+             (exc-format-parse-date "2026-10-13 18:30")))
+  ;; There is no month 13: day first is not guessed.
+  (should-not (exc-format-parse-date "13/10/2026"))
+  (should-not (exc-format-parse-date "2/30/2026"))
+  (should-not (exc-format-parse-date "10/13/26"))
+  (let ((source (make-exc-default-data-source '("" "") '(("" "=A1+1")))))
+    (exc-enter-value source 0 0 "3/4/2026")
+    (should (equal (exc-get-raw-value-at source 0 0) "46085"))
+    (should (equal (exc-get-display-value-at source 0 0) "03/04/2026"))
+    (should (equal (exc-get-computed-value-at source 0 1) 46086))))
+
+(ert-deftest exc-formula-errors-and-names-read-as-in-excel ()
+  ;; An error written in a formula, as a deleted reference leaves it,
+  ;; is that error; a word that calls nothing is an unknown name.
+  (should (equal (exc-formula-test--eval "=#REF!+1") "#REF!"))
+  (should (equal (exc-formula-test--eval "=IFERROR(#N/A,7)") 7))
+  (should (equal (exc-formula-test--eval "=IFERROR(Sheet2!#REF!,7)") 7))
+  (should (equal (exc-formula-test--eval "=\"#REF!\"") "#REF!"))
+  ;; Text a formula gives that spells an error stays text in its cell.
+  (let ((values (exc-formula-test--values
+                 '(("=\"#N/A\"" "=ISERROR(A1)" "=ISTEXT(A1)" "'#DIV/0!" "=UPPER(D1)"
+                    "=ISERROR(E1)" "=NA()" "=ISERROR(G1)")))))
+    (should (equal (nth 1 (car values)) nil))
+    (should (equal (nth 2 (car values)) t))
+    (should (equal (nth 5 (car values)) nil))
+    (should (equal (nth 7 (car values)) t)))
+  (should (equal (exc-formula-test--eval "=Rate+1") "#NAME?"))
+  (let* ((model (exc-model-create 3 2 '(("1" "=A3+A2") ("2" "") ("3" ""))))
+         (model (exc-model-delete-row model 1)))
+    (should (equal (exc-model-get-computed-value model 0 1) "#REF!"))))
+
+(ert-deftest exc-formula-criteria-take-wildcards ()
+  (let ((cells '("apple" "b" "avocado" "10" "" "*" "12")))
+    (cl-flet ((count (criteria)
+                (apply #'exc-formula-test--eval
+                       (format "=COUNTIF(B1:H1,%s)" criteria) cells)))
+      (should (= (count "\"a*\"") 2))
+      (should (= (count "\"A?PLE\"") 1))
+      (should (= (count "\"<>a*\"") 5))
+      (should (= (count "\"~*\"") 1))
+      (should (= (count "\">=10\"") 2))
+      (should (= (count "10") 1))
+      (should (= (count "\"\"") 1))
+      (should (= (count "\"<>\"") 6))))
+  ;; An empty cell given as the criterion means 0, not an empty cell.
+  (should (= (exc-formula-test--eval "=COUNTIF(B1:E1,F1)" "0" "" "x" "") 1))
+  ;; "=23" takes the text "23" too, but "<>23" leaves out only the number.
+  (should (= (exc-formula-test--eval "=COUNTIF(B1:C1,\"=23\")" "23" "'23") 2))
+  (should (= (exc-formula-test--eval "=COUNTIF(B1:C1,\"<>23\")" "23" "'23") 1))
+  ;; A whole column has every row of the sheet, and a whole row every
+  ;; column, though the sheet has fewer.
+  (cl-flet ((eval (formula) (exc-formula-test--eval formula "x" "1" "")))
+    (should (= (eval "=ROWS(B:B)") 1048576))
+    (should (= (eval "=COLUMNS(1:1)") 16384))
+    (should (= (eval "=COUNTIF(B:B,\"<>x\")") 1048575))
+    (should (= (caar (exc-formula-test--values
+                      '(("=COUNTIF(2:2,\"<>x\")") ("x" "1"))))
+               16383))
+    (should (= (eval "=COUNTIFS(B:B,\"\",C:C,\"\")") 1048575))
+    (should (= (eval "=COUNTBLANK(B:B)") 1048575))
+    (should (= (eval "=SUMIF(B:B,\"x\",C:C)") 1))
+    (should (= (eval "=INDEX(COUNTIF(B:B,{\"x\";\"<>x\"}),2)") 1048575)))
+  ;; A comparison with nothing to compare with meets no cell.
+  (dolist (op '(">" ">=" "<" "<="))
+    (should (= (exc-formula-test--eval (format "=COUNTIF(B1:D1,\"%s\")" op)
+                                              "1" "a" "")
+               0))))
+
+(ert-deftest exc-formula-countif-takes-many-criteria ()
+  ;; Each criterion of an array counts on its own.
+  (cl-flet ((first-value (formula)
+              (car (car (exc-formula-test--values
+                         `((,formula "x") ("" "") ("" "x") ("" "y")))))))
+    (should (equal (first-value "=SUMPRODUCT((B1:B4<>\"\")/COUNTIF(B1:B4,B1:B4&\"\"))")
+                   2))
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),1)") 2))
+    ;; B:B reaches the sheet's last row, whose cells are empty.
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),2)") 1048573))
+    (should (equal (first-value "=INDEX(COUNTIF(B:B,{\"x\";\"\";\"z\"}),3)") 0))
+    ;; So does each of COUNTIFS's and SUMIFS's.
+    (should (equal (first-value "=SUM(COUNTIFS(B1:B4,{\"x\",\"y\"}))") 3))
+    (should (equal (first-value "=SUM(SUMIFS(C1:C4,B1:B4,{\"x\",\"y\"}))") 0))
+    (should (equal (first-value "=SUM(COUNTIFS(B1:B4,\"x\",B1:B4,{\"x\",\"y\"}))") 2))
+    ;; A reference that is lost is the answer where one is wanted.
+    (should (equal (first-value "=COUNTIF(#REF!,1)") "#REF!"))
+    (should (equal (first-value "=IFNA(MATCH(1,#REF!,0),0)") "#REF!"))
+    (should (equal (first-value "=COUNTIF(B1:B4,#N/A)") 0))
+    (should (equal (first-value "=COUNTA(#REF!)") 1))
+    (should (equal (first-value "=COUNTBLANK(#REF!)") "#REF!"))
+    (should (equal (first-value "=ISREF(#REF!)") nil))
+    (should (equal (first-value "=IFERROR(VLOOKUP(1,#REF!,1,0),\"x\")") "x"))))
+
+(ert-deftest exc-formula-whole-numbers-divide-as-numbers ()
+  ;; Numbers typed whole are no whole-number arithmetic: 6/10 is 0.6.
+  (cl-flet ((near (formula expected)
+              (let ((value (exc-formula-test--eval formula)))
+                (should (equal (list formula (and (numberp value)
+                                                  (< (abs (- value expected)) 1e-9)))
+                               (list formula t))))))
+    (near "=T.DIST(2,6,TRUE)" 0.9537868442341624)
+    (near "=T.DIST(2,6,FALSE)" 0.06403612261840969)
+    (near "=T.DIST.2T(1,2)" 0.4226497308103734)
+    (near "=F.DIST(2,6,8,TRUE)" 0.8208)
+    (near "=F.DIST.RT(2,5,6)" 0.21167432749937592)
+    (near "=GAMMA.DIST(1,2,3,FALSE)" 0.07961459006375433)
+    (near "=EFFECT(1,2)" 1.25)
+    (near "=PERCENTILE.INC({2,1,4},1)" 4)
+    (near "=BITAND(6,3)" 2)
+    (near "=HOUR(1)" 0))
+  (should (equal (exc-formula-test--eval "=GAMMA(-1)") "#NUM!")))
+
+(ert-deftest exc-formula-pairs-match-by-count ()
+  ;; Excel pairs values in reading order, whatever shape holds them.
+  (let ((rows '(("1" "4" "5" "6") ("2" "" "" "") ("3" "x" "" ""))))
+    (cl-flet ((value (formula)
+                (let ((model (exc-model-create 3 4 rows)))
+                  (exc-model-set-raw-value model 2 3 formula)
+                  (exc-model-get-computed-value model 2 3))))
+      (should (= (value "=SUMX2PY2(A1:A3,B1:D1)") 91))
+      (should (= (value "=CORREL(A1:A3,B1:D1)") 1))
+      (should (equal (value "=SUMX2MY2(A1:A2,B1:B3)") "#N/A"))
+      (should (equal (value "=SUMXMY2(B2:B3,C2:C3)") "#DIV/0!")))))
+
+(ert-deftest exc-formula-forecasts-by-exponential-smoothing ()
+  (cl-flet ((value (rows formula)
+              (let ((model (exc-model-create (length rows) 3
+                                              (mapcar (lambda (row) (append row '("")))
+                                                      rows))))
+                (exc-model-set-raw-value model 0 2 formula)
+                (exc-model-get-computed-value model 0 2))))
+    (let ((line (cl-loop for x from 1 to 10
+                         collect (list (number-to-string x)
+                                       (number-to-string (+ 3 (* 2 x))))))
+          ;; A rise of 1 a step, and a season of four steps.
+          (seasons (cl-loop for x from 1 to 16
+                            collect (list (number-to-string x)
+                                          (number-to-string
+                                           (+ 10 x (nth (% (1- x) 4) '(0 5 -3 2))))))))
+      ;; A straight line goes on straight, with no doubt.
+      (should (= (value line "=FORECAST.ETS(12,B1:B10,A1:A10)") 27))
+      (should (= (value line "=FORECAST.ETS(11.5,B1:B10,A1:A10)") 26))
+      (should (= (value line "=FORECAST.ETS.CONFINT(12,B1:B10,A1:A10)") 0))
+      (should (= (value line "=FORECAST.ETS.SEASONALITY(B1:B10,A1:A10)") 0))
+      (should (= (value line "=FORECAST.ETS.STAT(B1:B10,A1:A10,8)") 1))
+      ;; The season is found, and carried on.
+      (should (= (value seasons "=FORECAST.ETS.SEASONALITY(B1:B16,A1:A16)") 4))
+      (should (< (abs (- (value seasons "=FORECAST.ETS(17,B1:B16,A1:A16)") 27)) 1e-9))
+      (should (< (abs (- (value seasons "=FORECAST.ETS(18,B1:B16,A1:A16)") 33)) 1e-9))
+      (should (< (abs (- (value seasons "=FORECAST.ETS(19,B1:B16,A1:A16,4)") 26)) 1e-9))
+      ;; A missing step is filled in from the points beside it.
+      (should (= (value (append (cl-subseq line 0 3) (cl-subseq line 4))
+                        "=FORECAST.ETS(12,B1:B9,A1:A9)")
+                 27))
+      (should (equal (value line "=FORECAST.ETS(12,B1:B10,A1:A9)") "#N/A"))
+      (should (equal (value line "=FORECAST.ETS(5,B1:B10,A1:A10)") "#NUM!"))
+      (should (equal (value line "=FORECAST.ETS(12,B1:B10,A1:A10,1.5)") "#NUM!"))
+      (should (equal (value line "=FORECAST.ETS.CONFINT(12,B1:B10,A1:A10,1)") "#NUM!"))
+      (should (equal (value (append (cl-subseq line 0 9) '(("10.5" "24")))
+                            "=FORECAST.ETS(12,B1:B10,A1:A10)")
+                     "#NUM!")))
+    ;; Daily values Excel forecasts at 6696.40; this fit is LibreOffice's.
+    (let ((rows (cl-loop for x from 43888
+                         for y in '(403 531 615 984 1254 1520 1820 2251 2612 3420 4189 5469)
+                         collect (list (number-to-string x) (number-to-string y)))))
+      (should (< (abs (- (value rows "=FORECAST.ETS(43900,B1:B12,A1:A12,1,1)")
+                         6642.539397076179))
+                 1e-6))
+      (let ((first (value rows "=FORECAST.ETS.CONFINT(43900,B1:B12,A1:A12,0.95,1,1)"))
+            (second (value rows "=FORECAST.ETS.CONFINT(43901,B1:B12,A1:A12,0.95,1,1)")))
+        (should (< 400 first 500))
+        (should (< (* 1.8 first) second (* 2.3 first)))))))
+
+(ert-deftest exc-formula-unions-spills-and-nested-totals ()
+  (let ((rows '(("1" "2" "=SEQUENCE(3)" "")
+                ("3" "=AGGREGATE(9,0,A1:A2)" "" "")
+                ("=SUBTOTAL(9,A1:A2)" "" "" ""))))
+    (cl-flet ((value (formula)
+                (let ((model (exc-model-create 3 4 rows)))
+                  (exc-model-set-raw-value model 1 3 formula)
+                  (exc-model-get-computed-value model 1 3))))
+      ;; Each area of a union counts once; a union is no single value.
+      (should (= (value "=SUM((A1,B1:B2))") 7))
+      (should (equal (value "=(A1,B1)") "#VALUE!"))
+      ;; A# is the cells the formula in A spills over; only a formula
+      ;; spills.
+      (should (= (value "=ROWS(C1#)") 3))
+      (should (= (value "=ROWS(C1:C2 C1#)") 2))
+      (should (equal (value "=ROWS(A1#)") "#REF!"))
+      (should (equal (value "=COLUMNS(#N/A)") "#N/A"))
+      ;; Options 0 to 3 leave out other totals, 4 to 7 keep them.
+      (should (= (value "=AGGREGATE(9,0,A1:B3)") 6))
+      (should (= (value "=AGGREGATE(9,4,A1:B3)") 14))
+      ;; FORMULATEXT shows the operators the file stores as functions.
+      (should (equal (value "=FORMULATEXT(B2)") "=AGGREGATE(9,0,A1:A2)")))
+    (should (equal (exc-calc-excel-formula-text "=SUM(ANCHORARRAY(C1))+SINGLE(A1:A3)")
+                   "=SUM(C1#)+@A1:A3"))
+    (should (equal (exc-calc-excel-formula-text "=\"SINGLE(A1)\"")
+                   "=\"SINGLE(A1)\""))))
+
+(ert-deftest exc-sort-keeps-frozen-rows-in-place ()
+  (let ((model (exc-model-create 4 1 '(("Title") ("Header") ("b") ("a")))))
+    (exc-model-set-frozen model 2 0)
+    (let ((sorted (exc-model-sort-by-column model 0 'ascending t)))
+      (should (equal (exc-model-get-all-raw-values sorted)
+                     '(("Title") ("Header") ("a") ("b")))))))
+
+(ert-deftest exc-chart-over-no-data-is-empty ()
+  (require 'exc-chart)
+  (should (equal (exc-chart-columnplot nil nil nil) ""))
+  (should (stringp (exc-chart--lineplot-render nil nil nil))))
+
+(ert-deftest exc-hidden-lines-follow-structure-and-files ()
+  (let* ((source (make-exc-default-data-source
+                  '("K" "V" "W")
+                  '(("K" "V" "W") ("c" "1" "x") ("a" "2" "y") ("b" "3" "z"))))
+         (file (make-temp-file "exc-hidden" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Row 1 (c) and column W are hidden.
+          (exc-set-hidden source '(1) '(2))
+          (should (equal (exc-hidden source) '((1) 2)))
+          ;; A row inserted above pushes the hidden row down.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (car (exc-hidden source)) '(2)))
+          ;; The hidden row travels with a sort.
+          (funcall (gethash :sort-by-column source) source 0 'ascending)
+          (let ((row (car (car (exc-hidden source)))))
+            (should (equal (exc-get-raw-value-at source row 0) "c")))
+          ;; Deleting the hidden column forgets it.
+          (funcall (gethash :delete-column source) source 2)
+          (should (equal (cdr (exc-hidden source)) nil))
+          (exc-set-hidden source (car (exc-hidden source)) '(1))
+          (exc-persistence--save-to-file source file)
+          (let ((loaded (exc-persistence-create-data-source-from-file
+                         file)))
+            (should (equal (exc-hidden loaded)
+                           (exc-hidden source)))))
+      (delete-file file))))
+
+;; A row a filter left out is hidden under the filter's header.
+(ert-deftest exc-subtotal-leaves-out-the-rows-a-filter-left-out ()
+  (let* ((source (make-exc-default-data-source
+                  '("A" "B")
+                  '(("V" "") ("1" "") ("2" "") ("3" "") ("4" "") ("5" "")
+                    ("" "=SUBTOTAL(9,A2:A6)") ("" "=SUBTOTAL(109,A2:A6)"))))
+         (file (make-temp-file "exc-filtered" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Rows 2 and 4 are hidden; the filter over A1:A4 hid row 2.
+          (exc-set-hidden source '(2 4) nil)
+          (exc-set-filters source '((0 0 3 0)))
+          (should (equal (exc-model-filtered-rows (gethash :model source)) '(2)))
+          (should (equal (exc-get-computed-value-at source 6 1) 13))
+          (should (equal (exc-get-computed-value-at source 7 1) 9))
+          ;; The range grows with a row inserted inside it.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (exc-filters source) '((0 0 4 0))))
+          (should (equal (car (exc-hidden source)) '(3 5)))
+          (exc-persistence--save-to-file source file)
+          (let ((loaded (exc-persistence-create-data-source-from-file
+                         file)))
+            (should (equal (exc-filters loaded) '((0 0 4 0))))
+            (should (equal (exc-get-computed-value-at loaded 7 1) 13))))
+      (delete-file file))))
+
+(ert-deftest exc-chart-data-reads-a-range-like-a-spreadsheet ()
+  "A first row and column of text name the series and the categories."
+  (let* ((cells [["" "Q1" "Q2" "Q3"] ["North" 1 2 3] ["South" 4 5 6]])
+         (value (lambda (r c) (aref (aref cells r) c)))
+         (label (lambda (r c) (format "%s" (aref (aref cells r) c)))))
+    ;; Wider than tall: the series run along the rows.
+    (let ((data (exc-chart-svg-data '(0 0 2 3) value label)))
+      (should (eq (plist-get data :by) 'rows))
+      (should (equal (plist-get data :categories) '("Q1" "Q2" "Q3")))
+      (should (equal (plist-get data :series) '(("North" 1 2 3) ("South" 4 5 6))))
+      (should (equal (plist-get data :ranges) '((1 1 1 3) (2 1 2 3))))
+      (should (equal (plist-get data :category-range) '(0 1 0 3))))
+    ;; Switched, the columns are the series.
+    (let ((data (exc-chart-svg-data '(0 0 2 3) value label 'columns)))
+      (should (equal (plist-get data :categories) '("North" "South")))
+      (should (equal (plist-get data :series) '(("Q1" 1 4) ("Q2" 2 5) ("Q3" 3 6))))
+      (should (equal (plist-get data :ranges) '((1 1 2 1) (1 2 2 2) (1 3 2 3))))
+      (should (equal (plist-get data :category-range) '(1 0 2 0))))
+    ;; Numbers alone give numbered categories and series.
+    (let ((data (exc-chart-svg-data '(1 1 2 2) value label)))
+      (should (equal (plist-get data :categories) '("1" "2")))
+      (should (equal (plist-get data :series) '(("Series 1" 1 4) ("Series 2" 2 5))))
+      (should-not (plist-get data :category-range)))
+    (should (equal (exc-chart-svg-parse-range "$B$2:A1") '(0 0 1 1)))
+    (should-not (exc-chart-svg-parse-range "Sheet2!A1:B2"))
+    ;; Every type draws, and a view shows only part of the drawing.
+    (dolist (type (mapcar #'car exc-chart-svg-types))
+      (should (string-prefix-p
+               "<svg" (exc-chart-svg-render
+                       (list :type type :title "T")
+                       (exc-chart-svg-data '(0 0 2 3) value label) 400 300))))
+    (should (string-match-p
+             "viewBox=\"10 20 100 50\""
+             (exc-chart-svg-render '(:type column) '(:series nil) 400 300
+                                    nil nil '(10 20 100 50))))))
+
+(ert-deftest exc-charts-follow-their-cells ()
+  "A chart's anchor and range move with the lines and stay in the file."
+  (let* ((source (make-exc-default-data-source
+                  '("K" "V" "W")
+                  '(("K" "V" "W") ("a" "1" "2") ("b" "3" "4") ("c" "5" "6"))))
+         (file (make-temp-file "exc-chart" nil ".grid"))
+         (chart (lambda () (car (exc-charts source)))))
+    (unwind-protect
+        (progn
+          (exc-set-charts
+           source (list (list :anchor '(1 . 2) :size '(30 . 10) :type 'column
+                              :range "A1:C4" :by nil :title "T"
+                              :offset '(2.5 . 0))))
+          ;; A row added above the anchor pushes it and the range down.
+          (funcall (gethash :add-row source) source 0)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 2)))
+          (should (equal (plist-get (funcall chart) :range) "A1:C5"))
+          (funcall (gethash :add-column source) source 0)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
+          (should (equal (plist-get (funcall chart) :range) "B1:D5"))
+          ;; Within its cell it keeps its place.
+          (should (equal (plist-get (funcall chart) :offset) '(2.5 . 0)))
+          ;; Deleting the anchor's row leaves the chart where it was.
+          (funcall (gethash :delete-row source) source 1)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
+          (should (equal (plist-get (funcall chart) :range) "B1:D4"))
+          ;; A sort leaves charts in place.
+          (funcall (gethash :sort-by-column source) source 1 'descending)
+          (should (equal (plist-get (funcall chart) :anchor) '(2 . 3)))
+          (exc-persistence--save-to-file source file)
+          (should (equal (exc-charts
+                          (exc-persistence-create-data-source-from-file
+                           file))
+                         (exc-charts source)))
+          ;; A malformed chart in a file is left out.
+          (with-temp-file file
+            (prin1 '(grid-table-file :version 4 :headers ("A") :rows (("1"))
+                                     :charts ((:anchor (0 . 0) :size (9 . 9)
+                                               :type nonsense :range "A1")
+                                              (:anchor (0 . 0) :size (9 . 9)
+                                               :type bar :range "A1"
+                                               :offset ("2" . 0))
+                                              (:anchor (0 . 0) :size (9 . 9)
+                                               :type pie :range "A1")))
+                   (current-buffer)))
+          (should (equal (mapcar (lambda (c) (plist-get c :type))
+                                 (exc-charts
+                                  (exc-persistence-create-data-source-from-file
+                                   file)))
+                         '(pie))))
+      (delete-file file))))
+
+;;;----------------------------------------------------------------------
+;;; ARRAYTOTEXT, VALUETOTEXT and BAHTTEXT
+;;;----------------------------------------------------------------------
+
+(defun exc-formula-test--text-row (empty-text)
+  "Return the C..Q values of a row of the text sample; EMPTY-TEXT is I."
+  (list "" "" "0" "1.9" "2.3" "10" "-1" "" empty-text "TRUE"
+        "=#VALUE!" "=#N/A" "=#DIV/0!" "=#NAME?" "=#NULL!" "=#NUM!"
+        "=#REF!"))
+
+(defun exc-formula-test--text-model ()
+  "Return a model with the C..Q sample values in rows 3 and 4."
+  (exc-model-create
+   4 17
+   (list (make-list 17 "")
+         (make-list 17 "")
+         (exc-formula-test--text-row "1987-08-26")
+         (exc-formula-test--text-row "=\"\""))))
+
+(defun exc-formula-test--text-call (formula)
+  "Return FORMULA's value in A1 of the C..Q sample model."
+  (let ((model (exc-formula-test--text-model)))
+    (exc-model-set-raw-value model 0 0 formula)
+    (exc-model-get-computed-value model 0 0)))
+
+(ert-deftest exc-arraytotext-writes-values-as-text ()
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(C3:D4,0)")
+                 "0, 1.9, 0, 1.9"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(G3,0)")
+                 "-1"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(H3:H4,0)")
+                 ", "))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(J3:K3,0)")
+                 "TRUE, #VALUE!"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(C4:D4,2)")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(D3:E4,1)")
+                 "{1.9,2.3;1.9,2.3}"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(E3:E4,1)")
+                 "{2.3;2.3}"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(I4:J4,1)")
+                 "{\"\",TRUE}"))
+  ;; A single blank cell is not an array constant.
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(H4,1)")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(K4:L4,0.9)")
+                 "#VALUE!, #N/A"))
+  (should (equal (exc-formula-test--text-call "=ARRAYTOTEXT(C4:Q4,1)")
+                 (concat "{0,1.9,2.3,10,-1,,\"\",TRUE,#VALUE!,#N/A,"
+                         "#DIV/0!,#NAME?,#NULL!,#NUM!,#REF!}")))
+  ;; A range as the format takes its first value, 0 here.
+  (should (equal (exc-formula-test--text-call
+                  "=ARRAYTOTEXT(C3:J3,C3:Q3)")
+                 "0, 1.9, 2.3, 10, -1, , 1987-08-26, TRUE")))
+
+(ert-deftest exc-valuetotext-writes-one-value-as-text ()
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(1.9,\"0\")")
+                 "1.9"))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(-1,FALSE)")
+                 "-1"))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(\"ciao3\",H3)")
+                 "ciao3"))
+  (should (equal (exc-formula-test--text-call
+                  "=VALUETOTEXT(\"1987-08-26\",1)")
+                 "\"1987-08-26\""))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(TRUE,1)")
+                 "TRUE"))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(#N/A,0)")
+                 "#N/A"))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(1,-1)")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(1,\"a\")")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--text-call "=VALUETOTEXT(1,2)")
+                 "#VALUE!")))
+
+(ert-deftest exc-bahttext-writes-thai-amounts ()
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(0)")
+                 "ศูนย์บาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(157)")
+                 "หนึ่งร้อยห้าสิบเจ็ดบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(65)")
+                 "หกสิบห้าบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(65.8)")
+                 "หกสิบห้าบาทแปดสิบสตางค์"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(-1)")
+                 "ลบหนึ่งบาทถ้วน"))
+  ;; Tens and units follow the usual Thai rules.
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(11)")
+                 "สิบเอ็ดบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(21)")
+                 "ยี่สิบเอ็ดบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(101)")
+                 "หนึ่งร้อยหนึ่งบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(1000000)")
+                 "หนึ่งล้านบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(1000001)")
+                 "หนึ่งล้านหนึ่งบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(H3)")
+                 "ศูนย์บาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(TRUE)")
+                 "หนึ่งบาทถ้วน"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(\"abc\")")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(#N/A)")
+                 "#N/A"))
+  (should (equal (exc-formula-test--text-call "=BAHTTEXT(C3:D4)")
+                 "ศูนย์บาทถ้วน")))
+
+(ert-deftest exc-formula-date-arguments-fail-as-excel-has-them ()
+  ;; A date that is no date fails once all the arguments are read, so a
+  ;; later argument's failure wins.  The Analysis ToolPak functions check
+  ;; each as they read it, and take no TRUE or FALSE.  B1 holds "abc".
+  (dolist (case '(("=WEEKDAY(-1,\"x\")" . "#VALUE!")
+                  ("=WEEKDAY(-1,TRUE)" . "#NUM!")
+                  ("=WEEKDAY(\"1/1/10000\",1/0)" . "#VALUE!")
+                  ("=WEEKNUM(-1,\"x\")" . "#NUM!")
+                  ("=WEEKNUM(TRUE)" . "#VALUE!")
+                  ("=WEEKNUM(1,TRUE)" . "#VALUE!")
+                  ("=EDATE(TRUE,1)" . "#VALUE!")
+                  ("=DEC2BIN(TRUE)" . "#VALUE!")
+                  ("=YEARFRAC(1/0,1,9)" . "#NUM!")
+                  ("=YEARFRAC(2958466,1)" . "#NUM!")
+                  ("=YEARFRAC(DATE(2024,2,29),DATE(2025,2,28))" . 1)
+                  ("=NETWORKDAYS(1,10,B1)" . "#VALUE!")
+                  ("=NETWORKDAYS(1,10,-2)" . "#NUM!")
+                  ("=NETWORKDAYS.INTL(1,10,\"1111111\")" . 0)
+                  ("=WORKDAY.INTL(1,10,\"1111111\")" . "#VALUE!")))
+    (should (equal (exc-formula-test--eval (car case) "abc")
+                   (cdr case)))))
+
+(ert-deftest exc-formula-xlookup-finds-an-empty-cell-for-a-blank ()
+  ;; XLOOKUP and XMATCH match a blank with an empty cell; MATCH does not.
+  (should (equal (exc-formula-test--values
+                  '(("=XLOOKUP(B1,C1:C3,D1:D3,\"none\")" "" "1" "a")
+                    ("=XMATCH(B1,C1:C3)" "" "" "b")
+                    ("=MATCH(B1,C1:C3,0)" "" "3" "c")))
+                 '(("b" "" "1" "a") (2 "" "" "b") ("#N/A" "" "3" "c")))))
+
+(ert-deftest exc-formula-xlookup-nearest-crosses-kinds ()
+  ;; Numbers sort below text, text below FALSE and TRUE; blanks and
+  ;; errors are passed over.  B1:B5 hold 2, 5, TRUE, "ala" and #DIV/0!.
+  (dolist (case '(("=XLOOKUP(10,B1:B5,C1:C5,,1)" . "g")
+                  ("=XLOOKUP(\"qwerty\",B1:B5,C1:C5,,1)" . "f")
+                  ("=XLOOKUP(FALSE,B1:B5,C1:C5,,-1)" . "g")
+                  ("=XLOOKUP(1,B1:B5,C1:C5,,-1)" . "#N/A")
+                  ("=XLOOKUP(TRUE,B1:B6,C1:C6,,1)" . "f")
+                  ("=XLOOKUP(\"zz\",B1:B6,C1:C6,,1)" . "f")))
+    (should (equal (car (car (exc-formula-test--values
+                              `((,(car case) "2" "a") ("" "5" "b")
+                                ("" "TRUE" "f") ("" "ala" "g")
+                                ("" "=1/0" "h") ("" "" "i")))))
+                   (cdr case)))))
+
+(ert-deftest exc-formula-xmatch-by-halves-finds-as-excel-does ()
+  ;; Of equal values, the search by halves finds the first in values
+  ;; sorted up and the last in values sorted down; the next smaller one
+  ;; in values sorted down is the first of its run.
+  (dolist (case '(("=XMATCH(5,{1,5,5,5,9},0,2)" . 2)
+                  ("=XMATCH(5,{9,5,5,5,1},0,-2)" . 4)
+                  ("=XMATCH(6,{1,5,5,5,9},1,2)" . 5)
+                  ("=XMATCH(6,{9,5,5,5,1},-1,-2)" . 2)
+                  ("=XMATCH(0,{1,5,9},-1,2)" . "#N/A")))
+    (should (equal (exc-formula-test--eval (car case)) (cdr case)))))
+
+(ert-deftest exc-formula-xmatch-nearest-takes-a-blank-above-all ()
+  ;; B1 is blank: the next smaller value is the largest, as Excel sorts.
+  (should (equal (exc-formula-test--eval
+                  "=XMATCH(B1,{FALSE,2.1,TRUE,4.1},-1)" "") 3))
+  (should (equal (exc-formula-test--eval
+                  "=XMATCH(B1,{\"a\",2.1,\"c\",4.1},-1)" "") 3))
+  (should (equal (exc-formula-test--eval
+                  "=XMATCH(B1,{-1.1,2.1,3.1,4.1},1)" "") "#N/A")))
+
+(ert-deftest exc-formula-xmatch-halves-values-not-sorted-as-excel-does ()
+  ;; The middle of the first and last value, both searched, rounded down
+  (dolist (case '(("=XMATCH(4.1,{\"\",\"a\",1.1,4.1},0,2)" . "#N/A")
+                  ("=XMATCH(4.1,{\"c\",4.1,\"a\",1.1},0,2)" . 2)
+                  ("=XMATCH(4.1,{\"\",4.1,\"a\",1.1},1,2)" . 2)
+                  ("=XMATCH(4.1,{TRUE,4.1,FALSE,\"c\"},-1,-2)" . 2)
+                  ("=XMATCH(FALSE,{\"a\",2,FALSE,4.1,3,2.1,2,FALSE,9,9},-1,2)" . 8)))
+    (should (equal (exc-formula-test--eval (car case)) (cdr case)))))
+
+(ert-deftest exc-formula-xlookup-takes-no-wildcards-by-halves ()
+  (should (equal (exc-formula-test--eval "=XMATCH(\"b\",{\"a\",\"b\"},2,2)")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=XMATCH(\"b*\",{\"a\",\"bc\"},2)")
+                 2)))
+
+(ert-deftest exc-formula-xmatch-wants-one-row-or-column ()
+  (should (equal (exc-formula-test--eval "=XMATCH(2,{1,2;3,4})") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=XLOOKUP(2,{1,2;3,4},{1,2;3,4})")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=MATCH(2,{1,2;3,4},0)") "#N/A")))
+
+(ert-deftest exc-formula-vstack-and-hstack-fill-out-with-na ()
+  ;; A shorter array is filled out with #N/A, as Excel fills it.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=VSTACK({1;2},{3;4;5})" 5 1))
+                 '((1) (2) (3) (4) (5))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=VSTACK({1,2},{3})" 2 2))
+                 '((1 2) (3 "#N/A"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=HSTACK({1;2},{3;4;5})" 3 2))
+                 '((1 3) (2 4) ("#N/A" 5)))))
+
+(ert-deftest exc-formula-tocol-and-torow-read-a-line-first ()
+  ;; A row after a row, or a column after a column with scan_by_column.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TOCOL({1,2;3,4})" 4 1))
+                 '((1) (2) (3) (4))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TOCOL({1,2;3,4},0,TRUE)" 4 1))
+                 '((1) (3) (2) (4))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TOROW({1;2;3})" 1 3))
+                 '((1 2 3))))
+  ;; IGNORE leaves out 1 blanks, 2 error values, 3 both.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TOCOL({1,NA();3,4},2)" 3 1))
+                 '((1) (3) (4))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TOCOL({1,NA();3,4},3)" 3 1))
+                 '((1) (3) (4))))
+  (let ((sheet (exc-formula-test--values
+                '(("=ROWS(TOCOL(B1:B2))" "=1") ("" "")))))
+    (should (equal (car sheet) '(2 1)))
+    (should (equal (car (exc-formula-test--values
+                         '(("=ROWS(TOCOL(B1:B2,1))" "=1") ("" ""))))
+                   '(1 1)))))
+
+(ert-deftest exc-formula-wraprows-and-wrapcols-wrap-a-vector ()
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=WRAPROWS({1,2,3,4,5},2)" 3 2))
+                 '((1 2) (3 4) (5 "#N/A"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=WRAPROWS({1,2,3},2,\"x\")" 2 2))
+                 '((1 2) (3 "x"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=WRAPCOLS({1,2,3,4,5},2)" 2 3))
+                 '((1 3 5) (2 4 "#N/A"))))
+  ;; One value wrapped by two is one row, and the pad it was given with
+  ;; is never asked for: see the WRAPCOLS_ROWS workbook.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=WRAPCOLS({1},2,0)" 2 1))
+                 '((1) (""))))
+  ;; Not a vector, or no count to wrap by.
+  (should (equal (exc-formula-test--eval "=WRAPROWS({1,2;3,4},2)")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=WRAPROWS({1,2},0)") "#NUM!")))
+
+(ert-deftest exc-formula-take-and-drop-count-from-the-last ()
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TAKE({1;2;3;4;5},2)" 2 1))
+                 '((1) (2))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TAKE({1;2;3;4;5},-2)" 2 1))
+                 '((4) (5))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=DROP({1;2;3;4;5},2)" 3 1))
+                 '((3) (4) (5))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=DROP({1;2;3;4;5},-2)" 3 1))
+                 '((1) (2) (3))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TAKE({1,2,3;4,5,6},2,2)" 2 2))
+                 '((1 2) (4 5))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TAKE({1,2,3;4,5,6},,-2)" 2 2))
+                 '((2 3) (5 6))))
+  ;; Dropping none keeps it all.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=DROP({1;2},0)" 2 1))
+                 '((1) (2))))
+  ;; None taken, or all of it dropped, is no array at all.
+  (should (equal (exc-formula-test--eval "=TAKE({1;2},0)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=DROP({1;2},2)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=DROP({1;2},1,1)") "#VALUE!")))
+
+(ert-deftest exc-formula-choosecols-picks-columns ()
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=CHOOSECOLS({1,2,3;4,5,6},3,1)" 2 2))
+                 '((3 1) (6 4))))
+  (should (equal (exc-formula-test--eval "=CHOOSECOLS({1,2,3},-1)") 3))
+  (should (equal (exc-formula-test--eval "=CHOOSECOLS({1,2,3},4)")
+                 "#VALUE!")))
+
+(ert-deftest exc-formula-choosecols-reads-places-as-values ()
+  "A cell's text and TRUE are places too; a block of places is #VALUE!."
+  (should (equal (exc-formula-test--eval "=CHOOSECOLS({1,2,3},B1)" "TRUE") 1))
+  (should (equal (exc-formula-test--eval "=CHOOSECOLS({1,2,3},B1)" "'2") 2))
+  (should (equal (exc-formula-test--eval "=CHOOSEROWS({1;2;3},B1)" "'3") 3))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=CHOOSECOLS({1,2,3},{-3,1})" 1 2))
+                 '((1 1))))
+  (should (equal (exc-formula-test--eval "=CHOOSECOLS({1,2,3},{1,2;2,1})")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=CHOOSEROWS({1;2;3},{1;2},{1,2;2,1})")
+                 "#VALUE!")))
+
+(ert-deftest exc-formula-expand-fills-out-to-its-size ()
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=EXPAND({1,2},2,3,0)" 2 3))
+                 '((1 2 0) (0 0 0))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=EXPAND({1},2)" 2 1))
+                 '((1) ("#N/A"))))
+  ;; A size left out stays as it is; below the array is #VALUE!.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=EXPAND({1,2},1)" 1 2))
+                 '((1 2))))
+  (should (equal (exc-formula-test--eval "=EXPAND({1,2},1,1)") "#VALUE!")))
+
+(ert-deftest exc-formula-sortby-sorts-by-other-values ()
+  ;; The last array sorts first; the one before it keeps what it leaves.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=SORTBY({10;20;30;40},{2;1;2;1},1,{1;2;3;4},-1)" 4 1))
+                 '((40) (20) (30) (10))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=SORTBY({1;2;3},{3;1;2},-1)" 3 1))
+                 '((1) (3) (2))))
+  ;; A row of values sorts the columns of the array.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=SORTBY({1,2,3},{3,1,2})" 1 3))
+                 '((2 3 1))))
+  ;; Not as many values as the array has, or an order that is no order.
+  (should (equal (exc-formula-test--eval "=SORTBY({1;2;3},{1;2})")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=SORTBY({1;2;3},{1;2;3},2)")
+                 "#VALUE!")))
+
+(ert-deftest exc-formula-sort-takes-several-places-and-puts-blanks-last ()
+  "SORT sorts by each place in turn, and a blank goes after every value."
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=SORT({1,2;1,1;0,3},{1,2},{1,-1})" 3 2))
+                 '((0 3) (1 2) (1 1))))
+  ;; Not an order for each place, or a block of places.
+  (should (equal (exc-formula-test--eval "=SORT({2,1,2,1},1,{1;-1})")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=SORT({1,2;3,4},{1,2;1,2})")
+                 "#VALUE!"))
+  (should (equal (mapcar #'car (exc-formula-test--values
+                                '(("=SORT(B1:B3)" "2") ("" "") ("" "1"))))
+                 '(1 2 0)))
+  (should (equal (mapcar #'car (exc-formula-test--values
+                                '(("=SORTBY({1;2;3},B1:B3,-1)" "") ("" "5") ("" "7"))))
+                 '(3 2 1))))
+
+(ert-deftest exc-formula-textsplit-splits-at-its-delimiters ()
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=TEXTSPLIT(\"a,b;c,d\",\",\",\";\")" 2 2))
+                 '(("a" "b") ("c" "d"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=TEXTSPLIT(\"a,,b\",\",\")" 1 3))
+                 '(("a" "" "b"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=TEXTSPLIT(\"a,,b\",\",\",,TRUE)" 1 2))
+                 '(("a" "b"))))
+  ;; Uneven rows are filled out; a delimiter may be several values.
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=TEXTSPLIT(\"a,b;c\",\",\",\";\")" 2 2))
+                 '(("a" "b") ("c" "#N/A"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=TEXTSPLIT(\"a1b2c\",{\"1\",\"2\"})" 1 3))
+                 '(("a" "b" "c"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=TEXTSPLIT(\"aXbxc\",\"X\",,FALSE,1)" 1 3))
+                 '(("a" "b" "c"))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=TEXTSPLIT(\"a-b;c-d\",\"-\",\";\",FALSE,0,\"?\")" 2 2))
+                 '(("a" "b") ("c" "d"))))
+  ;; No delimiter to split at, or an empty text among them.
+  (should (equal (exc-formula-test--eval "=TEXTSPLIT(\"abc\",)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=TEXTSPLIT(\"abc\",\"\")")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=TEXTSPLIT(\"abc\",,\"\")")
+                 "#VALUE!")))
+
+(ert-deftest exc-formula-text-around-a-delimiter-as-excel-gives-it ()
+  (let ((text "\"123 the 456 the 891\""))
+    ;; A fraction is taken down; the end of the text may be a delimiter.
+    (should (equal (exc-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"the\",-1.2)" text))
+                   " 456 the 891"))
+    (should (equal (exc-formula-test--eval
+                    (format "=TEXTBEFORE(%s,\"x\",1,0,1)" text))
+                   "123 the 456 the 891"))
+    (should (equal (exc-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"x\",-1,0,1)" text))
+                   "123 the 456 the 891"))
+    (should (equal (exc-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"x\",2,0,1,\"no\")" text))
+                   "no"))
+    (should (equal (exc-formula-test--eval
+                    (format "=TEXTAFTER(%s,\"x\",1,0,2)" text))
+                   "#VALUE!")))
+  ;; What is given when nothing is found is computed only then, and a
+  ;; blank cell is empty text.
+  (should (equal (exc-formula-test--eval "=TEXTAFTER(\"a-b\",\"-\",1,0,0,1/0)")
+                 "b"))
+  (should (equal (exc-formula-test--eval "=TEXTAFTER(\"a-b\",\"x\",1,0,0,B1)" "")
+                 ""))
+  ;; An instance given past where the delimiter could stand is #VALUE!.
+  (should (equal (exc-formula-test--eval "=TEXTAFTER(\"del\",\"deli\",1)")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=TEXTAFTER(\"del\",\"deli\")")
+                 "#N/A")))
+
+(ert-deftest exc-formula-randarray-keeps-to-its-size-and-range ()
+  (should (equal (exc-formula-test--eval "=ROWS(RANDARRAY(3,2))") 3))
+  (should (equal (exc-formula-test--eval "=COLUMNS(RANDARRAY(3,2))") 2))
+  (should (equal (exc-formula-test--eval "=ROWS(RANDARRAY())") 1))
+  (should (<= 0 (exc-formula-test--eval "=SUM(RANDARRAY(20,20))") 400))
+  ;; Whole numbers count both ends in.
+  (let ((sum (exc-formula-test--eval "=SUM(RANDARRAY(20,20,2,3,TRUE))")))
+    (should (and (<= 800 sum 1200) (= sum (truncate sum)))))
+  (should (equal (exc-formula-test--eval "=RANDARRAY(0)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=RANDARRAY(1,1,3,2)") "#VALUE!")))
+
+(ert-deftest exc-formula-math-functions-excel-had-missing ()
+  "The math functions added from Excel's list give what Excel gives.
+The cases come from IronCalc's and the formulas package's workbooks."
+  (dolist (case '(("=SEC(0)" 1.0) ("=COT(0)" "#DIV/0!") ("=ACOT(0)" 1.5707963267948966)
+                  ("=ACOTH(0.5)" "#NUM!") ("=SQRTPI(-1)" "#NUM!")
+                  ("=FACTDOUBLE(7)" 105.0) ("=FACTDOUBLE(-1)" 1.0)
+                  ("=FACTDOUBLE(-1.1)" "#NUM!") ("=SQRTPI(TRUE)" "#VALUE!")
+                  ("=QUOTIENT(-7,2)" -3) ("=QUOTIENT(TRUE,1)" "#VALUE!")
+                  ("=GCD(24,36)" 12) ("=LCM({4,\"8\",12})" 24)
+                  ("=LCM(\"8\",2,B1)" 8) ("=LCM(B1:C1)" 0) ("=GCD(B1,C1)" "#VALUE!")
+                  ("=GCD(,5)" "#N/A") ("=GCD(-0.0003,1)" "#NUM!") ("=GCD(\"\",1)" "#VALUE!")
+                  ("=LCM(2^31-1,2^30-1)" "#NUM!")
+                  ("=MULTINOMIAL(2,3,4)" 1260.0) ("=MULTINOMIAL({TRUE,1,2})" "#VALUE!")
+                  ("=PERMUT(5,2)" 20.0) ("=PERMUTATIONA(3,2)" 9.0) ("=COMBINA(4,3)" 20)
+                  ("=SERIESSUM(2,0,1,{1,2,3})" 17.0) ("=SERIESSUM(0,0,2,{1,2,3})" "#NUM!")
+                  ("=ROMAN(1999)" "MCMXCIX") ("=ROMAN(1999,4)" "MIM") ("=ARABIC(\"MCMXCIX\")" 1999)))
+    (let* ((model (exc-model-create 1 3 (list (list (car case) "" ""))))
+           (value (exc-model-get-computed-value model 0 0)))
+      (should (if (numberp (cadr case))
+                  (and (numberp value) (= value (cadr case)))
+                (equal (list (car case) value) case))))))
+
+(ert-deftest exc-formula-engineering-units ()
+  "CONVERT reads Excel's units, their prefixes and their temperatures.
+The cases come from IronCalc's and the formulas package's workbooks."
+  (cl-flet ((near (formula expected)
+              (let ((value (exc-formula-test--eval formula)))
+                (should (equal (list formula
+                                     (and (numberp value)
+                                          (< (abs (- value expected))
+                                             (* 1e-9 (max 1 (abs value) (abs expected))))))
+                               (list formula t))))))
+    (near "=CONVERT(1,\"m\",\"m\")" 1)
+    (near "=CONVERT(1,\"mi\",\"m\")" 1609.344)
+    (near "=CONVERT(4,\"mi\",\"m\")" 6437.376)
+    (near "=CONVERT(1,\"ang\",\"m\")" 1e-10)
+    (near "=CONVERT(1,\"Mm\",\"m\")" 1000000)
+    (near "=CONVERT(0.0002,\"Ml\",\"m3\")" 0.2)
+    (near "=CONVERT(0.0002,\"Mm3\",\"m3\")" 2e14)
+    (near "=CONVERT(0.05,\"Mm2\",\"m2\")" 5e10)
+    (near "=CONVERT(0.05,\"Mar\",\"m2\")" 5000000)
+    (near "=CONVERT(1,\"kibyte\",\"bit\")" 8192)
+    (near "=CONVERT(1,\"Mbyte\",\"bit\")" 8000000)
+    (near "=CONVERT(1,\"mbyte\",\"bit\")" 0.008)
+    (near "=CONVERT(1,\"Ysec\",\"sec\")" 1e+24)
+    (near "=CONVERT(1,\"min\",\"sec\")" 60)
+    (near "=CONVERT(0.05,\"Matm\",\"Pa\")" 5066250000)
+    (near "=CONVERT(1,\"e\",\"J\")" 1e-07)
+    (near "=CONVERT(10,\"J\",\"e\")" 100000000)
+    (near "=CONVERT(1,\"T\",\"ga\")" 10000)
+    (near "=CONVERT(13,\"C\",\"F\")" 55.400000000000006)
+    (near "=CONVERT(1,\"F\",\"K\")" 255.92777777777775)
+    (near "=CONVERT(1,\"Rank\",\"K\")" 0.5555555555555556)
+    (near "=CONVERT(1,\"Reau\",\"K\")" 274.4)
+    (near "=CONVERT(12,\"MK\",\"K\")" 12000000)
+    ;; pc is a parsec to a metre, and a picocalorie to a joule.
+    (near "=CONVERT(1,\"pc\",\"J\")" 4.184e-12)
+    (should (equal (exc-formula-test--eval "=CONVERT(1,\"C\",\"F\")") 33.8))
+    (dolist (formula '("=CONVERT(12,\"MC\",\"K\")" "=CONVERT(0.05,\"Mha\",\"m2\")"
+                       "=CONVERT(0.05,\"Mft2\",\"m2\")" "=CONVERT(1,\"g\",\"m\")"
+                       "=CONVERT(1,\"parsnip\",\"g\")"))
+      (should (equal (list formula (exc-formula-test--eval formula))
+                     (list formula "#N/A"))))
+    (should (equal (exc-formula-test--eval "=CONVERT(TRUE,\"g\",\"g\")")
+                   "#VALUE!"))))
+
+(ert-deftest exc-formula-engineering-bessel ()
+  "The Bessel functions answer as Excel's do, the order cut off at the point.
+The cases come from IronCalc's and the formulas package's workbooks."
+  (cl-flet ((near (formula expected)
+              (let ((value (exc-formula-test--eval formula)))
+                (should (equal (list formula
+                                     (and (numberp value)
+                                          (< (abs (- value expected))
+                                             (* 1e-9 (max 1 (abs value) (abs expected))))))
+                               (list formula t))))))
+    (near "=BESSELI(1,1)" 0.5651590975819435)
+    (near "=BESSELI(-1,2)" 0.13574766658069928)
+    (near "=BESSELI(2.3,2)" 1.0054316669125958)
+    (near "=BESSELI(3.2,2)" 2.7882984611029293)
+    (near "=BESSELI(1,1.999)" 0.5651590975819435)
+    (near "=BESSELI(0,10000000)" 0)
+    (near "=BESSELI(0.2,7)" 1.9866085100212153e-11)
+    (near "=BESSELI(1e-10,5)" 2.6041666666666672e-54)
+    (near "=BESSELJ(1,1)" 0.4400505856771301)
+    (near "=BESSELJ(2.3,2)" 0.41391458970875217)
+    (near "=BESSELJ(100000,5)" 0.001846551246313725)
+    (near "=BESSELJ(10000000,2)" 8.683739567294922e-05)
+    (near "=BESSELJ(2,30)" 3.650256266474097e-33)
+    (near "=BESSELJ(-32,7)" 0.07621034879110145)
+    (near "=BESSELK(1,1)" 0.6019072316669057)
+    (near "=BESSELK(2.3,2)" 0.1617333633782021)
+    (near "=BESSELK(0.2,7)" 3594005998.103765)
+    (near "=BESSELK(1e-10,5)" 3.8400000000000003e+52)
+    (near "=BESSELK(2,30)" 4.2711258180315126e+30)
+    (near "=BESSELK(10000000,0)" 0)
+    (near "=BESSELY(1,1)" -0.7812128209531197)
+    (near "=BESSELY(0.2,7)" -2295654720.15733)
+    (near "=BESSELY(1e-10,0)" -14.732516312945261)
+    (near "=BESSELY(1.5,12)" -422217415.9345024)
+    (near "=BESSELY(2,30)" -2.9132238172293094e+30)
+    (dolist (formula '("=BESSELI(1,-1)" "=BESSELI(10000000,2)" "=BESSELK(0,1)"
+                       "=BESSELY(-1,0)"))
+      (should (equal (list formula (exc-formula-test--eval formula))
+                     (list formula "#NUM!"))))
+    (should (equal (exc-formula-test--eval "=BESSELJ(TRUE,1)") "#VALUE!"))
+    (should (equal (exc-formula-test--eval "=BESSELJ(1,\"x\")") "#VALUE!"))))
+
+(ert-deftest exc-formula-engineering-complex-more ()
+  "The complex tangent, cotangent, secant and their kin, as text."
+  (dolist (case '(("=IMTAN(\"3.1+2j\")" . "-0.00293552600273488+0.964145352213088j")
+                  ("=IMCOT(\"3.1+2j\")" . "-0.00315788915435829-1.03717839601561j")
+                  ("=IMCSC(\"3.1+2j\")" . "0.0118908807944521+0.275445903842597j")
+                  ("=IMSEC(\"3.1+2j\")" . "-0.26560479396574+0.0106559588386141j")
+                  ("=IMCSCH(\"3.1+2j\")" . "-0.0373189117262454-0.0818749558100934j")
+                  ("=IMSECH(\"3.1+2j\")" . "-0.0376700432543674-0.0819771357068288j")
+                  ("=IMSINH(\"3.1+2j\")" . "-4.60943006026724+10.1127515524169j")
+                  ("=IMCOSH(\"3.1+2j\")" . "-4.62817714333229+10.0717884285999j")
+                  ("=IMTAN(\"0.0000000000000001\")" . "0.0000000000000001")
+                  ("=IMCOT(\"0.0000000000000001\")" . "1E+16")
+                  ("=IMCSCH(\"0.0000000000000001\")" . "1E+16")
+                  ("=IMSECH(0)" . "1")
+                  ("=IMTAN(TRUE)" . "#VALUE!")))
+    (should (equal (list (car case) (exc-formula-test--eval (car case)))
+                   (cons (car case) (list (cdr case)))))))
+
+(ert-deftest exc-formula-engineering-complex-parts-in-full ()
+  "A complex number writes its parts out in full where the digits fit."
+  (dolist (case '(("=COMPLEX(0.0000000000000001,0)" . "0.0000000000000001")
+                  ("=COMPLEX(0.00000000000000001,0)" . "0.00000000000000001")
+                  ("=COMPLEX(0.00000000000000000001,0)" . "1E-20")
+                  ("=COMPLEX(0.0000012,0)" . "0.0000012")
+                  ("=COMPLEX(1.2E-45,-3)" . "1.2E-45-3i")
+                  ("=IMPRODUCT(\"7+0i\",\"\")" . "0")
+                  ("=IMSUM(\"\",\"2+3i\")" . "2+3i")))
+    (should (equal (list (car case) (exc-formula-test--eval
+                                     (car case)))
+                   (cons (car case) (list (cdr case))))))
+  ;; An empty cell counts as zero to the product as well.
+  (should (equal (exc-formula-test--eval "=IMPRODUCT(B1,C1)" "" "") "0"))
+  (should (equal (exc-formula-test--eval "=IMPRODUCT(\"7+0i\",B1)" "") "0")))
+
+(ert-deftest exc-formula-engineering-number-systems-places ()
+  "A negative number's PLACES, and an empty one, as Excel takes them."
+  (dolist (case '(("=BIN2HEX(\"1100011011\",2)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",0)" . "#NUM!")
+                  ("=BIN2HEX(\"1100011011\",1)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",2.3)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",10)" . "FFFFFFFF1B")
+                  ("=BIN2HEX(\"1100011011\",11)" . "#NUM!")
+                  ("=BIN2HEX(\"1100011011\",TRUE)" . "#VALUE!")
+                  ("=BIN2OCT(\"1100011011\",-2)" . "#NUM!")
+                  ("=BIN2OCT(\"1111111111\",2)" . "7777777777")
+                  ("=BIN2HEX(100,0)" . "#NUM!")
+                  ("=BIN2OCT(B1)" . "0")
+                  ("=BIN2DEC(C1)" . 0)
+                  ("=DEC2HEX(12)" . "C")))
+    (should (equal (list (car case) (exc-formula-test--eval (car case) "" ""))
+                   (cons (car case) (list (cdr case)))))))
+(ert-deftest exc-formula-database-criteria-as-excel-reads-them ()
+  "DCOUNT reads names without regard to case, text criteria as the start
+of the text, and gives #VALUE! for a field it cannot find.  The cases
+come from IronCalc's DCOUNT workbook."
+  (let ((rows '(("Region" "Units" "" "region" "Units" "Nope")
+                ("East" "120" "" "ea" ">100" "x")
+                ("West" "80" "" "" "" "")
+                ("Eastern" "200" "" "" "" ""))))
+    (dolist (case '(("=DCOUNT(A1:B4,\"units\",D1:D2)" 2)
+                    ("=DCOUNT(A1:B4,2,E1:E2)" 2)
+                    ("=DCOUNT(A1:B4,TRUE,D1:D2)" 0)
+                    ("=DCOUNT(A1:B4,,D1:D2)" 2)
+                    ("=DCOUNT(A1:B4,2,F1:F2)" 0)
+                    ("=DCOUNT(A1:B4,2,F1:F3)" 3)
+                    ("=DCOUNT(A1:B1,2,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,0,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,3,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,C1,D1:D2)" "#VALUE!")
+                    ("=DCOUNT(A1:B4,A1:B1,D1:D2)" "#VALUE!")))
+      (let ((model (exc-model-create 5 6 (append rows (list (list (car case) "" "" "" "" ""))))))
+        (should (equal (list (car case) (exc-model-get-computed-value model 4 0))
+                       case))))))
+
+(ert-deftest exc-formula-database-functions-reduce-their-field ()
+  "DSUM and its like read the numbers in the field of the rows meeting
+the criteria; DCOUNTA and DGET read every value there."
+  (let ((rows '(("Region" "Units" "" "Region" "Region")
+                ("East" "120" "" "East" "West")
+                ("West" "80" "" "" "")
+                ("East" "200" "" "" "")
+                ("East" "n/a" "" "" ""))))
+    (dolist (case '(("=DSUM(A1:B5,2,D1:D2)" 320) ("=DAVERAGE(A1:B5,2,D1:D2)" 160)
+                    ("=DMIN(A1:B5,2,D1:D2)" 120) ("=DMAX(A1:B5,2,D1:D2)" 200)
+                    ("=DPRODUCT(A1:B5,2,D1:D2)" 24000) ("=DVAR(A1:B5,2,D1:D2)" 3200)
+                    ("=DVARP(A1:B5,2,D1:D2)" 1600) ("=DSTDEVP(A1:B5,2,D1:D2)" 40)
+                    ("=DCOUNTA(A1:B5,2,D1:D2)" 3) ("=DCOUNTA(A1:B5,,D1:D2)" 3)
+                    ("=DGET(A1:B5,2,E1:E2)" 80) ("=DGET(A1:B5,2,D1:D2)" "#NUM!")
+                    ("=DGET(A1:B5,2,D1:D3)" "#NUM!")
+                    ("=DMIN(A1:B5,2,E1:E2)" 80) ("=DAVERAGE(A1:B1,2,D1:D2)" "#VALUE!")))
+      (let* ((model (exc-model-create 6 5 (append rows (list (list (car case) "" "" "" "")))))
+             (value (exc-model-get-computed-value model 5 0)))
+        (should (if (numberp (cadr case))
+                    (and (numberp value) (= value (cadr case)))
+                  (equal (list (car case) value) case)))))))
+
+(ert-deftest exc-formula-statistics-excel-had-missing ()
+  "The statistics functions added from Excel's list give what Excel gives.
+The cases come from the formulas package's and pycel's workbooks."
+  (dolist (case '(("=SLOPE({0,0.1,0.2},{0.2,0.3,-0.1})" -0.34615384615384615)
+                  ("=SLOPE({1,2},{3,3})" "#DIV/0!") ("=SLOPE({1,2},{3,4,5})" "#N/A")
+                  ("=FORECAST.LINEAR(0.1,{1,7,3,0},{7,2,9,4})" 5.077586206896552)
+                  ("=STEYX({1,2},{3,4})" "#DIV/0!") ("=FISHER(1)" "#NUM!")
+                  ("=FISHER(0.1)" 0.10033534773107562) ("=FISHERINV(1)" 0.7615941559557649) ("=GEOMEAN(1,0)" "#NUM!")
+                  ("=HARMEAN(1,2,4)" 1.7142857142857142) ("=TRIMMEAN({1,2,3,4},1)" "#NUM!")
+                  ("=PROB({1,2,3,4,5},{0.1,0.2,0.3,0.3,0.1},2,3)" 0.5)
+                  ("=PROB({1,2},{0.5,0.6},1)" "#NUM!")
+                  ("=BETADIST(0.7,1,3,0.5,5)" 0.12749519890260627)
+                  ("=BETADIST(0,,,)" "#NUM!") ("=LOGNORMDIST(0,,)" "#NUM!")))
+    (let* ((model (exc-model-create 1 3 (list (list (car case) "" ""))))
+           (value (exc-model-get-computed-value model 0 0)))
+      (should (if (numberp (cadr case))
+                  (and (numberp value) (< (abs (- value (cadr case))) 1e-12))
+                (equal (list (car case) value) case))))))
+
+(ert-deftest exc-formula-regression-as-excel-fits-it ()
+  "LINEST, LOGEST, TREND and GROWTH fit and spill as Excel does.
+A variable that adds nothing gets the slope 0, and an error among the
+values is #VALUE!.  The cases come from pycel's and the formulas
+package's workbooks."
+  (dolist (case '(("=INDEX(LINEST({1;2;3},{2;3;4},FALSE,FALSE),1)" 0.6896551724137931)
+                  ("=INDEX(LINEST({1;2;3},{2;3;4},TRUE,TRUE),3,1)" 1.0)
+                  ("=INDEX(LINEST({1;2;3},{2;3;4},TRUE,TRUE),5,1)" 2.0)
+                  ("=INDEX(LINEST({1;2;3},{2;3;4},TRUE,TRUE),3,2)" 0.0)
+                  ("=INDEX(LINEST({1;2;3},{2,1;3,5;4,2},TRUE,TRUE),4,3)" "#N/A")
+                  ("=INDEX(LINEST({1,2,4},{3,3,3}),1)" 0.0)
+                  ("=INDEX(LINEST({1,2,4},{3,3,3}),2)" 2.3333333333333335)
+                  ("=LINEST({1,2,4},{3,4})" "#REF!")
+                  ("=LINEST({1,2,4},{3,4,#N/A})" "#VALUE!")
+                  ("=LOGEST({1,2,-4})" "#NUM!")
+                  ("=INDEX(TREND({1,2,4},{1,2,3},{4,5}),2)" 6.833333333333334)
+                  ("=INDEX(GROWTH({1,2,4},{1,2,3},{4}),1)" 8.0)))
+    (let* ((model (exc-model-create 1 3 (list (list (car case) "" ""))))
+           (value (exc-model-get-computed-value model 0 0)))
+      (should (if (numberp (cadr case))
+                  (and (numberp value) (< (abs (- value (cadr case))) 1e-9))
+                (equal (list (car case) value) case))))))
+(ert-deftest exc-formula-lambda-is-called-as-excel-calls-it ()
+  "LAMBDA is called where it is made, through a LET name or a defined
+name, takes references as references, and leaves out what it is not
+given.  The cases come from IronCalc's workbooks."
+  (dolist (case '(("=LAMBDA(x, x+1)(5)" 6)
+                  ("=LAMBDA(x,y, SQRT(x*x+y*y))(3,4)" 5)
+                  ("=LAMBDA(x,LAMBDA(y,x*y))(3)(4)" 12)
+                  ("=LET(area, LAMBDA(x,y,x*y), area(B1,C1))" 42)
+                  ("=LAMBDA(x, ISREF(x))(B1:C1)" t)
+                  ("=LAMBDA(x, ISREF(x))(B1+1)" nil)
+                  ("=LET(x, B1, ISREF(x))" t)
+                  ("=LAMBDA(x, SUM(x))(B1:C1*2)" 26)
+                  ("=LAMBDA(x,y, IF(ISOMITTED(y),\"none\",x+y))(1,)" "none")
+                  ("=LAMBDA(x,y, IF(ISOMITTED(y),x/2,x*y))(B1)" 3)
+                  ("=LAMBDA(x,x)(1,2)" "#VALUE!")
+                  ("=LAMBDA(x,x,x)(1,2)" "#VALUE!")
+                  ("=LAMBDA(x,x+1)" "#CALC!")
+                  ("=area(1)" "#NAME?")))
+    (should (equal (list (car case)
+                         (exc-formula-test--eval (car case) "6" "7"))
+                   case)))
+  ;; An edit reaches a LAMBDA's arguments and what its body reads.
+  (let ((model (exc-model-create
+                1 4 '(("=LAMBDA(x,x*2)(B1)" "5" "=LET(f,LAMBDA(x,x+D1),f(B1))" "1")))))
+    (exc-model-set-raw-value model 0 1 "10")
+    (should (equal (exc-model-get-computed-value model 0 0) 20))
+    (should (equal (exc-model-get-computed-value model 0 2) 11))
+    (exc-model-set-raw-value model 0 3 "3")
+    (should (equal (exc-model-get-computed-value model 0 2) 13)))
+  ;; A name defined as a LAMBDA is called by its name.
+  (let* ((one (make-exc-default-data-source '("" "") '(("=Twice(B1)" "4"))))
+         (workbook (exc-workbook-create (list (cons "Sheet1" one)))))
+    (exc-workbook-define-name workbook "Twice" "=LAMBDA(x,x*2)")
+    (should (equal (exc-get-computed-value-at one 0 0) 8))
+    (exc-set-raw-value-at one 0 1 "5")
+    (should (equal (exc-get-computed-value-at one 0 0) 10))))
+(ert-deftest exc-formula-lambda-helpers-as-excel-has-them ()
+  "BYROW, BYCOL, MAP, REDUCE, SCAN and MAKEARRAY call a LAMBDA, or a
+built-in function named alone, as Excel does.  The cases come from
+IronCalc's and the formulas package's workbooks."
+  (dolist (case '(("=INDEX(BYROW({1,2;3,4},LAMBDA(x,SUM(x))),2)" 7)
+                  ("=INDEX(BYCOL({1,2;3,4},SUM),2)" 6)
+                  ("=INDEX(BYROW({1,2;3,4},LAMBDA(x,x)),1)" "#CALC!")
+                  ("=INDEX(MAP({1,2;3,4},{5,6;7,8},LAMBDA(x,y,x*y)),2,2)" 32)
+                  ("=MAP({1,2},LAMBDA(a,a+1),LAMBDA(b,b+3))" "#VALUE!")
+                  ("=REDUCE(,{3,4},LAMBDA(a,b,SQRT(a*a+b*b)))" 5)
+                  ("=REDUCE(1,{1,2,3},LAMBDA(a,b,a+b^2))" 15)
+                  ("=INDEX(SCAN(1,{1,2;3,4},LAMBDA(a,b,a+b)),2,1)" 7)
+                  ("=INDEX(SCAN(\"x\",{1,2},LAMBDA(a,b,a&b)),2)" "x12")
+                  ("=INDEX(MAKEARRAY(2,3,LAMBDA(r,c,r*10+c)),2,3)" 23)
+                  ("=MAKEARRAY(TRUE,1,LAMBDA(r,c,r+c))" 2)
+                  ("=MAKEARRAY(\"1\",1,LAMBDA(r,c,r+c))" "#VALUE!")
+                  ("=MAKEARRAY(0,1,LAMBDA(r,c,r+c))" "#VALUE!")
+                  ("=TYPE(LAMBDA(x,x))" 128)))
+    (should (equal (list (car case) (exc-formula-test--eval (car case)))
+                   case))))
+(ert-deftest exc-formula-regex-functions-read-patterns-as-excel ()
+  "REGEXTEST, REGEXEXTRACT and REGEXREPLACE read a pattern as PCRE2
+does.  The cases come from IronCalc's and the formulas package's
+workbooks."
+  (dolist (case '(("=REGEXTEST(\"Another\",\"[A-Z]her\")" nil)
+                  ("=REGEXTEST(\"There\",\"[A-Z]her\")" t)
+                  ("=REGEXTEST(\"ciao\",\"^ciaO$\",1)" t)
+                  ("=REGEXTEST(\"ciao\",\"^ciaO$\")" nil)
+                  ("=REGEXTEST(\"10\",\"^\\d+$\",2)" "#VALUE!")
+                  ("=REGEXTEST(1.9,1.9)" t)
+                  ("=REGEXTEST(\"a]b\",\"[]x]\")" t)
+                  ("=REGEXTEST(\"a-b\",\"a[\\-+]b\")" t)
+                  ("=REGEXTEST(\"ab\",\"(?=a)\")" "#VALUE!")
+                  ("=REGEXEXTRACT(\"LonelyPlanet\",\"[A-Z][a-z]+\")" "Lonely")
+                  ("=INDEX(REGEXEXTRACT(\"LonelyPlanet\",\"[A-Z][a-z]+\",1),2)" "Planet")
+                  ("=INDEX(REGEXEXTRACT(\"1a2b3c\",\"((\\d)[bc]+|(3c))\",2),2)" "2")
+                  ("=REGEXEXTRACT(\"Rees (378) 555-4197\",\"[0-9()]+ [0-9-]+\",2)" "#VALUE!")
+                  ("=REGEXEXTRACT(\"1.9\",\"^\\d+$\")" "#N/A")
+                  ("=REGEXEXTRACT(\"a12\",\"\\d{2}\")" "12")
+                  ("=REGEXREPLACE(\"JamesBond\",\"([A-Z][a-z]+)([A-Z][a-z]+)\",\"$2, $1 $2\")"
+                   "Bond, James Bond")
+                  ("=REGEXREPLACE(\"a1b2c3\",\"\\d\",\"#\")" "a#b#c#")
+                  ("=REGEXREPLACE(\"a1b2c3\",\"\\d\",\"#\",-1)" "a1b2c#")
+                  ("=REGEXREPLACE(10,\"^\\d+$\",TRUE)" "TRUE")))
+    (should (equal (list (car case) (exc-formula-test--eval (car case)))
+                   case))))
+
+(ert-deftest exc-formula-finance-finds-coupons-and-accrual ()
+  "COUP*, ACCRINT and ACCRINTM as Excel has them.
+The cases are the ones the ironcalc and formulas workbooks keep
+Excel's values for."
+  (dolist (case '(("=COUPPCD(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 43831)
+                  ("=COUPNCD(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 44013)
+                  ("=COUPNUM(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 2)
+                  ("=COUPDAYBS(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 0)
+                  ("=COUPDAYSNC(DATE(2020,1,1),DATE(2021,1,1),2,0)" . 180)
+                  ("=COUPDAYS(DATE(2020,1,1),DATE(2021,1,1),1,0)" . 360)
+                  ("=COUPDAYS(DATE(2020,1,1),DATE(2021,1,1),4,3)" . 91.25)
+                  ("=COUPDAYS(DATE(2020,1,1),DATE(2021,1,1),1,2)" . 360)
+                  ("=COUPNUM(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 17)
+                  ("=COUPPCD(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 43816)
+                  ("=COUPNCD(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 43907)
+                  ("=COUPDAYBS(DATE(2020,1,1),DATE(2024,3,17),4,1)" . 15)
+                  ("=COUPDAYSNC(DATE(2020,1,1),DATE(2024,3,17),4,0)" . 76)
+                  ("=COUPNCD(DATE(2020,1,1),DATE(2021,1,1),3,0)" . "#NUM!")
+                  ("=COUPDAYS(DATE(2021,1,1),DATE(2020,1,1),2,0)" . "#NUM!")
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,0)"
+                   . 12.5)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,1)"
+                   . 12.568306010928962)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,2)"
+                   . 12.777777777777777)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,3)"
+                   . 12.602739726027398)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,9,1),0.05,1000,2,4)"
+                   . 12.5)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2021,12,1),0.025,5000,2,0)"
+                   . 62.5)
+                  ("=ACCRINT(DATE(2008,3,1),DATE(2008,9,1),DATE(2008,5,1),0,1000,2,0)"
+                   . "#NUM!")
+                  ("=ACCRINT(DATE(2008,5,1),DATE(2008,9,1),DATE(2008,5,1),0.1,1000,2,0)"
+                   . "#NUM!")
+                  ("=ACCRINTM(DATE(2020,1,1),DATE(2021,1,1),0.1,1000,0)" . 100)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-prices-bonds-and-bills ()
+  "PRICE, YIELD, the discounted securities and the bills, as Excel has them."
+  (dolist (case '(("=PRICE(DATE(2020,3,1),DATE(2030,3,1),0.06,0.07,130,1,0)"
+                   . 108.22689722310892)
+                  ("=YIELD(DATE(2020,3,1),DATE(2030,3,1),0.06,108.2268972231089,130,1,0)"
+                   . 0.07)
+                  ("=DURATION(32000,43232,0.09,0.08,1)" . 11.816961230148491)
+                  ("=MDURATION(32000,43232,0.09,0.08,1)" . 10.94163076865601)
+                  ("=DISC(39472,39614,97.975,100,0)" . 0.05207142857142884)
+                  ("=INTRATE(DATE(2027,2,15),DATE(2027,5,15),2000000,2040000,0)" . 0.08)
+                  ("=RECEIVED(32000,43232,0.01,0.014,1)" . 0.017559927308391263)
+                  ("=PRICEDISC(DATE(2020,1,15),DATE(2025,4,15),0.05,100,0)" . 73.75)
+                  ("=YIELDDISC(DATE(2020,1,15),DATE(2025,4,15),95,100,0)"
+                   . 0.010025062656641603)
+                  ("=PRICEMAT(DATE(2020,1,15),DATE(2025,4,15),DATE(2019,3,1),0.05,0.06,0)"
+                   . 94.962927756654)
+                  ("=YIELDMAT(DATE(2020,1,15),DATE(2025,4,15),DATE(2019,3,1),0.05,98,0)"
+                   . 0.05256832719519287)
+                  ("=TBILLEQ(20000,20182,0.5)" . 0.6784386617100372)
+                  ("=TBILLPRICE(20000,20182,0.5)" . 74.72222222222223)
+                  ("=TBILLYIELD(20000,20182,200)" . -0.989010989010989)
+                  ("=TBILLPRICE(20000,20182,0)" . "#NUM!")
+                  ("=PRICE(DATE(2020,3,1),DATE(2030,3,1),0.06,-0.01,130,1,0)" . "#NUM!")
+                  ("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.075,0.05,120,1,1)"
+                   . 131.5377155865953)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-pays-and-depreciates ()
+  "CUMIPMT, MIRR, PDURATION, RRI, DOLLARDE, DB and VDB as Excel has them."
+  (dolist (case '(("=CUMIPMT(0.0083,36,8000,1,10,1)" . -520.1181191021385)
+                  ("=CUMPRINC(0.0083,36,8000,1,10,1)" . -2038.518055313885)
+                  ("=CUMIPMT(0.1,2,8000,1,10,1)" . "#NUM!")
+                  ("=CUMIPMT(0.1,36,8000,3,10,1)" . -5676.255396537561)
+                  ("=ISPMT(0.2,1,3,100)" . -13.333333333333336)
+                  ("=ISPMT(0.2,1,0,100)" . "#DIV/0!")
+                  ("=MIRR({-6,1},0.1,0.2)" . -0.8333333333333334)
+                  ("=MIRR({5,6},0.1,0.2)" . "#DIV/0!")
+                  ("=FVSCHEDULE(120,{0.2,0.4,0.6,0.8})" . 580.6080000000001)
+                  ("=FVSCHEDULE(1,{0.09,0.11,0.1})" . 1.3308900000000004)
+                  ("=FVSCHEDULE(1,{0.1,TRUE})" . "#VALUE!")
+                  ("=PDURATION(0.2,100,200)" . 3.8017840169239268)
+                  ("=PDURATION(0,100,200)" . "#NUM!")
+                  ("=RRI(2,3,4)" . 0.15470053837925146)
+                  ("=RRI(-1,3,4)" . "#NUM!")
+                  ("=DOLLARDE(1.2345,3.2)" . 1.7816666666666663)
+                  ("=DOLLARFR(1.7816666666666663,3.2)" . 1.2345)
+                  ("=DOLLARDE(1.2345,0)" . "#DIV/0!")
+                  ("=DB(100,10,5,3,1)" . 22.567920075)
+                  ("=DB(100,10,4,3,13)" . "#NUM!")
+                  ("=DB(100,10,4,3,9.2222)" . 16.529375400000003)
+                  ("=VDB(2400,300,120,4.2,18,1.4,TRUE)" . 341.59973986675504)
+                  ("=VDB(10000,1000,10,0,1)" . 2000)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-counts-whole-periods-once ()
+  "A coupon period over before settlement counts as one, but only from the issue."
+  (dolist (case '(("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2022,3,1),0.025,5000,2,2)"
+                   . 93.75)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2022,3,1),0.025,5000,2,2,FALSE)"
+                   . 94.79166666666666)
+                  ("=ACCRINT(DATE(2021,6,1),DATE(2021,12,1),DATE(2022,9,1),0.025,5000,2,2)"
+                   . 156.94444444444443)
+                  ("=ACCRINT(DATE(2005,1,15),DATE(2007,1,1),DATE(2009,4,15),1,1,4,0)"
+                   . 4.25)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-finds-a-rate-below-nothing ()
+  "IRR walks to a rate under zero, and XIRR refuses a rate of nothing or less."
+  (dolist (case '(("=IRR({-5,1})" . -0.8)
+                  ("=IRR({-2,1})" . -0.5)
+                  ("=IRR({-70,12,15})" . -0.44350694133432755)
+                  ("=IRR({-20,1,1,1,1,1})" . -0.3352800891362343)
+                  ("=IRR({-400,1,1,1,1,1})" . -0.6737366751808405)
+                  ("=IRR({-20,5,5,5,5,5},17)" . 0.07930826116414913)
+                  ("=IRR({-20,5,5,5,5,5},-1)" . "#VALUE!")
+                  ("=XIRR({-400,100,10,5,6,5},{44958,44986,45017,45078,45108,45139})"
+                   . -0.9977533546974883)
+                  ("=XIRR({\"hello\",1},{1,2})" . "#VALUE!")
+                  ("=XNPV(-0.1,{-10,1,5,0.0001,4.5},{1,99,55,4,9})" . "#NUM!")
+                  ("=XNPV(0,{-10,1,5,0.0001,4.5},{1,99,55,4,9})" . "#NUM!")
+                  ("=XNPV(0.1,{-20,8,8,8,8,8},{-100,1,2,3,4,5})" . "#NUM!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-takes-a-fraction-of-a-period ()
+  "DDB and IPMT take a period with a fraction, as Excel counts it."
+  (dolist (case '(("=DDB(100,10.233,4.2312,3.2,1.5)" . 13.532735530775124)
+                  ("=DDB(10000,1000,100,3.2,3)" . 280.55568287635316)
+                  ("=DDB(100,10,4,3,2.7)" . 0.5624999999999964)
+                  ("=IPMT(0.1,3.9,3,8000,10,1)" . -26.866364667656377)
+                  ("=PPMT(0.1,3.9,3,8000,10,1)" . -2900.351432640776)
+                  ("=IPMT(0.01,1.0001,36,8000,0,1)" . -79.2077378295619)
+                  ("=IPMT(0.1,4,3,8000,10,1)" . "#NUM!")
+                  ("=IPMT(0.01,1,36,8000,0,1)" . 0)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-refuses-what-excel-refuses ()
+  "A rate at or below -1, and a logical value where a number is wanted."
+  (dolist (case '(("=PMT(-3,5,100,300,1)" . "#NUM!")
+                  ("=FV(-1,-2,1)" . "#DIV/0!")
+                  ("=RATE(10,-1200,2000,0,1)" . "#NUM!")
+                  ("=NOMINAL(10,TRUE)" . "#VALUE!")
+                  ("=EFFECT(FALSE,2.9)" . "#VALUE!")
+                  ("=NOMINAL(0.2,12)" . 0.1837136459967743)
+                  ("=EFFECT(0.2,12)" . 0.21939108490523163)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-prices-a-bill-past-half-a-year ()
+  "TBILLEQ past 182 days, as a bond paying twice a year would yield."
+  (dolist (case '(("=TBILLEQ(DATE(2024,4,1),DATE(2025,3,4),0.3)" . 0.3883686423017574)
+                  ("=TBILLEQ(2040,2400,0.8)" . 2.5066048253748145)
+                  ("=TBILLEQ(2040,2223,0.8)" . 1.364497682211261)
+                  ("=TBILLEQ(20000,20182,0.5)" . 0.6784386617100372)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-prices-a-bond-without-a-coupon ()
+  "A bond that pays no coupon has a price and a yield."
+  (dolist (case '(("=PRICE(DATE(2005,4,15),DATE(2009,7,31),0,0.065,100,4)"
+                   . 75.82697729980659)
+                  ("=YIELD(DATE(2005,4,15),DATE(2009,7,31),0,0.065,100,4)"
+                   . 2.1336010409109454)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-keeps-coupons-to-the-month-end ()
+  "A bond maturing on the last day of a month has its coupons on last days."
+  (dolist (case '(("=COUPNCD(DATE(2000,1,1),DATE(2000,9,30),4)" . 36616)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-prices-an-odd-last-period ()
+  "ODDLPRICE and ODDLYIELD, as Microsoft's examples give them."
+  (dolist (case '(("=ODDLPRICE(DATE(2008,2,7),DATE(2008,6,15),DATE(2007,10,15),0.0375,0.0405,100,2,0)"
+                   . 99.87828601472134)
+                  ("=ODDLYIELD(DATE(2008,4,20),DATE(2008,6,15),DATE(2007,12,24),0.0375,99.875,100,2,0)"
+                   . 0.04519223562916933)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-finance-depreciates-the-french-way ()
+  "AMORLINC and AMORDEGRC, as the French accounting has them."
+  (dolist (case '(("=AMORLINC(100,DATE(2005,1,15),DATE(2009,4,15),6,1,0.2,0)"
+                   . 8.999999999999986)
+                  ("=AMORLINC(100,DATE(2005,1,11),DATE(2009,4,15),7,1,0.2,0)"
+                   . 7.7777777777777715)
+                  ("=AMORLINC(100,DATE(2005,1,15),DATE(2009,4,15),12,0,0.2,0)"
+                   . 85.00000000000001)
+                  ("=AMORLINC(100,DATE(2005,1,15),DATE(2009,4,15),-1,1,0.2,0)" . "#NUM!")
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),6,0,0.2,0)" . 94)
+                  ("=AMORDEGRC(100,DATE(2005,1,11),DATE(2009,4,15),7,1,0.2,0)" . 3)
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),4,1,0.2,0)" . 2)
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),9,1,0.2,0)" . 4)
+                  ("=AMORDEGRC(100,DATE(2005,1,15),DATE(2009,4,15),0,1,0.2,0)" . 0)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-toolpak-function-takes-no-range-for-a-value ()
+  ;; Excel hands the functions of the Analysis ToolPak, and some newer
+  ;; ones like them, the reference itself: several cells where one value
+  ;; is wanted are #VALUE!, neither intersected nor taken one at a time,
+  ;; though an array is.
+  (cl-flet ((value (formula legacy)
+              (let ((model (exc-model-create
+                            3 5 '(("1" "" "" "" "") ("-2" "" "" "" "")
+                                  ("3" "" "" "" "")))))
+                (exc-model-set-raw-value model 1 4 formula)
+                (when legacy
+                  (exc-model-set-legacy model '((1 . 4))))
+                (exc-calc-forget model)
+                (exc-model-recalculate-all model)
+                (exc-model-get-computed-value model 1 4))))
+    (pcase-dolist (`(,formula ,typed ,file)
+                   '(("=DELTA(A1:A3)" "#VALUE!" "#VALUE!")
+                     ("=DELTA(A2,-2)" 1 1)
+                     ("=SUM(DELTA(A1:A3+2,0))" 1 1)
+                     ("=SUM(GESTEP({1,-2,3}))" 2 2)
+                     ("=ERF.PRECISE(A1:A3)" "#VALUE!" "#VALUE!")
+                     ("=IMSINH(A1:A3)" "#VALUE!" "#VALUE!")
+                     ("=ABS(A1:A3)" "#SPILL!" 2)))
+      (should (equal (value formula nil) typed))
+      (should (equal (value formula t) file)))))
+
+(ert-deftest exc-formula-toolpak-functions-refuse-true-and-false ()
+  ;; DELTA, GESTEP, ERF and COMPLEX, of the Analysis ToolPak, and the
+  ;; newer error functions give #VALUE! for TRUE or FALSE, where ABS
+  ;; takes FALSE as 0.
+  (dolist (formula '("=DELTA(B1)" "=GESTEP(B1)" "=ERF(B1)" "=ERF(0,B1)"
+                     "=ERFC(B1)" "=ERF.PRECISE(B1)" "=ERFC.PRECISE(B1)"
+                     "=COMPLEX(1,B1)"))
+    (should (equal (exc-formula-test--eval formula "FALSE") "#VALUE!")))
+  (should (equal (exc-formula-test--eval "=ABS(B1)" "FALSE") 0))
+  (should (equal (exc-formula-test--eval "=DELTA(B1)" "0") 1)))
+
+(ert-deftest exc-formula-char-numbers-as-the-system-does ()
+  ;; CHAR and CODE follow Windows-1252, or Mac Roman as Excel on a Mac.
+  (dolist (case '(("=CHAR(128)" . "€") ("=CODE(\"€\")" . 128)
+                  ("=CHAR(65)" . "A")))
+    (exc-formula-test--should-be case))
+  (let ((exc-calc-character-set 'mac-roman))
+    (dolist (case '(("=CHAR(128)" . "Ä") ("=CHAR(160)" . "†")
+                    ("=CHAR(198)" . "∆") ("=UNICODE(CHAR(240))" . #xF8FF)
+                    ("=CODE(\"Ä\")" . 128) ("=CODE(\"∆\")" . 198)
+                    ("=CODE(\"€\")" . 219) ("=CHAR(65)" . "A")))
+      (exc-formula-test--should-be case))))
+
+(ert-deftest exc-formula-file-arraytotext-takes-its-range-whole ()
+  ;; ARRAYTOTEXT in a workbook file's formula writes out every cell of
+  ;; its range, not the one in the formula's row.
+  (let ((model (exc-model-create
+                2 3 '(("1" "2" "=ARRAYTOTEXT(A1:B2)") ("3" "4" "")))))
+    (exc-model-set-legacy model '((0 . 2)))
+    (exc-calc-forget model)
+    (exc-model-recalculate-all model)
+    (should (equal (exc-model-get-computed-value model 0 2) "1, 2, 3, 4"))))
+
+(ert-deftest exc-formula-percent-functions-as-excel ()
+  "PERCENTOF, PERCENTRANK.EXC, LOGINV and ZTEST as Excel has them."
+  (dolist (case '(("=PERCENTOF({0,2,2.3},{2,2.3,-0.2,-2})" . 2.047619047619048)
+                  ("=PERCENTOF({1,\"a\",TRUE},{2,\"b\"})" . 0.5)
+                  ("=PERCENTOF({1,#N/A},{2})" . "#NUM!")
+                  ("=PERCENTOF({1},{0})" . "#DIV/0!")
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},4,4)" . 0.8333)
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},2,2)" . 0.73)
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},13)" . "#N/A")
+                  ("=PERCENTRANK.EXC({0,0.1,0.7,0.002,4},2,0)" . "#NUM!")
+                  ("=PERCENTRANK.INC({0,0.1,0.7,0.002,4},2,2)" . 0.84)
+                  ("=LOGINV(0.4,2,2)" . 4.45178791317475)
+                  ("=ZTEST({3.2,0.7},0.7,3)" . 0.2778448951413972)
+                  ("=ZTEST({3.2,0.7},2,0)" . "#NUM!")
+                  ("=ZTEST({4},2,2)" . "#DIV/0!")
+                  ("=ZTEST({#NUM!,#REF!},1)" . "#NUM!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-several-values-each-give-their-first ()
+  "Where one call of several gives an array, its first value stands for it."
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid "=SEQUENCE({2,3})" 1 2))
+                 '((1 1))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=DROP({1,2,3;4,5,6;7,8,9},1,{1;2})" 2 1))
+                 '((5) (6))))
+  (should (equal (exc-formula-test--values
+                  (exc-formula-test--grid
+                   "=WRAPROWS({1,2,3,4,5,6},{1,2},6)" 1 2))
+                 '((1 1)))))
+
+(ert-deftest exc-formula-tests-of-two-ranges-give-their-errors ()
+  "CHISQ.TEST, F.TEST and FREQUENCY give an error in their ranges, as Excel."
+  (dolist (case '(("=CHISQ.TEST({TRUE,#N/A},{#DIV/0!,1})" . "#N/A")
+                  ("=CHISQ.TEST({TRUE,1},{#VALUE!,#N/A})" . "#VALUE!")
+                  ("=CHISQ.TEST(3,2)" . "#N/A")
+                  ("=CHISQ.TEST({4,\"a\"},{TRUE,\"b\"})" . "#DIV/0!")
+                  ("=F.TEST({TRUE,#N/A},{#DIV/0!,1})" . "#N/A")
+                  ("=FREQUENCY({-1,#DIV/0!,3},1)" . "#DIV/0!")))
+    (exc-formula-test--should-be case))
+  (should (equal (exc-formula-test--values
+                  (cons '("=FREQUENCY({1,2,3,0,-1},B1)" "") '(("" ""))))
+                 '((2 "") (3 "")))))
+
+(ert-deftest exc-formula-beta-inv-takes-a-chance-above-0 ()
+  "BETA.INV takes no chance of 0 and none of 1, as Excel refuses both.
+IronCalc's BETADIST_BETAINV workbook has BETA.INV(1,1,2,0,1) and
+BETA.INV(1,2,2.5,0.234,1.2) as #NUM!, where the help page would have
+the top of the range."
+  (dolist (case '(("=BETA.INV(0,4,4)" . "#NUM!")
+                  ("=BETAINV(0,3,2)" . "#NUM!")
+                  ("=BETA.INV(1,2,2)" . "#NUM!")
+                  ("=BETA.INV(1,2,2,3,5)" . "#NUM!")
+                  ("=BETA.INV(0.99999999999999623,2,2.5,0.234,1.2)"
+                   . 1.199999004352299)
+                  ("=BETA.INV(0.5,2,2)" . 0.5)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-weekend-read-as-excel ()
+  "A weekend left out is Saturday and Sunday, but not one in a blank cell."
+  (should (equal (exc-formula-test--eval "=NETWORKDAYS.INTL(1,30,B1)" "") "#NUM!"))
+  (should (equal (exc-formula-test--eval "=WORKDAY.INTL(1,30,B1)" "") "#NUM!"))
+  (should (equal (exc-formula-test--eval "=NETWORKDAYS.INTL(1,30,,)") 21))
+  (should (equal (exc-formula-test--eval "=WORKDAY.INTL(1,30,,B1)" "") 41))
+  (should (equal (exc-formula-test--eval "=NETWORKDAYS.INTL(1,30,B1)" "TRUE") 21))
+  ;; An error there is no weekend, whatever error it is.
+  (should (equal (exc-formula-test--eval "=NETWORKDAYS.INTL(1,30,B1)" "=NA()")
+                 "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=WORKDAY.INTL(1,30,B1)" "=1/0")
+                 "#NUM!")))
+
+(ert-deftest exc-formula-coupdaysnc-on-30-360-is-the-rest-of-the-period ()
+  "On a 30/360 basis Excel gives COUPDAYS less COUPDAYBS, not DAYS360 to the next."
+  (dolist (case '(("=COUPDAYSNC(7,DATE(2050,12,31),1,0)" . 353)
+                  ("=COUPDAYSNC(3.2,DATE(2050,12,31),1,0)" . 357)
+                  ("=COUPDAYSNC(DATE(2011,1,25),DATE(2011,11,15),2,1)" . 110)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-days360-refuses-the-day-after-9999 ()
+  "DAYS360 takes no day after 9999-12-31, which other functions let pass."
+  (dolist (case '(("=DAYS360(1987,2958466,1)" . "#NUM!")
+                  ("=DAYS360(2958466,0,1)" . "#NUM!")
+                  ("=DAYS360(1987,2958465,1)" . 2914041)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-weeknum-of-day-0-is-0 ()
+  "Day 0 is in the week before the first of 1900, week 0."
+  (dolist (case '(("=WEEKNUM(0,1)" . 0)
+                  ("=WEEKNUM(0.7,1)" . 0)
+                  ("=WEEKNUM(1,1)" . 1)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-text-of-a-date-and-a-time-reads ()
+  "Text with a date and a time after it is both, as Excel reads it."
+  (dolist (case '(("=VALUE(\"1/1/1987 05:00 AM\")" . 31778.208333333332)
+                  ("=VALUE(\"1/1/1987 13:30\")" . 31778.5625)
+                  ("=WEEKNUM(\"1/1/1987 05:00 AM\",1)" . 1)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-averageif-meets-an-error-criterion ()
+  "AVERAGEIF of an error criterion averages beside the cells of that error."
+  (should (equal (exc-formula-test--eval
+                  "=AVERAGEIF(B1:C1,B1,D1:E1)" "=NA()" "=1/0" "=1/0" "5")
+                 "#DIV/0!"))
+  (should (equal (exc-formula-test--eval
+                  "=AVERAGEIF(B1:C1,C1,D1:E1)" "=NA()" "=1/0" "=1/0" "5")
+                 5))
+  (should (equal (exc-formula-test--eval
+                  "=INDEX(AVERAGEIF(B1:D1,{1,2}),2)" "1" "2" "1")
+                 2)))
+
+(ert-deftest exc-formula-numbervalue-reads-as-excel ()
+  "NUMBERVALUE reads parentheses as negative and wants its separators."
+  (dolist (case '(("=NUMBERVALUE(\"(2.500,27)\",\",\",\".\")" . -2500.27)
+                  ("=NUMBERVALUE(\"(2,500.27%)%\",\".\",\",.,\")" . -0.250027)
+                  ("=NUMBERVALUE(\"(,25,,0,0.27E + 6%)%\",\".\",\",.,\")" . -250027)
+                  ("=NUMBERVALUE(\"(2500,27E+6%)%\",\",\")" . -250027)
+                  ("=NUMBERVALUE(\"(-2500.27E+2%)%\",\".\",\",.,\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"(2500.27)\",\".\",\".,\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"1\",\"\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"1\",\"2\",\"\")" . "#VALUE!")
+                  ("=NUMBERVALUE(\"250)027\",\")\")" . 250.027)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-numbers-show-fifteen-digits ()
+  "A number written by a format shows 15 significant digits, then 0s."
+  (dolist (case '(("=FIXED(\"123456789076754345682.2\",0)" . "123,456,789,076,754,000,000")
+                  ("=FIXED(0.1+0.2,20)" . "0.30000000000000000000")
+                  ("=TEXT(12345678901234567,\"0\")" . "12345678901234600")
+                  ("=TEXT(99.996,\"0.00\")" . "100.00")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-fixed-bounds-its-decimals ()
+  "FIXED takes up to 127 places, and rounds far to the left to 0."
+  (dolist (case '(("=FIXED(5,128)" . "#VALUE!")
+                  ("=FIXED(5,-128000)" . "0")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-asc-and-dbcs-change-width ()
+  "ASC makes full-width characters half-width, and DBCS the reverse."
+  (dolist (case '(("=ASC(\"ＡＢＣ　アイ１２ガ\")" . "ABC ｱｲ12ｶﾞ")
+                  ("=ASC(65.8)" . "65.8")
+                  ("=ASC(TRUE)" . "TRUE")
+                  ("=ASC(1/0)" . "#DIV/0!")
+                  ("=DBCS(\"AB 1~ｱ\")" . "ＡＢ　１～ア")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-rows-of-several-areas-is-ref ()
+  "ROWS and COLUMNS of several areas are #REF!, as Excel gives."
+  (dolist (case '(("=ROWS((B1:C2,D1:D3))" . "#REF!")
+                  ("=COLUMNS((B1:C2,D1:D3))" . "#REF!")
+                  ("=ROWS(B1:C3)" . 3)
+                  ("=ROWS(1/0)" . "#DIV/0!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-days-refuses-the-day-after-9999 ()
+  "DAYS takes no day after 9999-12-31."
+  (dolist (case '(("=DAYS(2958466,0)" . "#NUM!")
+                  ("=DAYS(2958465,1)" . 2958464)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-ranks-below-the-first-are-num ()
+  "QUARTILE below 0 and LARGE or SMALL below 1 are #NUM!, fractions and all."
+  (dolist (case '(("=QUARTILE({2.2,-0.1},-0.1)" . "#NUM!")
+                  ("=QUARTILE({1,2,3,4,5},4.9)" . 5)
+                  ("=LARGE({0.1,-10,0.9,2.2},0.9)" . "#NUM!")
+                  ("=LARGE({0.1,-10,0.9,2.2},1.5)" . 0.9)
+                  ("=SMALL({1,2},0.5)" . "#NUM!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-test-complex-mixed-suffix ()
+  "IMSUB and IMDIV give #NUM! for mixed suffixes, IMSUM #VALUE!."
+  (mapc #'exc-formula-test--should-be
+   '(("=IMSUB(\"3.1+2j\",\"-3+2i\")" . "#NUM!")
+     ("=IMDIV(\"3.1+2j\",\"-3+2i\")" . "#NUM!")
+     ("=IMSUM(\"3.1+2j\",\"-3+2i\")" . "#VALUE!")
+     ("=IMPRODUCT(\"3.1+2j\",\"-3+2i\")" . "#VALUE!"))))
+
+(ert-deftest exc-formula-test-sumproduct-shape-error ()
+  "SUMPRODUCT of arrays of different shapes gives their first error."
+  (should (equal (exc-formula-test--eval
+                  "=SUMPRODUCT(B1:C1,C1:E1)" "#NUM!" "#REF!" "1" "2")
+                 "#NUM!"))
+  (should (equal (exc-formula-test--eval
+                  "=SUMPRODUCT(D1:E1,C1:E1)" "#NUM!" "#REF!" "1" "2")
+                 "#REF!"))
+  (should (equal (exc-formula-test--eval
+                  "=SUMPRODUCT(D1:E1,D1:F1)" "1" "2" "1" "2" "3")
+                 "#VALUE!")))
+
+(ert-deftest exc-formula-test-hypgeom-edges ()
+  "HYPGEOM.DIST takes no draws, and every item found, as Excel does."
+  (mapc #'exc-formula-test--should-be
+        '(("=HYPGEOM.DIST(0,0,0,0,FALSE)" . 1.0)
+          ("=HYPGEOMDIST(0,0,4,4)" . 1.0)
+          ("=HYPGEOM.DIST(0,2,3,3,TRUE)" . 0.0)
+          ("=HYPGEOM.DIST(5,10,30,7,FALSE)" . "#NUM!"))))
+
+(ert-deftest exc-formula-test-type-of-function-name ()
+  "TYPE of a built-in function's name alone is 128."
+  (mapc #'exc-formula-test--should-be
+        '(("=TYPE(SUM)" . 128) ("=TYPE(NOSUCHNAME)" . 16) ("=TYPE(1/0)" . 16))))
+
+(ert-deftest exc-formula-test-textafter-mode ()
+  "TEXTAFTER and TEXTBEFORE take only 0 or 1 as the match mode."
+  (mapc #'exc-formula-test--should-be
+        '(("=TEXTAFTER(\"a,b\",\",\",1,10)" . "#VALUE!")
+          ("=TEXTBEFORE(\"a,b\",\",\",1,-1)" . "#VALUE!")
+          ("=TEXTAFTER(\"aXb\",\"x\",1,1)" . "b"))))
+
+(ert-deftest exc-formula-test-pair-error-skips-null ()
+  "Functions of pairs give the first error but #NULL!."
+  (dolist (f '("=PEARSON(B1:C1,D1:E1)" "=CHISQ.TEST(B1:C1,D1:E1)"
+               "=F.TEST(B1:C1,D1:E1)" "=SLOPE(B1:C1,D1:E1)"))
+    (should (equal (exc-formula-test--eval f "#NULL!" "#NUM!" "#REF!" "1")
+                   "#NUM!")))
+  (should (equal (exc-formula-test--eval
+                  "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "1" "#REF!")
+                 "#REF!"))
+  (should (equal (exc-formula-test--eval
+                  "=PEARSON(B1:C1,D1:E1)" "#NULL!" "1" "2" "1")
+                 "#NULL!"))
+  (should (equal (exc-formula-test--eval
+                  "=FREQUENCY(B1:C1,D1)" "#NULL!" "#NUM!" "1")
+                 "#NULL!"))
+  ;; Place by place, the second's error where the first has none; but
+  ;; CHISQ.TEST and F.TEST take all of the first first.
+  (should (equal (exc-formula-test--eval
+                  "=PEARSON(B1:C1,D1:E1)" "TRUE" "#VALUE!" "#N/A" "1")
+                 "#N/A"))
+  (dolist (f '("=CHISQ.TEST(B1:C1,D1:E1)" "=F.TEST(B1:C1,D1:E1)"))
+    (should (equal (exc-formula-test--eval f "TRUE" "#VALUE!" "#N/A" "1")
+                   "#VALUE!"))))
+
+(ert-deftest exc-formula-test-truth-not-a-number ()
+  "Analysis ToolPak functions take TRUE and FALSE as #VALUE!, in order."
+  (mapc #'exc-formula-test--should-be
+        '(("=ISEVEN(TRUE)" . "#VALUE!") ("=ISODD(FALSE)" . "#VALUE!")
+          ("=MROUND(TRUE,1)" . "#VALUE!") ("=MROUND(5,TRUE)" . "#VALUE!")
+          ("=IF(ISEVEN(\"4\"),1,0)" . 1) ("=MROUND(7,2)" . 8)
+          ("=NOMINAL(TRUE,NA())" . "#VALUE!") ("=EFFECT(0.1,TRUE)" . "#VALUE!")
+          ("=FVSCHEDULE(TRUE,{0.1,0.2})" . "#VALUE!"))))
+
+(ert-deftest exc-formula-test-quartile-error-first ()
+  "QUARTILE gives an error in its numbers before a QUART out of range."
+  (dolist (f '("=QUARTILE(B1:C1,-5)" "=QUARTILE.INC(B1:C1,9)"
+               "=QUARTILE.EXC(B1:C1,0)"))
+    (should (equal (exc-formula-test--eval f "#REF!" "1") "#REF!")))
+  (should (equal (exc-formula-test--eval "=QUARTILE(B1:C1,D1)" "#NUM!" "1" "#REF!")
+                 "#REF!")))
+
+(ert-deftest exc-formula-test-t-dist-no-freedom ()
+  "T.DIST's density of no degrees of freedom is #DIV/0!."
+  (mapc #'exc-formula-test--should-be
+        '(("=T.DIST(0,0,FALSE)" . "#DIV/0!") ("=T.DIST(0,0,TRUE)" . "#NUM!")
+          ("=T.DIST(0,-1,FALSE)" . "#NUM!"))))
+
+(ert-deftest exc-formula-test-negbinom-chance-zero ()
+  "NEGBINOM.DIST of chance 0 is #NUM!."
+  (mapc #'exc-formula-test--should-be
+        '(("=NEGBINOM.DIST(1,1,0,TRUE)" . "#NUM!") ("=NEGBINOMDIST(1,1,0)" . "#NUM!"))))
+
+(ert-deftest exc-formula-test-date-parts-past-9999 ()
+  "YEAR, MONTH and DAY refuse the day after 9999-12-31."
+  (mapc #'exc-formula-test--should-be
+        '(("=DAY(2958466)" . "#NUM!") ("=MONTH(2958466)" . "#NUM!")
+          ("=YEAR(2958466)" . "#NUM!") ("=DAY(2958465)" . 31))))
+
+(ert-deftest exc-formula-test-datedif-yd-start-year ()
+  "DATEDIF's YD counts in START's year, as Excel does."
+  (mapc #'exc-formula-test--should-be
+        '(("=DATEDIF(8,1987,\"YD\")" . 153)
+          ("=DATEDIF(DATE(2001,6,1),DATE(2002,8,15),\"YD\")" . 75)
+          ("=DATEDIF(DATE(2015,3,1),DATE(2016,2,29),\"YD\")" . 365))))
+
+;; INDEX looks in the AREA'th of several areas, and a range of several
+;; rows and columns needs a column.
+(ert-deftest exc-formula-test-index-areas ()
+  (dolist (case '(("=INDEX((B1:B2,C1:C2),1,1,2)" . 2)
+                  ("=INDEX((B1:B2,C1:C2),1,1)" . 1)
+                  ("=INDEX((B1:B2,C1:C2),1,1,3)" . "#REF!")
+                  ("=INDEX(B1:C2,1,1,2)" . "#REF!")
+                  ("=INDEX(B1:C2,2)" . "#REF!")
+                  ("=INDEX(B1:C2,-1)" . "#VALUE!")
+                  ("=INDEX(B1:D1,2)" . 2)
+                  ("=SUM(INDEX({1,2;3,4},2))" . 7)))
+    (should (equal (exc-formula-test--eval (car case) "1" "2" "3")
+                   (cdr case)))))
+
+;; XIRR leaves out a place where the cash flow and date are both empty.
+(ert-deftest exc-formula-test-xirr-drops-empty-places ()
+  (let ((model (exc-model-create
+                2 9 (list (list "=XIRR(B1:H1,B2:H2)" "-10" "1" "5" "0.0001" "4.5" "" "'1" "TRUE")
+                          (list "=XIRR(B1:I1,B2:I2)" "1" "99" "55" "4" "9" "" "32015" "TRUE")))))
+    (should (< (abs (- (exc-model-get-computed-value model 0 0) 0.59931975575))
+               1e-9))
+    (should (equal (exc-model-get-computed-value model 1 0) "#VALUE!"))))
+
+;; COUPDAYS counts a period over February 1900 in the calendar, as Excel.
+(ert-deftest exc-formula-test-coupdays-early-1900 ()
+  (exc-formula-test--should-be '("=COUPDAYS(3.2,DATE(2050,12,31),1,1)" . 365))
+  (exc-formula-test--should-be '("=COUPDAYS(DATE(2020,3,3),DATE(2050,12,31),1,1)" . 366)))
+
+(ert-deftest exc-formula-accrint-calc-method ()
+  "ACCRINT without its whole periods before FIRST, as Excel counts them."
+  (dolist (case '(("=ACCRINT(DATE(2000,2,14),DATE(2005,4,15),DATE(2009,7,27),1,1,4,0,0)"
+                   . 4.7027777777777775)
+                  ("=ACCRINT(DATE(2007,3,1),DATE(2008,8,31),DATE(2008,5,1),0.1,1000,2,0,FALSE)"
+                   . 66.94444444444446)
+                  ("=ACCRINT(DATE(2007,3,1),DATE(2008,8,31),DATE(2008,5,1),0.1,1000,2,0)"
+                   . 116.94444444444446)
+                  ("=ACCRINT(42736,43070,42826,0.33,3000,4,1,FALSE)"
+                   . -253.87637362637361)
+                  ("=ACCRINT(42736,43070,42826,0.33,3000,4,1)"
+                   . 241.12362637362637)
+                  ("=ACCRINT(43800,44531,44075,0.05,1000,2,2,FALSE)"
+                   . -37.916666666666664)
+                  ("=ACCRINT(43800,44531,44075,0.05,1000,2,2)"
+                   . 37.083333333333336)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-yearfrac-1900-average ()
+  "YEARFRAC's average year leaves out the serials' 29 February 1900."
+  (exc-formula-test--should-be '("=YEARFRAC(1987,345,1)" . 4.496576905522592)))
+
+(ert-deftest exc-formula-xmatch-sharp-s ()
+  "XMATCH's search for equal text takes ß for ss; MATCH's and wildcards' do not."
+  (dolist (case '(("=XMATCH(\"ß\",{1,\"ss\",2.1},0)" . 2)
+                  ("=XMATCH(\"SS\",{1,\"ß\",2.1})" . 2)
+                  ("=XLOOKUP(\"ß\",{\"a\",\"ss\"},{1,2})" . 2)
+                  ("=MATCH(\"ß\",{1,\"ss\",2.1},0)" . "#N/A")
+                  ("=XMATCH(\"ß\",{1,\"ss\",2.1},2)" . "#N/A")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-filter-one-flag ()
+  "FILTER takes one value as the row of flags of an array of one column."
+  (should (equal (exc-formula-test--eval "=ROWS(FILTER({\"a\";2.1;\"b\"},TRUE))") 3))
+  (should (equal (exc-formula-test--eval "=FILTER({\"a\",2.1;\"b\",4.1},TRUE)") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=FILTER({\"a\";2.1},FALSE)") "#CALC!")))
+
+(ert-deftest exc-formula-name-backslash ()
+  "A name may start with a backslash and hold backslashes and question marks."
+  (should-not (exc-calc-name-problem "\\Rate"))
+  (should-not (exc-calc-name-problem "_1234\\5678\\90"))
+  (should-not (exc-calc-name-problem "Is?Done"))
+  (should (exc-calc-name-problem "?Done"))
+  (let* ((one (make-exc-default-data-source
+               '("A" "B") '(("1" "2") ("=_12\\34+\\x" ""))))
+         (workbook (exc-workbook-create (list (cons "Sheet1" one)))))
+    (exc-workbook-define-name workbook "_12\\34" "=Sheet1!$A$1")
+    (exc-workbook-define-name workbook "\\x" "=Sheet1!$B$1")
+    (should (equal (exc-get-computed-value-at one 1 0) 3))))
+
+(ert-deftest exc-formula-cumprinc-closed-form ()
+  "CUMPRINC keeps Excel's last digits where a high rate makes interests large."
+  (dolist (case '(("=CUMPRINC(26,5.5,125000,3,5,1)" . -890.9273834880278)
+                  ("=CUMPRINC(3.2,5.5,125000,3,5,1)" . -14331.658892802277)
+                  ("=CUMPRINC(9,5.7,125000,3,5,0)" . -24915.887871905983)
+                  ("=CUMPRINC(0.05,10,1000,1,3,1)" . -286.3220691224783)
+                  ("=CUMPRINC(0.05,10,1000,1,10,0)" . -1000)))
+    (should (< (abs (- (exc-formula-test--eval (car case)) (cdr case)))
+               (* 1e-15 (abs (cdr case)))))))
+
+(ert-deftest exc-formula-indirect-r1c1 ()
+  "INDIRECT reads R1C1 cells, ranges, whole rows and whole columns."
+  (dolist (case '(("=INDIRECT(\"R1C2\",FALSE)" . 1)
+                  ("=INDIRECT(\"RC[2]\",FALSE)" . 2)
+                  ("=SUM(INDIRECT(\"R1C2:R1C3\",FALSE))" . 3)
+                  ("=SUM(INDIRECT(\"C2:C3\",FALSE))" . 3)
+                  ("=SUM(INDIRECT(\"C3\",FALSE))" . 2)
+                  ;; A step past the edge wraps to the sheet's last row.
+                  ("=ISBLANK(INDIRECT(\"R[-1]C\",FALSE))" . t)
+                  ("=INDIRECT(\"R0C1\",FALSE)" . "#REF!")
+                  ("=INDIRECT(\"R1C1:R2\",FALSE)" . "#REF!")))
+    (should (equal (exc-formula-test--eval (car case) "1" "2") (cdr case))))
+  (should (equal (exc-formula-test--eval "=SUM(INDIRECT(\"R1\",FALSE))") "#CYCLE!")))
+
+(ert-deftest exc-formula-oddlprice-quasi-coupons ()
+  "ODDLPRICE counts a long last period in the quasi coupon periods of its frequency."
+  (dolist (case '(("=ODDLPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),0.075,0.06,120,2,1)"
+                   . 121.51937811334447)
+                  ("=ODDLPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),0.075,0.06,120,1,1)"
+                   . 121.52128858401393)
+                  ("=ODDLPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),0.08,0.0711,120,2,3)"
+                   . 116.47102012136368)))
+    (should (< (abs (- (exc-formula-test--eval (car case)) (cdr case)))
+               (* 1e-12 (cdr case))))))
+
+(ert-deftest exc-formula-oddfprice-day-bases ()
+  "ODDFPRICE counts whole quasi coupon periods as one under bases 2 and 3."
+  (dolist (case '(("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.075,0.067,120,1,2)"
+                   . 115.98854775223758)
+                  ("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.075,0.067,120,2,2)"
+                   . 115.84574814124899)
+                  ("=ODDFPRICE(DATE(2020,3,1),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.08,0.06,120,2,3)"
+                   . 125.74920319203889)
+                  ("=ODDFPRICE(DATE(2020,3,17),DATE(2030,3,1),DATE(2020,1,15),DATE(2021,3,1),0.08,0.06,120,1,3)"
+                   . 125.80470933696785)))
+    (should (< (abs (- (exc-formula-test--eval (car case)) (cdr case)))
+               (* 1e-12 (cdr case))))))
+
+(ert-deftest exc-formula-vdb-fractional-start ()
+  "VDB lines its periods up with a start part way through one."
+  (dolist (case '(("=VDB(1,0,14,0,0.5,1.25,FALSE)" . 0.044642857142857144)
+                  ("=VDB(1,0,14,2.5,3.5,1.25,FALSE)" . 0.07074765193864536)
+                  ("=VDB(1,0,14,3.5,4.5,1.25,FALSE)" . 0.06872629045468406)
+                  ("=VDB(1,0,14,13.5,14,1.25,FALSE)" . 0.03436314522734203)))
+    (should (< (abs (- (exc-formula-test--eval (car case)) (cdr case)))
+               (* 1e-14 (cdr case))))))
+
+(ert-deftest exc-formula-name-like-a-cell-and-another-book ()
+  "A name may start like a cell, and one for another workbook's cell is #REF!."
+  (let* ((one (make-exc-default-data-source
+               '("A" "B") '(("2.1" "") ("=s2a1" "=s4a1"))))
+         (workbook (exc-workbook-create (list (cons "Sheet1" one)))))
+    (exc-workbook-define-name workbook "s2a1" "=Sheet1!$A$1")
+    (exc-workbook-define-name workbook "s4a1" "=[1]Sheet4!$A$1")
+    (should (equal (exc-get-computed-value-at one 1 0) 2.1))
+    (should (equal (exc-get-computed-value-at one 1 1) "#REF!"))))
+
+(ert-deftest exc-formula-names-take-a-curly-quote ()
+  "A name may be one curly quotation mark, as tdf165886.xlsx has it.
+The marks are \u201c, \u201d, \u2018 and \u2019."
+  (should-not (exc-calc-name-problem "\u201c"))
+  (should-not (exc-calc-name-problem "\u201d"))
+  (let* ((sheet (make-exc-default-data-source
+                 '("" "" "" "" "" "" "") '(("0" "0" "" "" "" "0" "0"))))
+         (workbook (exc-workbook-create (list (cons "Sheet1" sheet)))))
+    (exc-workbook-define-name workbook "\u201c" "=Sheet1!$G$1")
+    (exc-workbook-define-name workbook "\u201d" "=Sheet1!$G$2")
+    (dolist (case '(("=\u201c" . 0)
+                    ("=\u201d" . 0)
+                    ("=OR(A1=0,A1<>\u201c)" . t)
+                    ("=OR(B1=0,B1<>\u201d)" . t)
+                    ;; Two marks in a row are no name.
+                    ("=OR(A1=0,A1<>\u201c\u201c)" . "#NAME?")
+                    ("=\u2018" . "#NAME?")
+                    ("=\u2019" . "#NAME?")))
+      (exc-set-raw-value-at sheet 0 2 (car case))
+      (should (equal (list (car case) (exc-get-computed-value-at sheet 0 2))
+                     (list (car case) (cdr case)))))))
+
+(ert-deftest exc-formula-coth-and-csch-keep-their-digits ()
+  "COTH and CSCH of a tiny number, where two exponentials would cancel.
+The cases are IronCalc's TRIGONOMETRIC workbook, as Excel keeps them."
+  (dolist (case '(("=COTH(0.000000000001)" . 1000000000000)
+                  ("=CSCH(0.000000000001)" . 1000000000000)
+                  ("=COTH(-0.000000000001)" . -1000000000000)
+                  ("=CSCH(-0.000000000001)" . -1000000000000)
+                  ("=COTH(0)" . "#DIV/0!")
+                  ("=CSCH(0)" . "#DIV/0!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-days360-rounds-a-time-to-the-second ()
+  "DAYS360 counts a day whose time is within half a second of midnight.
+The cases are IronCalc's DAYS_DAYS360 workbook, as Excel keeps them."
+  (dolist (case '(("=DAYS360(DATE(2025,1,1),DATE(2025,12,1))" . 330)
+                  ("=DAYS360(DATE(2025,1,1),DATE(2025,1,31))" . 30)
+                  ("=DAYS360(DATE(2025,1,1),DATE(2025,1,31),TRUE)" . 29)
+                  ;; A time just before midnight is the next day.
+                  ("=DAYS360(45992.000001,46000.999999)" . 9)
+                  ("=DAYS360(45658.0000001,45658.9999999)" . 1)
+                  ("=DAYS360(45658.9999999,45659.0000001)" . 0)
+                  ("=DAYS360(45658.9999999,45658)" . -1)
+                  ;; A day and a half is one day either way.
+                  ("=DAYS360(45658.5,45659.5)" . 1)
+                  ("=DAYS360(45658.4999999,45659.5)" . 1)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-timevalue-takes-a-rolled-over-time ()
+  "TIMEVALUE takes 24 hours, a leap second and spaces around a colon.
+The cases are IronCalc's TIMEVALUE and DATEVALUE workbooks, as Excel
+keeps them."
+  (dolist (case '(;; 24 hours and a leap second carry into the next day.
+                  ("=TIMEVALUE(\"24:00\")" . 0)
+                  ("=TIMEVALUE(\"23:59:60\")" . 0)
+                  ("=TIMEVALUE(\"0:0:86400\")" . "#VALUE!")
+                  ;; A meridiem needs an hour of 12 or less.
+                  ("=TIMEVALUE(\"13:00 PM\")" . "#VALUE!")
+                  ("=TIMEVALUE(\"12:00 AM\")" . 0)
+                  ("=TIMEVALUE(\"12:00 PM\")" . 0.5)
+                  ;; Spaces around a colon are allowed.
+                  ("=TIMEVALUE(\"4 : 35\")" . 0.1909722222222222)
+                  ("=TIMEVALUE(\"4::35\")" . "#VALUE!")
+                  ;; The hours carry into the date as well.
+                  ("=DATEVALUE(\"2026-01-01 24:00:00\")" . 46024)
+                  ("=DATEVALUE(\"2026-01-01 25:00:00\")" . 46024)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-datevalue-takes-spaces-around-the-separators ()
+  "DATEVALUE reads a year, month and day with spaces about the hyphens.
+The case is IronCalc's DATEVALUE_issue_1380 workbook, as Excel keeps it."
+  (dolist (case '(("=DATEVALUE(\"2026 - 01 - 01\")" . 46023)
+                  ("=DATEVALUE(\"2026 / 01 / 01\")" . 46023)
+                  ("=DATEVALUE(\" 2026 - 1 - 1 \")" . 46023)
+                  ;; A date with a field out of range is still no date.
+                  ("=DATEVALUE(\"2026 - 13 - 01\")" . "#VALUE!")
+                  ("=DATEVALUE(\"2026-02-30\")" . "#VALUE!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-sequence-takes-an-empty-first-argument ()
+  "SEQUENCE(,12,,2.5) is one row of twelve, an empty argument being 1.
+The values are IronCalc's SEQUENCE workbook, as Excel keeps them."
+  (dolist (case '(("=ROWS(SEQUENCE(,12,,2.5))" . 1)
+                  ("=COLUMNS(SEQUENCE(,12,,2.5))" . 12)
+                  ("=INDEX(SEQUENCE(,12,,2.5),1,3)" . 6)
+                  ("=INDEX(SEQUENCE(,12,,2.5),1,12)" . 28.5)
+                  ("=SUM(SEQUENCE(3,,10))" . 33)
+                  ("=INDEX(SEQUENCE(3,,10),3,1)" . 12)
+                  ;; No row at all is an empty array, which is #CALC!.
+                  ("=SEQUENCE(0,0)" . "#CALC!")
+                  ("=SEQUENCE(-1)" . "#CALC!")
+                  ("=SEQUENCE(0.3)" . "#CALC!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-workday-stops-at-the-edge-of-the-sheet ()
+  "WORKDAY gives #NUM! at once for a walk off the end of the sheet.
+A count of 1E+15 working days used to walk for ever; Excel gives #NUM!."
+  (dolist (case '(("=WORKDAY(DATE(2025,1,1),1E+15)" . "#NUM!")
+                  ("=WORKDAY.INTL(DATE(2025,1,1),-1E+15)" . "#NUM!")
+                  ("=WORKDAY(DATE(9999,12,31),1)" . "#NUM!")
+                  ("=WORKDAY(DATE(2025,1,1),1)" . 45659)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-whole-number-past-1e18-is-num ()
+  "A whole number past 1e18 is #NUM! where a whole one is wanted.
+BINOM.DIST(1E+10,1E+30,0.3,TRUE) summed a billion terms before: its
+1E+30 was read as a whole number, which the check for a float missed."
+  (dolist (case '(("=BINOM.DIST(1E+10,1E+30,0.3,TRUE)" . "#NUM!")
+                  ("=BINOM.DIST(1E+30,10,0.3,TRUE)" . "#NUM!")
+                  ("=BINOM.DIST(3,10,0.3,TRUE)" . 0.6496107183999984)))
+    (exc-formula-test--should-be case))
+  (dolist (number (list 1e30 (expt 2 100) (float (expt 2 100))))
+    (should (equal (condition-case err (exc-calc-int number)
+                     (exc-calc-error (cadr err)))
+                   "#NUM!")))
+  (should (equal (exc-calc-int 1e15) 1000000000000000))
+  (should (equal (exc-calc-int 5.7) 5)))
+
+(ert-deftest exc-formula-workday-floors-a-fraction-of-a-day ()
+  "WORKDAY counts a fraction of a day to the whole day below it.
+So -0.9999999 is one day back, as Excel has it in IronCalc's WORKDAY
+workbook, and a positive fraction is still no day at all."
+  (dolist (case '(("=WORKDAY(DATE(2025,1,10),-0.9999999)" . 45666)
+                  ("=WORKDAY.INTL(DATE(2025,1,10),-0.9999999)" . 45666)
+                  ("=WORKDAY(DATE(2025,1,10),-1E-9)" . 45666)
+                  ("=WORKDAY.INTL(DATE(2025,1,10),-1E-9)" . 45666)
+                  ("=WORKDAY(DATE(2025,1,10),0.9999999)" . 45667)
+                  ("=WORKDAY(DATE(2025,1,10),1E-9)" . 45667)
+                  ("=WORKDAY(DATE(2025,1,10),2.000001)" . 45671)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-chance-of-one-is-no-inverse ()
+  "BINOM.INV and NEGBINOM.DIST take no chance of 1, but BINOM.DIST does.
+The cases are IronCalc's BINOM workbook, as Excel keeps them."
+  (dolist (case '(("=BINOM.INV(10,1,0.8)" . "#NUM!")
+                  ("=CRITBINOM(10,1,0.8)" . "#NUM!")
+                  ("=BINOM.INV(10,0.5,0.8)" . 6)
+                  ("=NEGBINOM.DIST(2,10,1,TRUE)" . "#NUM!")
+                  ("=NEGBINOMDIST(2,10,1)" . "#NUM!")
+                  ("=NEGBINOM.DIST(2,10,0.999999,TRUE)" . 1.0000000000000007)
+                  ;; The distributions themselves take a chance of 1.
+                  ("=BINOM.DIST(2,10,1,TRUE)" . 0)
+                  ("=BINOM.DIST(2,10,1,FALSE)" . 0)
+                  ("=BINOM.DIST.RANGE(10,1,2,3)" . 0)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-frequency-takes-a-number-for-one-value ()
+  "FREQUENCY gives #VALUE! when its one value is no number.
+A range's or an array's text, logical values and blanks are still left
+out, and a value that is no number is seen before BINS goes wrong, as
+Excel has it in the forum-mso-en4-134670 workbook."
+  (dolist (case '(("=FREQUENCY(FALSE,{1,2})" . "#VALUE!")
+                  ("=FREQUENCY(TRUE,{1,2})" . "#VALUE!")
+                  ("=FREQUENCY(\"\",{1,2})" . "#VALUE!")
+                  ("=FREQUENCY(\"x\",{1,2})" . "#VALUE!")
+                  ;; The one value first, whatever BINS holds.
+                  ("=FREQUENCY(FALSE,#NAME?)" . "#VALUE!")
+                  ("=FREQUENCY(FALSE,{#DIV/0!,1})" . "#VALUE!")
+                  ("=FREQUENCY(#N/A,{1,2})" . "#N/A")
+                  ;; A number is counted, and an array keeps its numbers.
+                  ("=SUM(FREQUENCY(1,{1,2}))" . 1)
+                  ("=SUM(FREQUENCY({1,2,FALSE},{1,2}))" . 2)
+                  ("=SUM(FREQUENCY({FALSE,TRUE,\"\"},{1,2}))" . 0)))
+    (exc-formula-test--should-be case))
+  ;; What a range or a one-cell reference holds besides numbers is left out.
+  (let ((model (exc-model-create 3 2 '(("FALSE" "=SUM(FREQUENCY(A1:A3,{1,2}))")
+                                        ("1" "")
+                                        ("x" "")))))
+    (should (equal (exc-model-get-computed-value model 0 1) 1)))
+  (let ((model (exc-model-create 1 2 '(("FALSE" "=SUM(FREQUENCY(A1,{1,2}))")))))
+    (should (equal (exc-model-get-computed-value model 0 1) 0))))
+
+(ert-deftest exc-formula-binomial-chances-come-from-the-beta-function ()
+  "Over a thousand chances, BINOM.DIST counts them with the incomplete beta function.
+The chances of 0 to K successes are I_{1-P}(N-K, K+1); summing a chance
+at a time took too long there.  A thousand or fewer are still summed,
+so what they gave before stays exact."
+  (dolist (case '(("=BINOM.DIST(5,10,0.5,TRUE)" . 0.623046875)
+                  ("=BINOM.DIST.RANGE(10,0.5,2,3)" . 0.1611328125)
+                  ("=NEGBINOM.DIST(4,3,0.5,TRUE)" . 0.7734375)
+                  ("=NEGBINOM.DIST(0,1,0.5,TRUE)" . 0.5)
+                  ("=BINOM.INV(10,0.5,0.5)" . 5)
+                  ("=BINOM.INV(1000000,0.5,0.5)" . 500000)
+                  ("=BINOM.INV(1000,0.1,0.000000001)" . 48)))
+    (exc-formula-test--should-be case))
+  ;; Past a thousand, the closed form gives what summing gives.
+  (dolist (case '((1500 3000 0.5) (2000 100000 0.02) (5000 6000 0.83)))
+    (let* ((k (nth 0 case)) (n (nth 1 case)) (p (nth 2 case))
+           (sum (cl-loop for i from 0 to k sum (exc-calc--binomial-pmf i n p))))
+      (should (< (abs (- sum (exc-calc--binomial-cdf k n p))) (* 1e-10 sum))))))
+
+(ert-deftest exc-formula-base-places-are-read-before-the-number ()
+  "DEC2BIN and its kin read PLACES before NUMBER, as Excel does.
+A PLACES below one or above ten is #NUM! however NUMBER reads, as \"E\"
+written in base 2 is; IronCalc's BASES workbook keeps that in its
+places sheet, where every one of them is a shared string."
+  (dolist (case '(("=DEC2BIN(\"E\",0)" . "#NUM!")
+                  ("=DEC2BIN(\"E\",11)" . "#NUM!")
+                  ("=DEC2OCT(\"E\",0)" . "#NUM!")
+                  ("=DEC2OCT(\"E\",11)" . "#NUM!")
+                  ("=DEC2HEX(\"E\",0)" . "#NUM!")
+                  ("=DEC2HEX(\"E\",11)" . "#NUM!")
+                  ;; A PLACES that is only too short leaves NUMBER to fail
+                  ;; as it reads, and one that fits pads NUMBER instead.
+                  ("=DEC2BIN(\"E\",1)" . "#VALUE!")
+                  ("=DEC2BIN(\"E\")" . "#VALUE!")
+                  ("=DEC2BIN(27,1)" . "#NUM!")
+                  ("=DEC2BIN(27,5)" . "11011")
+                  ("=DEC2BIN(5,10)" . "0000000101")
+                  ("=DEC2BIN(-25,10)" . "1111100111")
+                  ("=DEC2BIN(-25,0)" . "#NUM!")
+                  ("=DEC2BIN(5,0)" . "#NUM!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-trunc-at-places-a-float-cannot-hold ()
+  "TRUNC cuts a number off at places a float cannot count to.
+IronCalc's MROUND_TRUNC_INT workbook cuts 123456789 off at 1000 places,
+1E+100 at 1E+50 and 5 at 9.99999E+307: none of them moves.  Cutting 5
+that far left of the point leaves none of it."
+  (dolist (case '(("=TRUNC(123456789,1000)" . 123456789)
+                  ("=TRUNC(1E+100,1E+50)" . 1e+100)
+                  ("=TRUNC(9.99999E+307,5)" . 9.99999e+307)
+                  ("=TRUNC(5,9.99999E+307)" . 5)
+                  ("=TRUNC(5,-9.99999E+307)" . 0)
+                  ("=TRUNC(2.55,1)" . 2.5)
+                  ("=TRUNC(-2.55,1)" . -2.5)
+                  ("=TRUNC(1.9,1.9)" . 1.9)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-offset-takes-a-fraction-as-one-at-least ()
+  "OFFSET cuts a fractional height or width to a whole number, at least one.
+Excel reads OFFSET(A1,0,0,1,0.9) as one column wide rather than none,
+which is #REF!, as IronCalc's ROW_COLUM workbook keeps it; 2.9 is two.
+The cells B1 to D1 hold 0, 1 and 2."
+  (dolist (case '(("=SUM(OFFSET(B1,0,0,1,0.9))" . 0)
+                  ("=SUM(OFFSET(B1,0,0,1,1.9))" . 0)
+                  ("=SUM(OFFSET(B1,0,0,1,2.9))" . 1)
+                  ("=SUM(OFFSET(B1,0,0,2.5,2))" . 1)
+                  ("=ROWS(OFFSET(B1,0,0,0.5,1))" . 1)
+                  ("=COLUMNS(OFFSET(B1,0,0,1,1.5))" . 1)))
+    (should (equal (exc-formula-test--eval (car case) "0" "1" "2")
+                   (cdr case))))
+  (should (equal (exc-formula-test--eval "=SUM(OFFSET(B1,0,0,1,0))"
+                                                 "0" "1" "2")
+                 "#REF!")))
+
+(ert-deftest exc-formula-value-takes-a-currency-sign-after-the-number ()
+  "VALUE reads a currency sign after the number, as \"23€\" has it.
+IronCalc's T_VALUE_VALUETOTEXT workbook keeps 23€ as 23 and 12€ as 12,
+and its EXP_SIGN keeps 100€ as 100; a sign before the number works as
+it did, and text that is no number is still #VALUE!."
+  (dolist (case '(("=VALUE(\"23€\")" . 23)
+                  ("=VALUE(\"12€\")" . 12)
+                  ("=VALUE(\"100€\")" . 100)
+                  ("=VALUE(\"23$\")" . 23)
+                  ("=VALUE(\"€23\")" . 23)
+                  ("=VALUE(\"23€ \")" . 23)
+                  ("=VALUE(\"-23€\")" . -23)
+                  ("=VALUE(\"23q\")" . "#VALUE!")
+                  ("=VALUE(\"€23€\")" . "#VALUE!")
+                  ("=EXP(\"100€\")" . 2.6881171418161356e+43)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-filter-answers-with-an-array-not-a-reference ()
+  "FILTER gives an array, even when it gives what EMPTY holds.
+A reference given for EMPTY is read, as Excel reads it, so
+ISREF(FILTER(A1:A2,A1:A2>10,A1:A2)) is FALSE; with none, and nothing
+kept, the answer is #CALC!, as Excel 365 has it where IronCalc's ISREF
+workbook keeps the #VALUE! of an older one."
+  (should (equal (exc-formula-test--eval "=ISREF(B1:C1)") t))
+  (should-not (exc-formula-test--eval
+               "=ISREF(FILTER(B1:C1,B1:C1>10,B1:C1))"))
+  (should-not (exc-formula-test--eval "=ISREF(FILTER(B1:C1,B1:C1>10))")))
+
+(ert-deftest exc-formula-max-reads-its-arguments-in-order ()
+  "MAX and MIN give the error of the first argument that is one or no number.
+IronCalc's MAX_MIN workbook has MAX(\"abc\",NA()) as #VALUE! and
+MAX(NA(),\"abc\") as #N/A, as Excel reads them from the left."
+  (dolist (case '(("=MAX(\"abc\",NA())" . "#VALUE!")
+                  ("=MAX(NA(),\"abc\")" . "#N/A")
+                  ("=MAX(1,\"abc\")" . "#VALUE!")
+                  ("=MAX(NA(),1)" . "#N/A")
+                  ("=MAX(1,2)" . 2)
+                  ("=MIN(\"abc\",NA())" . "#VALUE!")
+                  ("=MIN(NA(),\"abc\")" . "#N/A")
+                  ("=MIN(1,2)" . 1)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-bit-shift-reaches-53-places ()
+  "BITLSHIFT and BITRSHIFT take a shift of at most 53 places either way.
+IronCalc's BITs workbook has BITRSHIFT(12,100), BITRSHIFT(12,54),
+BITLSHIFT(12,-54) and BITRSHIFT(12,-54) as #NUM!, as Excel has them;
+so is a result past 2^48-1, as BITLSHIFT(12,53) gives."
+  (dolist (case '(("=BITRSHIFT(12,100)" . "#NUM!")
+                  ("=BITRSHIFT(12,54)" . "#NUM!")
+                  ("=BITLSHIFT(12,-54)" . "#NUM!")
+                  ("=BITRSHIFT(12,-54)" . "#NUM!")
+                  ("=BITLSHIFT(12,53)" . "#NUM!")
+                  ("=BITLSHIFT(1,48)" . "#NUM!")
+                  ("=BITLSHIFT(12,3)" . 96)
+                  ("=BITRSHIFT(12,2)" . 3)
+                  ("=BITRSHIFT(12,-3)" . 96)
+                  ("=BITRSHIFT(12,53)" . 0)
+                  ("=BITLSHIFT(1,47)" . 140737488355328)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-switch-matches-a-blank-with-zero-only ()
+  "SWITCH matches a blank with the number 0, and with nothing else.
+pycel's logical workbook has SWITCH(0,<empty>,\"match\") matching, where
+SWITCH(FALSE,<empty>,\"match\"), SWITCH(<empty>,\"\") and
+SWITCH(0,\"\") are #N/A: a blank is no text and no truth value to it,
+though = reads a blank as both.  B1 here is empty."
+  (dolist (case '(("=SWITCH(0,B1,\"match\")" . "match")
+                  ("=SWITCH(B1,0,\"match\")" . "match")
+                  ("=SWITCH(FALSE,B1,\"match\")" . "#N/A")
+                  ("=SWITCH(B1,\"\",\"match\")" . "#N/A")
+                  ("=SWITCH(0,\"\",\"match\")" . "#N/A")
+                  ("=SWITCH(\"\",\"\",\"match\")" . "match")
+                  ("=SWITCH(TRUE,TRUE,\"match\")" . "match")
+                  ("=SWITCH(\"UPPER\",\"Upper\",\"match\")" . "match")
+                  ("=SWITCH(TRUE,1,\"a\",\"other\")" . "other")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-poisson-counts-no-event-at-no-mean ()
+  "POISSON.DIST of no mean is 1 for no event and 0 for any other.
+IronCalc's POISSON workbook has POISSON.DIST(1,0,FALSE) as 0 and
+POISSON.DIST(1,0,TRUE) as 1; a count below 0 is #NUM! however small it
+is, and a mean of a million is counted as the chi-square sums it."
+  (dolist (case '(("=POISSON.DIST(1,0,FALSE)" . 0)
+                  ("=POISSON.DIST(0,0,FALSE)" . 1)
+                  ("=POISSON.DIST(1,0,TRUE)" . 1)
+                  ("=POISSON.DIST(-0.000001,5,TRUE)" . "#NUM!")
+                  ("=POISSON.DIST(-1,5,TRUE)" . "#NUM!")
+                  ("=POISSON.DIST(2.9,5,FALSE)" . 0.08422433748856833)
+                  ("=POISSON.DIST(1000000,1000000,TRUE)" . 0.5002659614862837)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-gamma-density-ends-at-zero ()
+  "A gamma density endless at 0 is #NUM!, as Excel has it.
+IronCalc's GAMMA workbook has GAMMA.DIST(0,0.5,1,FALSE) as #NUM!, and
+the GAMMA.INV of that error follows it."
+  (dolist (case '(("=GAMMA.DIST(0,0.5,1,FALSE)" . "#NUM!")
+                  ("=GAMMA.DIST(0,1,1,FALSE)" . 1)
+                  ("=GAMMA.DIST(0,2,1,FALSE)" . 0)
+                  ("=GAMMA.INV(0,0.5,1)" . 0)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-chance-far-below-a-half-still-inverts ()
+  "T.INV of a chance below 1E-16 is read from the far side of 0.
+IronCalc's T_DIST workbook has T.INV(1.230468749943611E-56,10) as
+-1000000.0000000001, where 1 - P is a whole and tells nothing."
+  (dolist (case '(("=T.INV(1.230468749943611E-56,10)" . -1000000.0000000001)
+                  ("=T.INV(0.01,9)" . -2.8214379250258093)))
+    (exc-formula-test--should-be case))
+  ;; The far side of 0 is where the little of the tail is, not the whole.
+  (should (< (abs (- (exc-formula-test--eval
+                      "=T.INV(1.230468749943611E-56,10)")
+                     -1000000.0))
+             1e-6)))
+
+(ert-deftest exc-formula-prob-without-chances-is-div0 ()
+  "PROB whose chances are all text divides by a sum of none.
+IronCalc's PROB workbook has PROB({\"Hi\"},{\"hi\"},1) as #DIV/0!; the
+#NUM! of chances that come to no 1 is for chances that are some."
+  (dolist (case '(("=PROB({\"Hi\"},{\"hi\"},1)" . "#DIV/0!")
+                  ("=PROB({1,2},{0.5,0.4},1)" . "#NUM!")
+                  ("=PROB({1,2},{0.5,0.5},1)" . 0.5)
+                  ("=PROB({1,2},{0.5,0.5},1,2)" . 1)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-xmatch-matches-a-regular-expression ()
+  "XMATCH with a match mode of 3 reads the wanted value as a regexp.
+IronCalc's XMATCH workbook finds the first country matching
+\"[A-Z][a-z]+y\" as Germany and the last as Francialy, and finds
+nothing for 42; a pattern is found anywhere in a value unless ^ and $
+hold it to the whole."
+  (dolist (case '(("=XMATCH(\"[A-Z][a-z]+y\",{\"Albania\";\"Indonesia\";\"India\";\"Germany\";\"Spain\";\"Venezuela\";\"Italy\";\"Francialy\"},3,1)" . 4)
+                  ("=XMATCH(\"[A-Z][a-z]+y\",{\"Albania\";\"Indonesia\";\"India\";\"Germany\";\"Spain\";\"Venezuela\";\"Italy\";\"Francialy\"},3,-1)" . 8)
+                  ("=XMATCH(42,{\"apple\";\"bannana\"},3)" . "#N/A")
+                  ("=XMATCH(\"a.e\",{\"apple\";\"axe\"},3)" . 2)
+                  ("=XMATCH(\"42\",{42},3)" . 1)
+                  ("=XMATCH(\"Ger.*\",{\"Albania\";\"Germany\"},3)" . 2)
+                  ("=XMATCH(\"many\",{\"Albania\";\"Germany\"},3)" . 2)
+                  ("=XMATCH(\"^many$\",{\"Albania\";\"Germany\"},3)" . "#N/A")
+                  ("=XLOOKUP(\"[A-Z][a-z]+y\",{\"Albania\";\"Germany\"},{\"x\";\"yz\"},,3)"
+                   . "yz")))
+    (exc-formula-test--should-be case))
+  ;; Neither a regular expression nor a wildcard is searched for by halves.
+  (dolist (formula '("=XMATCH(\"a\",{\"a\"\"b\"},3,2)"
+                     "=XMATCH(\"a*\",{\"a\"\"b\"},2,2)"
+                     "=XMATCH(\"a\",{\"a\"\"b\"},4)"))
+    (should (equal (exc-formula-test--eval formula) "#VALUE!"))))
+
+(ert-deftest exc-formula-text-too-big-for-a-float-is-no-number ()
+  "Text that reads as more than a float holds is no number: #VALUE!.
+IronCalc's arithmetic workbook has VALUE(\"1e400\") and a cell of text
+\"1e400\" added to 1 as #VALUE!, where a number of that size is #NUM!;
+text under flow, as \"1e-400\", is 0 as Excel has it."
+  (dolist (case '(("=VALUE(\"1e400\")" . "#VALUE!")
+                  ("=VALUE(\"1e309\")" . "#VALUE!")
+                  ("=VALUE(\"1e400%\")" . "#VALUE!")
+                  ("=VALUE(\"1e308\")" . 1e308)
+                  ("=VALUE(\"1e-400\")" . 0)
+                  ("=VALUE(\"inf\")" . "#VALUE!")
+                  ("=VALUE(\"123\")" . 123)))
+    (exc-formula-test--should-be case))
+  ;; Text in a cell reads as no number either, so 1 added to it is #VALUE!.
+  (should (equal (exc-formula-test--eval "=B1+1" "'1e400") "#VALUE!"))
+  (should (equal (exc-formula-test--eval "=B1+1" "'1e-400") 1)))
+
+(ert-deftest exc-formula-pv-at-a-rate-of-minus-one-divides-by-nothing ()
+  "PV at a rate of -1 has no growth to divide by, and gives #DIV/0!.
+IronCalc's PV workbook has PV(-1,20,300) as #DIV/0!, where PV(-3,0.5,1)
+is #NUM! for what an odd root of a negative growth is not."
+  (dolist (case '(("=PV(-1,20,300)" . "#DIV/0!")
+                  ("=PV(-1,20,0)" . "#DIV/0!")
+                  ("=PV(-1,-2,300)" . "#DIV/0!")
+                  ("=PV(-3,0.5,1)" . "#NUM!")
+                  ("=PV(-0.5,2,100)" . -600)
+                  ("=PV(0.05,5,10)" . -43.29476670630824)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-tilde-with-nothing-after-it-escapes-nothing ()
+  "SEARCH reads a ~ that escapes nothing as nothing, and matches at once.
+IronCalc's FIND_SEARCH workbook has SEARCH(\"~\",\"Hello\",1) and
+SEARCH(\"~\",\"Hi ~Bang!\",1) as 1, where FIND of the same text finds
+the ~ itself at 4; ~~ and ~d still stand for a ~ and a d."
+  (dolist (case '(("=SEARCH(\"~\",\"Hello\",1)" . 1)
+                  ("=SEARCH(\"~\",\"Hi ~Bang!\",1)" . 1)
+                  ("=FIND(\"~\",\"Hi ~Bang!\",1)" . 4)
+                  ("=FIND(\"~\",\"Hello\",1)" . "#VALUE!")
+                  ("=SEARCH(\"~~\",\"Hi ~Bang!\",1)" . 4)
+                  ("=SEARCH(\"~*\",\"Ho*la\",1)" . 3)
+                  ("=SEARCH(\"~d\",\"My dear\",1)" . 4)
+                  ("=SEARCH(\"~~*\",\"Ho*la\",1)" . "#VALUE!")
+                  ("=SEARCH(\"Lat???\",\"Late\",1)" . "#VALUE!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-dollar-fraction-below-one-is-no-fraction ()
+  "DOLLARDE and DOLLARFR take no fraction below one.
+IronCalc's DOLLARs workbook has DOLLARFR(10,-2) and DOLLARDE(10,-2) as
+#NUM!, and a fraction that comes to nothing, as 0 or 0.5 cut to a whole
+number, as #DIV/0!; a fraction of 1 leaves the number as it is."
+  (dolist (case '(("=DOLLARFR(10,-2)" . "#NUM!")
+                  ("=DOLLARDE(10,-2)" . "#NUM!")
+                  ("=DOLLARFR(10,0)" . "#DIV/0!")
+                  ("=DOLLARDE(10,0.5)" . "#DIV/0!")
+                  ("=DOLLARFR(10,1)" . 10)
+                  ("=DOLLARDE(1.02,16)" . 1.125)
+                  ("=DOLLARDE(-1.02,16)" . -1.125)
+                  ("=DOLLARFR(1.125,32)" . 1.04)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-a-negative-number-has-an-odd-root ()
+  "A negative base takes the root an odd exponent asks for.
+IronCalc's POWER workbook has POWER(-8,1/3) and (-8)^(1/3) as -2, where
+(-8)^0.5 and (-8)^(2/3) are no number at all."
+  (dolist (case '(("=POWER(-8,1/3)" . -2)
+                  ("=(-8)^(1/3)" . -2)
+                  ("=(-8)^(-1/3)" . -0.5)
+                  ("=(-8)^(1/5)" . -1.5157165665103982)
+                  ("=POWER(-2,3)" . -8)
+                  ("=(-8)^2" . 64)
+                  ("=(-8)^0.5" . "#NUM!")
+                  ("=(-8)^(2/3)" . "#NUM!")
+                  ("=(-8)^(5/3)" . "#NUM!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-wrapping-fewer-values-than-a-line-holds ()
+  "WRAPCOLS and WRAPROWS make one value alone a line of one.
+IronCalc's WRAPCOLS_ROWS workbook has WRAPCOLS(IF(1=0,{1,2,3}),2) as
+FALSE, one cell, where two rows would have held a #N/A beside it.  More
+values than one still fill out the line, as three wrapped by five."
+  (should (equal (exc-formula-test--values
+                  '(("=WRAPCOLS(FALSE,2)" "=ROWS(WRAPCOLS({1},2))"
+                     "=COLUMNS(WRAPCOLS({1},2))" "=ROWS(WRAPROWS({1;2;3},5))"
+                     "=COLUMNS(WRAPROWS({1;2;3},5))")
+                    ("=WRAPROWS(FALSE,2)" "=COLUMNS(WRAPCOLS({1;2;3},2))"
+                     "=ROWS(WRAPCOLS({1;2;3},2))" "" "")))
+                 '((nil 1 1 1 5) (nil 2 2 "" "")))))
+
+(ert-deftest exc-formula-a-text-table-is-no-table ()
+  "VLOOKUP and HLOOKUP given text where the table goes are #VALUE!.
+IronCalc's HVLOOKUP workbook has VLOOKUP(3,\"Nothing\",1) as #VALUE!,
+where a number or a truth value there is a table of one cell and finds
+nothing: VLOOKUP(3,3,1) and VLOOKUP(3,TRUE,1) are #N/A."
+  (dolist (case '(("=VLOOKUP(3,\"Nothing\",1)" . "#VALUE!")
+                  ("=HLOOKUP(3,\"Nothing\",1)" . "#VALUE!")
+                  ("=VLOOKUP(3,\"3\",1)" . "#VALUE!")
+                  ("=VLOOKUP(3,TRUE,1)" . "#N/A")
+                  ("=VLOOKUP(2,{1,2;3,4},2,FALSE)" . "#N/A")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-an-array-formula-spills-over-its-range ()
+  "An array formula over several cells spills over all of them for A1#.
+IronCalc's spill_operator workbook has the array formula C2:C5 holding
+123 four times over, and SUM(C2#) as 492; a cell holding no formula
+there is #REF!, as A2 is."
+  (let ((model (exc-model-create 4 3 '(("=SUM(A2#)" "" "")
+                                        ("=123" "" "")
+                                        ("=123" "" "")
+                                        ("=123" "" "")))))
+    ;; The formula over A2:A4 fills those cells, and the sum reads all.
+    (exc-model-set-arrays model '(((1 . 0) . "A2:A4")))
+    (exc-model-set-raw-value model 0 1 "x")
+    (should (equal (exc-model-get-computed-value model 0 0) 369))
+    ;; A cell holding no formula spills nothing.
+    (exc-model-set-raw-value model 0 0 "=SUM(C1#)")
+    (should (equal (exc-model-get-computed-value model 0 0) "#REF!"))))
+
+(ert-deftest exc-formula-sumsq-past-what-a-float-holds-is-num ()
+  "A SUMSQ whose total a float cannot hold is #NUM!.
+IronCalc's SUMSQ workbook has the square of 2E+154 as #NUM!, where
+1E+154 squared is 1E+308 and still a number."
+  (dolist (case '(("=SUMSQ(2.0000000000000001E+154)" . "#NUM!")
+                  ("=SUMSQ(1E+154)" . 1e+308)
+                  ("=SUMSQ(9999999999999)" . 9.9999999999980007E+25)
+                  ("=SUMSQ(3,4)" . 25)
+                  ("=SUMSQ(-3,4)" . 25)))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-text-writes-a-date-code-comma ()
+  "A comma in a date or time code is written as it is, as Excel does.
+Excel writes 19 October 2026 under \"mmm d, yyyy\" as Oct 19, 2026."
+  (dolist (case '(("=TEXT(DATE(2026,10,19),\"mmm d, yyyy\")" . "Oct 19, 2026")
+                  ("=TEXT(DATE(2026,10,19),\"dddd, mmmm d, yyyy\")"
+                   . "Monday, October 19, 2026")
+                  ("=TEXT(DATE(2026,10,19),\"[$-409]mmmm d, yyyy\")"
+                   . "October 19, 2026")
+                  ("=TEXT(0.5,\"h \"\"h\"\", m \"\"min\"\"\")" . "12 h, 0 min")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-text-scales-by-each-comma-after-the-point ()
+  "Each comma at the end of a number code's fraction divides by a thousand.
+Excel writes 1234567 under \"0.0,, \"\"M\"\"\" as 1.2 M, in millions."
+  (dolist (case '(("=TEXT(1234567,\"0.0,,\")" . "1.2")
+                  ("=TEXT(1234567,\"0.0,, \"\"M\"\"\")" . "1.2 M")
+                  ("=TEXT(1234567890,\"0.00,,,\")" . "1.23")
+                  ("=TEXT(1234567,\"0.0,\")" . "1234.6")
+                  ("=TEXT(1234567,\"#,##0,,\")" . "1")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-name-is-no-r1c1-reference ()
+  "R, C and references in the R1C1 style cannot be names, as in Excel.
+Excel's rules for names keep out C, c, R and r alone, and R1C1."
+  (dolist (name '("R" "r" "C" "c" "R1C1" "rc" "RC" "R2C" "RC3" "C3" "r10c20"))
+    (should (exc-calc-name-problem name)))
+  (dolist (name '("Rate" "Cost" "RC_total" "R1C1x" "CR" "Rx" "s2a1"))
+    (should-not (exc-calc-name-problem name))))
+
+(ert-deftest exc-formula-text-compares-as-in-lower-case ()
+  "Text compares as its lower case does, character by character or not.
+The order is that of `downcase' of each whole text, as it always was."
+  (let ((pool (string-to-list "aAbBzZ_[`~ 0é ÉßẞσςΣİıiIǅǄǆ中文Ж ж"))
+        (state (random "grid-table-compare")))
+    (ignore state)
+    (dotimes (_ 3000)
+      (let* ((make (lambda ()
+                     (apply #'string
+                            (cl-loop repeat (random 5)
+                                     collect (nth (random (length pool)) pool)))))
+             (left (funcall make))
+             (right (if (zerop (random 4)) (upcase left) (funcall make)))
+             (a (downcase left)) (b (downcase right))
+             (want (cond ((string= a b) 0) ((string< a b) -1) (t 1))))
+        (should (equal (list left right (exc-calc-compare left right))
+                       (list left right want))))))
+  (should (= (exc-calc-compare "North" "NORTH") 0))
+  (should (= (exc-calc-compare "apple" "Banana") -1))
+  (should (= (exc-calc-compare "abc" "ab") 1)))
+
+(ert-deftest exc-formula-filter-keeps-whole-rows-and-columns ()
+  "FILTER keeps the rows, or the columns, its flags mark, whole and in order."
+  (should (equal (exc-formula-test--eval
+                  "=TEXTJOIN(\",\",,FILTER({1,2;3,4;5,6},{TRUE;FALSE;TRUE}))")
+                 "1,2,5,6"))
+  (should (equal (exc-formula-test--eval
+                  "=TEXTJOIN(\",\",,FILTER({1,2,3;4,5,6},{FALSE,TRUE,TRUE}))")
+                 "2,3,5,6"))
+  (should (equal (exc-formula-test--eval
+                  "=ROWS(FILTER({1,2;3,4;5,6},{TRUE;FALSE;TRUE}))")
+                 2))
+  (should (equal (exc-calc-array-row-list
+                  (exc-calc-array-from-rows '((1 2 3) (4 5 6))) 1)
+                 '(4 5 6)))
+  (should (equal (exc-formula-test--eval "=FILTER({1;2;3},{TRUE;FALSE})")
+                 "#VALUE!")))
+
+(ert-deftest exc-formula-spill-overflow-is-the-edge-alone ()
+  "A spill blocked by the sheet's edge alone says how far past it runs."
+  (let ((model (exc-model-create 2 2 '(("=SEQUENCE(3,3)" "") ("" "")))))
+    (should (equal (exc-model-get-computed-value model 0 0) "#SPILL!"))
+    (should (equal (exc-calc-spill-overflow model 0 0) '(1 . 1))))
+  ;; A cell in the way: no growing helps.
+  (let ((model (exc-model-create 2 2 '(("=SEQUENCE(3)" "") ("x" "")))))
+    (should-not (exc-calc-spill-overflow model 0 0)))
+  ;; Past the most columns a sheet may have.
+  (let ((model (exc-model-create 1 2 '(("=SEQUENCE(1,16385)" "")))))
+    (should-not (exc-calc-spill-overflow model 0 0)))
+  ;; One that spills, or one value, runs past nothing.
+  (let ((model (exc-model-create 3 1 '(("=SEQUENCE(3)") ("") ("")))))
+    (should-not (exc-calc-spill-overflow model 0 0))))
+
+(ert-deftest exc-formula-cells-outside-the-sheet-read-empty ()
+  "A cell past a sheet's last row or column reads as an empty cell.
+The cursor may stand there, as on a spreadsheet's empty cells."
+  (let ((source (make-exc-default-data-source '("a" "b") '(("1" "=A1*2")))))
+    (dolist (place '((5 0) (0 5) (9 9) (-1 0) (0 -1)))
+      (pcase-let ((`(,row ,col) place))
+        (should (equal (exc-get-raw-value-at source row col) ""))
+        (should (equal (exc-get-computed-value-at source row col) ""))
+        (should (equal (exc-get-display-value-at source row col) ""))
+        (should-not (exc-get-style-at source row col))
+        (should-not (exc-cell-format source row col))
+        (should (equal (exc-edit-text source row col) ""))
+        (should-not (exc-false-value-p
+                     source row col (exc-get-computed-value-at source row col)))))
+    ;; The cells the sheet has read as before.
+    (should (equal (exc-get-raw-value-at source 0 1) "=A1*2"))
+    (should (equal (exc-get-computed-value-at source 0 1) 2))))
+
+(ert-deftest exc-formula-lookup-regex-reads-groups-and-choices ()
+  "XMATCH and XLOOKUP's match mode 3 read a pattern as REGEXTEST does.
+A group and a choice, as ^(Pu|Ro), are PCRE2's, not literal text."
+  (dolist (case '(("=XMATCH(\"^(Pu|Ro)\",{\"Assam\",\"Pu-erh\",\"Rooibos\"},3)" . 2)
+                  ("=XMATCH(\"^(Pu|Ro)\",{\"Assam\";\"Rooibos\"},3)" . 2)
+                  ("=XLOOKUP(\"^(?:Dar|Ear)\",{\"Assam\";\"Earl Grey\"},{1;2},,3)" . 2)
+                  ("=XMATCH(\"T\\d+$\",{\"x\",\"T42\"},3)" . 2)
+                  ("=XMATCH(\"^Pu\",{\"Assam\",\"Pu-erh\"},3)" . 2)
+                  ("=XMATCH(\"(?=x)\",{\"x\"},3)" . "#VALUE!")))
+    (exc-formula-test--should-be case)))
+
+(ert-deftest exc-formula-general-format-shows-eleven-characters ()
+  "A number without a format shows as Excel's general format shows it.
+Eleven characters at most, and scientific notation for twelve digits or
+more before the point or for less than 0.0001."
+  (dolist (case '((157.393975903614 . "157.3939759")
+                  (0.3333333333333333 . "0.333333333")
+                  (0.205078125000001 . "0.205078125")
+                  (123456789012 . "1.23457E+11")
+                  (12345678901 . "12345678901")
+                  (1e-05 . "1E-05")
+                  (0.000123456789 . "0.000123457")
+                  (0.0001 . "0.0001")
+                  (16.666666666666664 . "16.66666667")
+                  (392112 . "392112")
+                  (0.30000000000000004 . "0.3")
+                  (-2.5 . "-2.5")
+                  (0 . "0")
+                  (1.5e300 . "1.5E+300")))
+    (should (equal (cons (car case) (exc-format-general-shown (car case))) case)))
+  ;; Text and what is not a number show as before.
+  (should (equal (exc-format-general-shown "12.5") "12.5"))
+  (should (equal (exc-format-general-shown t) "TRUE"))
+  ;; A format says how a number shows; general only when there is none.
+  (should (equal (exc-format-shown 157.393975903614 '(number 2 nil)) "157.39"))
+  ;; What is copied or exported keeps every digit.
+  (should (equal (exc-format-display 157.393975903614 nil) "157.393975903614")))
+
+(ert-deftest exc-formula-hyperlink-with-a-blank-label-shows-zero ()
+  "HYPERLINK of a blank label shows 0, where one left out shows the link.
+IronCalc's link_test workbook has HYPERLINK(\"https://\"&E21,E21) with
+E21 empty as 0, and the ones with a label show it."
+  (should (equal (exc-formula-test--eval "=HYPERLINK(\"https://x\")")
+                 "https://x"))
+  (should (equal (exc-formula-test--eval
+                  "=HYPERLINK(\"https://x\",\"label\")")
+                 "label"))
+  ;; B1 is a blank cell, so the label is one.
+  (should (equal (exc-formula-test--eval "=HYPERLINK(\"https://\"&B1,B1)")
+                 0)))
+
+(ert-deftest exc-formula-calc-hands-its-text-to-emacs-calc ()
+  "CALC computes in radians, gives a number when Calc prints one a
+double holds, and leaves the user's Calc modes as they were."
+  (require 'calc)
+  (let ((calc-angle-mode 'deg))
+    (dolist (case '(("=CALC(\"deriv(x^2 + 3 x, x)\")" . "2 x + 3")
+                    ("=CALC(\"integ(sin(x), x)\")" . "-cos(x)")
+                    ("=CALC(\"roots(x^2 - 5 x + 6, x)\")" . "[3., 2.]")
+                    ("=CALC(\"nrat((x^2 - 1) / (x - 1))\")" . "x + 1")
+                    ("=CALC(\"2^10\")*2" . 2048)
+                    ("=CALC(\"2^0.5\")" . 1.4142135623731)
+                    ("=CALC(\"2^100\")" . "1267650600228229401496703205376")
+                    ("=calc(\"fact(3)\")+1" . 7)
+                    ("=CALC(\"x^\")" . "#VALUE!")))
+      (exc-formula-test--should-be case))
+    (should (eq calc-angle-mode 'deg)))
+  (should (equal (exc-formula-test--eval
+                  "=CALC(\"deriv(\" & B1 & \", x)\")" "sin(x)")
+                 "cos(x)")))
+
+(defun exc-formula-test--calc-wait (answers)
+  "Wait, at most 10 seconds, until CALC has had ANSWERS more answers."
+  (let ((ready 0) (start (float-time)))
+    (let ((count (lambda (_waiters) (cl-incf ready))))
+      (add-hook 'exc-calc-calc-ready-functions count)
+      (unwind-protect
+          (while (and (< ready answers) (< (- (float-time) start) 10))
+            (accept-process-output nil 0.05))
+        (remove-hook 'exc-calc-calc-ready-functions count)))
+    ready))
+
+(defmacro exc-formula-test--calc-async (&rest body)
+  "Run BODY with CALC computing in another Emacs, from a fresh start."
+  (declare (indent 0))
+  `(let ((exc-calc-calc-async t)
+         (exc-calc--calc-answers (make-hash-table :test 'equal))
+         (exc-calc--calc-waiting (make-hash-table :test 'equal))
+         (exc-calc--calc-queue nil) (exc-calc--calc-workers nil)
+         (exc-calc--calc-sent 0))
+     (unwind-protect (progn ,@body)
+       (exc-calc-calc-stop))))
+
+(ert-deftest exc-formula-calc-computes-in-another-emacs ()
+  "Without holding Emacs, CALC shows #GETTING_DATA until its answer comes,
+then the cell and what reads it are computed again.  A text two cells
+share is computed once."
+  (exc-formula-test--calc-async
+    (let ((model (exc-model-create
+                  2 2 '(("=CALC(\"deriv(x^3, x)\")" "=LEN(A1)")
+                        ("=CALC(\"deriv(x^3, x)\")" "")))))
+      (should (equal (exc-model-get-computed-value model 0 0) "#GETTING_DATA"))
+      (should (= (exc-formula-test--calc-wait 1) 1))
+      (exc-calc-evaluate model)
+      (should (equal (exc-model-get-computed-value model 0 0) "3 x^2"))
+      (should (equal (exc-model-get-computed-value model 1 0) "3 x^2"))
+      (should (equal (exc-model-get-computed-value model 0 1) 5))
+      (should (= exc-calc--calc-sent 1)))))
+
+(ert-deftest exc-formula-calc-stops-what-takes-too-long ()
+  "A computation past `exc-calc-calc-timeout' is #CALC!, and the job
+after it in the same Emacs still has its answer."
+  (exc-formula-test--calc-async
+    (let* ((exc-calc-calc-timeout 0.3) (exc-calc-calc-workers 1)
+           (model (exc-model-create
+                   1 2 '(("=CALC(\"sum(sqrt(k), k, 1, 1000000)\")" "=CALC(\"2+3\")")))))
+      (exc-model-get-computed-value model 0 0)
+      (should (= (exc-formula-test--calc-wait 2) 2))
+      (exc-calc-evaluate model)
+      (should (equal (exc-model-get-computed-value model 0 0) "#CALC!"))
+      (should (equal (exc-model-get-computed-value model 0 1) 5)))))
+
+(ert-deftest exc-formula-calc-slow-job-holds-only-its-own-emacs ()
+  "A slow CALC does not hold the quick ones after it: they are computed
+in another Emacs, and answer while the slow one is still going."
+  (exc-formula-test--calc-async
+    (let* ((exc-calc-calc-timeout 30) (exc-calc-calc-workers 2)
+           (model (exc-model-create
+                   1 2 '(("=CALC(\"sum(sqrt(k), k, 1, 1000000)\")" "=CALC(\"2+3\")")))))
+      (exc-model-get-computed-value model 0 0)
+      (should (= (exc-formula-test--calc-wait 1) 1))
+      (exc-calc-evaluate model)
+      (should (equal (exc-model-get-computed-value model 0 1) 5))
+      (should (equal (exc-model-get-computed-value model 0 0) "#GETTING_DATA")))))
+
+(provide 'exc-formula-test)
+
+;;; exc-formula-test.el ends here

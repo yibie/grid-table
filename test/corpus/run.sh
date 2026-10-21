@@ -1,7 +1,7 @@
 #!/bin/sh
 # run.sh CORPUS-DIR RESULTS-DIR
 #
-# Run every workbook under CORPUS-DIR through grid-table-corpus.el, each
+# Run every workbook under CORPUS-DIR through exc-corpus.el, each
 # in an Emacs of its own, JOBS at a time and for at most LIMIT seconds
 # each, then print the report.  A workbook already recorded in RESULTS-DIR
 # is skipped unless FRESH=1, which empties RESULTS-DIR first.  A workbook
@@ -51,15 +51,15 @@ build() {
   if [ ! -f "$dir/stamp" ] ||
        { [ "${2:-}" = again ] &&
          [ -n "$(find "$repo" "$repo/plugins" -maxdepth 1 \
-                   \( -name '*.el' -o -name 'grid-table-xlsx-module.*' \) \
+                   \( -name '*.el' -o -name 'exc-xlsx-module.*' \) \
                    -newer "$dir/stamp" | head -1)" ]; }; then
     rm -rf "$dir"
     mkdir -p "$dir/plugins"
     cp "$repo"/*.el "$dir"
-    cp "$repo"/plugins/*.el "$repo"/plugins/grid-table-xlsx-module.* \
+    cp "$repo"/plugins/*.el "$repo"/plugins/exc-xlsx-module.* \
        "$dir/plugins" 2>/dev/null
     touch "$dir/stamp"
-    # A file that does not compile, as grid-table-etaf.el without etaf,
+    # A file that does not compile, as exc-etaf.el without etaf,
     # is loaded as source.
     (cd "$dir" && "$EMACS" -Q --batch -L . -L plugins \
        -f batch-byte-compile ./*.el plugins/*.el >"$dir/compile.log" 2>&1)
@@ -81,7 +81,7 @@ if [ "${1:-}" = --one ]; then
   fi
   start=$(date +%s)
   limit "$EMACS" -Q --batch -L "$lisp" -L "$lisp/plugins" \
-    -l "$here/grid-table-corpus.el" -f grid-table-corpus-run-file \
+    -l "$here/exc-corpus.el" -f exc-corpus-run-file \
     "$file" "$record" >"$results/$id.log" 2>&1
   code=$?
   if [ ! -s "$record" ]; then
@@ -119,4 +119,4 @@ find "$corpus" -path '*/.git' -prune -o -type f \( -iname '*.xlsx' -o -iname '*.
   xargs -0 -P "$JOBS" -n 1 "$0" --one "$results"
 
 "$EMACS" -Q --batch -L "$results/.build" -L "$results/.build/plugins" \
-  -l "$here/grid-table-corpus.el" -f grid-table-corpus-summarize "$corpus" "$results" 2>/dev/null
+  -l "$here/exc-corpus.el" -f exc-corpus-summarize "$corpus" "$results" 2>/dev/null

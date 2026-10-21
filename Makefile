@@ -2,11 +2,11 @@ EMACS ?= emacs
 # Directory holding the ecss, ebox and etaf checkouts; test-etaf needs it.
 ETAF_SRC ?=
 
-MODEL_TESTS = test/grid-table-merge-test.el \
-	test/grid-table-render-characterization-test.el \
-	test/grid-table-vertical-model-test.el \
-	test/grid-table-vertical-render-test.el \
-	test/grid-table-formula-test.el
+MODEL_TESTS = test/exc-merge-test.el \
+	test/exc-render-characterization-test.el \
+	test/exc-vertical-model-test.el \
+	test/exc-vertical-render-test.el \
+	test/exc-formula-test.el
 # Newer source wins over an older .elc, so `make compile' never leaves
 # the tests running stale code.
 BATCH = $(EMACS) -Q --batch --eval '(setq load-prefer-newer t)' -L . -L plugins -L test
@@ -16,7 +16,7 @@ ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
 test: test-model test-etaf test-xlsx
 
-# Byte-compile grid-table and its plugins.  Uncompiled, moving around a
+# Byte-compile exc and its plugins.  Uncompiled, moving around a
 # grid is about ten times slower.
 compile:
 	@test -n "$(ETAF_SRC)" || { echo "Set ETAF_SRC to the directory holding ecss, ebox and etaf"; exit 1; }
@@ -31,7 +31,7 @@ test-model:
 
 test-etaf:
 	@test -n "$(ETAF_SRC)" || { echo "Set ETAF_SRC to the directory holding ecss, ebox and etaf"; exit 1; }
-	$(BATCH) $(ETAF_PATH) -l test/grid-table-etaf-test.el -f ert-run-tests-batch-and-exit
+	$(BATCH) $(ETAF_PATH) -l test/exc-etaf-test.el -f ert-run-tests-batch-and-exit
 
 # The xlsx plugin's dynamic module; needs cargo.
 module:
@@ -41,8 +41,8 @@ module:
 # it holds both architectures, which needs both rustup targets installed.
 # The module in target/release is built too, since it is loaded before
 # the prebuilt one and would otherwise be left stale.
-MODULE = grid-table-xlsx-module
-MODULE_LIB = libgrid_table_xlsx_module
+MODULE = exc-xlsx-module
+MODULE_LIB = libexc_xlsx_module
 MAC_TARGETS = aarch64-apple-darwin x86_64-apple-darwin
 module-dist:
 ifeq ($(shell uname -s),Darwin)
@@ -56,7 +56,7 @@ endif
 
 # Skips the tests that read or write a workbook when the module is not built.
 test-xlsx:
-	$(BATCH) $(if $(ETAF_SRC),$(ETAF_PATH)) -l test/grid-table-xlsx-test.el -f ert-run-tests-batch-and-exit
+	$(BATCH) $(if $(ETAF_SRC),$(ETAF_PATH)) -l test/exc-xlsx-test.el -f ert-run-tests-batch-and-exit
 
 # Workbooks from other spreadsheet projects, opened, written and opened
 # again; needs the module.  corpus-fetch gathers them into CORPUS_DIR.
