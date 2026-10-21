@@ -2260,6 +2260,55 @@ what made held arrow keys outrun the display."
         (grid-table-etaf-goto 39 0)))
     (should (string-search "far-down" (grid-table-etaf-test--text)))))
 
+;; Keys waiting to be read are moved over without drawing each step.
+(ert-deftest grid-table-etaf-held-moves-draw-once ()
+  "Moves made while input waits are drawn once, where they ended."
+  (grid-table-etaf-test--with-grid (40 4)
+    (let ((renders 0)
+          (real (symbol-function 'grid-table-etaf--render)))
+      (cl-letf (((symbol-function 'grid-table-etaf--render)
+                 (lambda (&rest args) (cl-incf renders) (apply real args)))
+                ((symbol-function 'input-pending-p) #'always))
+        (grid-table-etaf-move 1 0)
+        (grid-table-etaf-move 1 0)
+        (grid-table-etaf-move 0 1)
+        (should (= renders 0))
+        (should (equal (grid-table-etaf--cursor) '(0 . 0)))
+        ;; The next move key keeps waiting; any other command draws first.
+        (let ((this-command-keys-shift-translated nil))
+          (cl-letf (((symbol-function 'this-command-keys-vector)
+                     (lambda () [down])))
+            (grid-table-etaf--draw-before-command))
+          (should (= renders 0))
+          (cl-letf (((symbol-function 'this-command-keys-vector)
+                     (lambda () [?x])))
+            (grid-table-etaf--draw-before-command))))
+      (should (= renders 1))
+      (should (equal (grid-table-etaf--cursor) '(2 . 1)))
+      (should-not grid-table-etaf--pending-move)
+      (should-not grid-table-etaf--pending-timer))))
+
+(ert-deftest grid-table-etaf-held-shift-moves-select-the-run ()
+  "A held S-Down selects every row it passed, drawn once input stops."
+  (grid-table-etaf-test--with-grid (40 4)
+    (grid-table-etaf-goto 1 1)
+    (cl-letf (((symbol-function 'input-pending-p) #'always))
+      (dotimes (_ 3) (grid-table-etaf-move 1 0 t)))
+    (grid-table-etaf--draw-after-command)
+    (should (equal (grid-table-etaf--cursor) '(4 . 1)))
+    (should (equal (etaf-value (grid-table-etaf--state-anchor
+                                (grid-table-etaf--state-or-error)))
+                   '(1 . 1)))
+    ;; A plain move then shifted ones extend from where the plain one went.
+    (cl-letf (((symbol-function 'input-pending-p) #'always))
+      (grid-table-etaf-move 1 0)
+      (grid-table-etaf-move 0 1 t))
+    (grid-table-etaf--draw-after-command)
+    (should (equal (grid-table-etaf--cursor) '(5 . 2)))
+    (should (equal (etaf-value (grid-table-etaf--state-anchor
+                                (grid-table-etaf--state-or-error)))
+                   '(5 . 1)))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

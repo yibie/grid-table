@@ -2272,7 +2272,8 @@ painted cursor fits."
 
 (defun grid-table-etaf-goto (row col &optional extend)
   "Move the cursor to model ROW and COL.
-With EXTEND non-nil keep the selection anchor, extending the range."
+With EXTEND non-nil keep the selection anchor, extending the range; a
+cons (ROW . COL) is the anchor to extend from."
   (let* ((state (grid-table-etaf--state-or-error))
          ;; A filtered-out row is not a place to be: take the next shown.
          (row (grid-table-etaf--row-at
@@ -2282,9 +2283,11 @@ With EXTEND non-nil keep the selection anchor, extending the range."
     (grid-table-etaf--finish-edit state)
     (etaf-batch
       (etaf-set-value (grid-table-etaf--state-cursor state) (cons row col))
-      (unless extend
-        (etaf-set-value (grid-table-etaf--state-anchor state)
-                        (cons row col))))
+      (cond ((consp extend)
+             (etaf-set-value (grid-table-etaf--state-anchor state) extend))
+            ((not extend)
+             (etaf-set-value (grid-table-etaf--state-anchor state)
+                             (cons row col)))))
     (setq grid-table--nav-row row
           grid-table--nav-col (1+ col))
     (grid-table-etaf--settle state)
@@ -2373,26 +2376,82 @@ spreadsheet does."
   (or (grid-table--merge-at (grid-get-merges grid-table--data-source) row col)
       (list row col row col)))
 
+(defvar-local grid-table-etaf--pending-move nil
+  "(CURSOR . ANCHOR) of moves made but not drawn yet, or nil.
+ANCHOR nil keeps the selection's anchor.")
+
+(defvar-local grid-table-etaf--pending-timer nil
+  "Idle timer that draws the pending move, should no command do so.")
+
 (defun grid-table-etaf-move (rows cols &optional extend)
   "Move the cursor ROWS down and COLS right, stepping over merged cells.
-With EXTEND non-nil extend the selection instead."
+With EXTEND non-nil extend the selection instead.
+
+While more input is waiting, as when an arrow key is held faster than
+a move can be drawn, the move is only noted; the waiting keys move on
+from it, and the cursor is drawn once they are done.  Emacs's own
+redisplay skips frames the same way."
   (let* ((state (grid-table-etaf--state-or-error))
-         (cursor (grid-table-etaf--cursor))
-         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor))))
-    (grid-table-etaf-goto
-     ;; Rows are counted among the shown ones, so filtered rows are
-     ;; stepped over.
-     (cond ((> rows 0) (grid-table-etaf--step-row state (nth 2 extent) rows))
-           ((< rows 0)
-            (let ((target (+ (grid-table-etaf--row-position
-                              state (nth 0 extent))
-                             rows)))
-              (grid-table-etaf--row-at state target)))
-           (t (car cursor)))
-     (cond ((> cols 0) (grid-table-etaf--step-col state (nth 3 extent) cols))
-           ((< cols 0) (grid-table-etaf--step-col state (nth 1 extent) cols))
-           (t (cdr cursor)))
-     extend)))
+         (pending grid-table-etaf--pending-move)
+         (cursor (or (car pending) (grid-table-etaf--cursor)))
+         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor)))
+         ;; Rows are counted among the shown ones, so filtered rows are
+         ;; stepped over.
+         (row (cond ((> rows 0)
+                     (grid-table-etaf--step-row state (nth 2 extent) rows))
+                    ((< rows 0)
+                     (grid-table-etaf--row-at
+                      state (+ (grid-table-etaf--row-position
+                                state (nth 0 extent))
+                               rows)))
+                    (t (car cursor))))
+         (col (cond ((> cols 0)
+                     (grid-table-etaf--step-col state (nth 3 extent) cols))
+                    ((< cols 0)
+                     (grid-table-etaf--step-col state (nth 1 extent) cols))
+                    (t (cdr cursor))))
+         (anchor (if extend (cdr pending) (cons row col))))
+    (if (and (input-pending-p)
+             (not (etaf-value (grid-table-etaf--state-editing state))))
+        (progn
+          (setq grid-table-etaf--pending-move (cons (cons row col) anchor))
+          (unless (timerp grid-table-etaf--pending-timer)
+            (setq grid-table-etaf--pending-timer
+                  (run-with-idle-timer
+                   0.05 nil #'grid-table-etaf--draw-pending-move
+                   (current-buffer)))))
+      (setq grid-table-etaf--pending-move nil)
+      (grid-table-etaf-goto row col (if extend (or anchor t) nil)))))
+
+(defun grid-table-etaf--draw-pending-move (&optional buffer)
+  "Draw the move noted in BUFFER, the current one by default."
+  (with-current-buffer (or buffer (current-buffer))
+    (when (timerp grid-table-etaf--pending-timer)
+      (cancel-timer grid-table-etaf--pending-timer))
+    (setq grid-table-etaf--pending-timer nil)
+    (when-let* ((pending grid-table-etaf--pending-move))
+      (setq grid-table-etaf--pending-move nil)
+      (grid-table-etaf-goto (car (car pending)) (cdr (car pending))
+                            (or (cdr pending) t)))))
+
+(defun grid-table-etaf--move-key-p (keys)
+  "Return non-nil when KEYS end in an arrow or page key, maybe shifted."
+  (let ((key (and (> (length keys) 0) (aref keys (1- (length keys))))))
+    (and key
+         (memq (event-basic-type key) '(up down left right next prior))
+         (null (remq 'shift (event-modifiers key))))))
+
+(defun grid-table-etaf--draw-before-command ()
+  "Draw a pending move before any command but another move.
+Everything else, a click or a typed key, sees where the cursor is."
+  (when (and grid-table-etaf--pending-move
+             (not (grid-table-etaf--move-key-p (this-command-keys-vector))))
+    (grid-table-etaf--draw-pending-move)))
+
+(defun grid-table-etaf--draw-after-command ()
+  "Draw a pending move once no more input is waiting."
+  (when (and grid-table-etaf--pending-move (not (input-pending-p)))
+    (grid-table-etaf--draw-pending-move)))
 
 (defun grid-table-etaf-move-tab (direction)
   "Move to the next cell in reading order, or the previous one.
@@ -4632,6 +4691,8 @@ Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
   (auto-save-mode -1)
   (add-hook 'write-contents-functions #'grid-table-etaf--write-contents nil t)
   (add-hook 'pre-command-hook #'grid-table-etaf--gc-hold nil t)
+  (add-hook 'pre-command-hook #'grid-table-etaf--draw-before-command nil t)
+  (add-hook 'post-command-hook #'grid-table-etaf--draw-after-command nil t)
   (grid-table-etaf--warn-if-uncompiled))
 
 ;;;----------------------------------------------------------------------
