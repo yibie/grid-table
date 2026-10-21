@@ -75,10 +75,20 @@ Or with `use-package`:
   (require 'grid-table-xlsx))
 ```
 
-If `ecss`, `ebox` or `etaf` is missing, opening a grid says which one.
-After pulling new versions of them, byte-compile them again
-(`make -C ~/src/ebox compile`, and the same for the other two), so a stale
-`.elc` file is not loaded in place of the new source.
+Then byte-compile all four.  Uncompiled, moving around a grid is about
+ten times slower, slow enough that a held arrow key outruns the display;
+opening a grid warns when they are not compiled.
+
+```sh
+make -C ~/src/ecss compile
+make -C ~/src/ebox compile
+make -C ~/src/etaf compile
+make -C ~/src/grid-table compile ETAF_SRC=$HOME/src
+```
+
+Compile again after every pull, so a stale `.elc` file is not loaded in
+place of the new source.  If `ecss`, `ebox` or `etaf` is missing, opening
+a grid says which one.
 
 ### The xlsx module
 

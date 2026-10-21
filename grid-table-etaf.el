@@ -4616,10 +4616,11 @@ Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
   ;; The buffer's text is the drawn sheet, not the file's.
   (auto-save-mode -1)
   (add-hook 'write-contents-functions #'grid-table-etaf--write-contents nil t)
-  (add-hook 'pre-command-hook #'grid-table-etaf--gc-hold nil t))
+  (add-hook 'pre-command-hook #'grid-table-etaf--gc-hold nil t)
+  (grid-table-etaf--warn-if-uncompiled))
 
 ;;;----------------------------------------------------------------------
-;;; Garbage collection
+;;; Garbage collection and compilation
 ;;;----------------------------------------------------------------------
 
 (defcustom grid-table-etaf-gc-cons-threshold (* 64 1024 1024)
@@ -4659,6 +4660,31 @@ leaves `gc-cons-threshold' alone."
       (setq gc-cons-threshold grid-table-etaf--gc-saved))
     (setq grid-table-etaf--gc-saved nil)
     (garbage-collect)))
+
+(defvar grid-table-etaf--compile-warned nil
+  "Non-nil once the uncompiled-library warning has been shown.")
+
+(defun grid-table-etaf--warn-if-uncompiled ()
+  "Warn once when grid-table or ETAF runs from uncompiled source.
+Uncompiled, every move takes about ten times as long."
+  (unless (or grid-table-etaf--compile-warned noninteractive)
+    (let ((slow (cl-loop for (library . function)
+                         in '(("grid-table" . grid-table-etaf-goto)
+                              ("etaf" . etaf--patch)
+                              ("ebox" . ebox-flush)
+                              ("ecss" . ecss-read-rules))
+                         when (and (fboundp function)
+                                   (not (compiled-function-p
+                                         (indirect-function function))))
+                         collect library)))
+      (setq grid-table-etaf--compile-warned t)
+      (when slow
+        (display-warning
+         'grid-table
+         (format "%s %s not byte-compiled, so moving around a grid is \
+about ten times slower.  Compile them; see \"Installation\" in the README."
+                 (string-join slow ", ")
+                 (if (cdr slow) "are" "is")))))))
 
 (defun grid-table-etaf-refresh (&optional restore-row restore-col)
   "Re-render the current grid from its data source.

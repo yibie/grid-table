@@ -70,9 +70,18 @@ git clone https://github.com/emacs-taf/etaf.git
   (require 'grid-table-xlsx))
 ```
 
+然后把四个库都编译一遍。不编译的话，在表格里移动光标要慢十倍左右，
+按住方向键时画面会跟不上；打开表格时如果发现没有编译，会提示一次。
+
+```sh
+make -C ~/src/ecss compile
+make -C ~/src/ebox compile
+make -C ~/src/etaf compile
+make -C ~/src/grid-table compile ETAF_SRC=$HOME/src
+```
+
+每次拉取新版本后都要重新编译，以免加载到过期的 `.elc` 而不是新的源码。
 缺少 `ecss`、`ebox` 或 `etaf` 时，打开表格会提示缺的是哪一个。
-拉取它们的新版本后要重新编译（`make -C ~/src/ebox compile`，另外两个同理），
-以免加载到过期的 `.elc` 而不是新的源码。
 
 ### xlsx 模块
 

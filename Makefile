@@ -7,12 +7,23 @@ MODEL_TESTS = test/grid-table-merge-test.el \
 	test/grid-table-vertical-model-test.el \
 	test/grid-table-vertical-render-test.el \
 	test/grid-table-formula-test.el
-BATCH = $(EMACS) -Q --batch -L . -L plugins -L test
+# Newer source wins over an older .elc, so `make compile' never leaves
+# the tests running stale code.
+BATCH = $(EMACS) -Q --batch --eval '(setq load-prefer-newer t)' -L . -L plugins -L test
 ETAF_PATH = -L $(ETAF_SRC)/ecss -L $(ETAF_SRC)/ebox -L $(ETAF_SRC)/etaf
 
-.PHONY: test test-model test-etaf test-xlsx test-corpus corpus-fetch module module-dist
+.PHONY: compile clean test test-model test-etaf test-xlsx test-corpus corpus-fetch module module-dist
 
 test: test-model test-etaf test-xlsx
+
+# Byte-compile grid-table and its plugins.  Uncompiled, moving around a
+# grid is about ten times slower.
+compile:
+	@test -n "$(ETAF_SRC)" || { echo "Set ETAF_SRC to the directory holding ecss, ebox and etaf"; exit 1; }
+	$(BATCH) $(ETAF_PATH) --eval '(setq byte-compile-warnings nil)' -f batch-byte-compile *.el plugins/*.el
+
+clean:
+	rm -f *.elc plugins/*.elc
 
 # The model, the formulas and the plain-text table need no ETAF.
 test-model:
