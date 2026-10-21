@@ -4753,7 +4753,7 @@ Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
 
 (defcustom grid-table-etaf-gc-cons-threshold (* 64 1024 1024)
   "Bytes a grid's commands may allocate before Emacs collects garbage.
-Every move draws the cells on screen again, which allocates a few
+Every move draws the cells on screen again, which allocates several
 megabytes; at Emacs's default threshold that is several collections a
 move, slow enough that a held arrow key outruns the display.  While
 commands run in a grid `gc-cons-threshold' is raised to this, and put
@@ -4769,8 +4769,13 @@ leaves `gc-cons-threshold' alone."
   "Idle timer that puts `gc-cons-threshold' back.")
 
 (defun grid-table-etaf--gc-hold ()
-  "Raise `gc-cons-threshold' for a grid command, until Emacs is idle."
+  "Raise `gc-cons-threshold' for a grid command, until Emacs is idle.
+A named command of some other package, such as `describe-variable',
+is left alone: it draws no cells, and should see the user's value."
   (when (and grid-table-etaf-gc-cons-threshold
+             (or (not (and this-command (symbolp this-command)))
+                 (string-match-p "\\`\\(?:grid-\\|etaf\\|ebox\\)"
+                                 (symbol-name this-command)))
              (null grid-table-etaf--gc-saved)
              (< gc-cons-threshold grid-table-etaf-gc-cons-threshold))
     (setq grid-table-etaf--gc-saved gc-cons-threshold
@@ -4794,7 +4799,8 @@ leaves `gc-cons-threshold' alone."
 
 (defun grid-table-etaf--warn-if-uncompiled ()
   "Warn once when grid-table or ETAF runs from uncompiled source.
-Uncompiled, every move takes about ten times as long."
+Uncompiled, a move takes about twice as long when only grid-table is,
+and about ten times when ETAF is too."
   (unless (or grid-table-etaf--compile-warned noninteractive)
     (let ((slow (cl-loop for (library . function)
                          in '(("grid-table" . grid-table-etaf-goto)
@@ -4810,9 +4816,12 @@ Uncompiled, every move takes about ten times as long."
         (display-warning
          'grid-table
          (format "%s %s not byte-compiled, so moving around a grid is \
-about ten times slower.  Compile them; see \"Installation\" in the README."
+%s slower.  Compile %s; see \"Installation\" in the README."
                  (string-join slow ", ")
-                 (if (cdr slow) "are" "is")))))))
+                 (if (cdr slow) "are" "is")
+                 (if (equal slow '("grid-table")) "about twice as"
+                   "up to ten times")
+                 (if (cdr slow) "them" "it")))))))
 
 (defun grid-table-etaf-refresh (&optional restore-row restore-col)
   "Re-render the current grid from its data source.

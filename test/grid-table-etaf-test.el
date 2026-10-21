@@ -2239,6 +2239,11 @@ what made held arrow keys outrun the display."
       (setq gc-cons-threshold (* 100 1024 1024))
       (grid-table-etaf--gc-release)
       (should (= gc-cons-threshold (* 100 1024 1024)))
+      ;; Another package's named command sees the user's value.
+      (let ((this-command 'describe-variable)
+            (gc-cons-threshold 800000))
+        (grid-table-etaf--gc-hold)
+        (should (= gc-cons-threshold 800000)))
       ;; nil leaves it alone.
       (let ((grid-table-etaf-gc-cons-threshold nil)
             (gc-cons-threshold 800000))
