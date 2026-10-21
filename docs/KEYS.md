@@ -119,6 +119,7 @@ there makes the sheet grow to hold it.
 | Key | Action |
 |---|---|
 | `C-x C-s` | Save |
+| `C-x 4 c` | Show the sheet in a second buffer and window; edits in either are drawn in both |
 | `C-c C-w` | Save as |
 | `C-c C-f` | Open a grid |
 | `C-c C-r` | Recalculate everything and redraw |

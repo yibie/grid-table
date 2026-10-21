@@ -919,6 +919,11 @@ Printing keys are not commands: see `grid-table-etaf-typing-map' and
     (define-key map (kbd "S-TAB") #'grid-table-previous-cell)
     (define-key map [wheel-down] #'grid-table-etaf-scroll-down)
     (define-key map [wheel-up] #'grid-table-etaf-scroll-up)
+    ;; An indirect buffer shares the drawn text, which one sheet owns.
+    (define-key map [remap clone-indirect-buffer] #'grid-table-etaf-new-view)
+    (define-key map [remap clone-indirect-buffer-other-window]
+                #'grid-table-etaf-new-view)
+    (define-key map [remap clone-buffer] #'grid-table-etaf-new-view)
     map)
   "Keymap for the events ETAF and Ebox would otherwise consume.
 ETAF `:keys' cannot bind TAB, and Ebox scrolls the window on wheel
@@ -2884,11 +2889,86 @@ than `grid-table-etaf-undo-model-cells' allows, but always the first."
              do (setcdr tail nil))
     undo))
 
+(defun grid-table-etaf--views (source)
+  "The live buffers showing SOURCE's sheet, or a sheet of its workbook."
+  (let* ((workbook (grid-workbook-of source))
+         (models (if workbook (grid-workbook--models workbook)
+                   (list (gethash :model source))))
+         views)
+    (dolist (buffer (buffer-list))
+      (let ((state (buffer-local-value 'grid-table-etaf--state buffer))
+            (shown (buffer-local-value 'grid-table--data-source buffer)))
+        (when (and state shown (memq (gethash :model shown) models))
+          (push buffer views))))
+    (nreverse views)))
+
+(defvar grid-table-etaf--stale-views nil
+  "Buffers to draw again once the command that changed their grid ends.")
+
+(defun grid-table-etaf--draw-stale-views ()
+  "Draw again the buffers in `grid-table-etaf--stale-views'."
+  (let ((buffers grid-table-etaf--stale-views))
+    (setq grid-table-etaf--stale-views nil)
+    (dolist (buffer buffers)
+      (when (buffer-live-p buffer)
+        (with-current-buffer buffer
+          (when grid-table-etaf--state
+            (grid-table-etaf--widen-visible grid-table-etaf--state)
+            (grid-table-etaf--bump grid-table-etaf--state)))))))
+
 (defun grid-table-etaf--changed (state)
-  "Mark the buffer of STATE changed, so that `save-buffer' saves the grid."
-  (when (buffer-live-p (grid-table-etaf--state-buffer state))
-    (with-current-buffer (grid-table-etaf--state-buffer state)
-      (set-buffer-modified-p t))))
+  "Mark the buffer of STATE changed, so that `save-buffer' saves the grid.
+Other buffers showing the same workbook are drawn again, and those
+visiting the same file are marked changed too."
+  (let ((buffer (grid-table-etaf--state-buffer state)))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (set-buffer-modified-p t))
+      (let ((file (buffer-file-name buffer)))
+        (dolist (view (grid-table-etaf--views
+                       (buffer-local-value 'grid-table--data-source buffer)))
+          (unless (eq view buffer)
+            (when (and file (equal (buffer-file-name view) file))
+              (with-current-buffer view (set-buffer-modified-p t)))
+            (unless grid-table-etaf--stale-views
+              (run-at-time 0 nil #'grid-table-etaf--draw-stale-views))
+            (cl-pushnew view grid-table-etaf--stale-views)))))))
+
+(defun grid-table-etaf--saved ()
+  "Mark the other buffers visiting the current buffer's file saved."
+  (when buffer-file-name
+    (let ((file buffer-file-name))
+      (dolist (view (grid-table-etaf--views grid-table--data-source))
+        (unless (eq view (current-buffer))
+          (when (equal (buffer-file-name view) file)
+            (with-current-buffer view
+              (set-visited-file-modtime)
+              (set-buffer-modified-p nil))))))))
+
+(defun grid-table-etaf-new-view ()
+  "Show the current sheet in another buffer and window, a second view.
+Both show the same workbook: an edit in one is drawn in the other, and
+either saves it."
+  (interactive)
+  (unless grid-table--data-source (user-error "No grid in this buffer"))
+  (let ((source grid-table--data-source)
+        (title grid-table--title)
+        (file-path grid-table--file-path)
+        (file buffer-file-name)
+        (allow-elisp grid-table-allow-elisp)
+        (modified (buffer-modified-p))
+        (directory default-directory)
+        (view (generate-new-buffer (buffer-name))))
+    (with-current-buffer view
+      (setq default-directory directory
+            grid-table--file-path file-path
+            grid-table-allow-elisp allow-elisp)
+      (grid-table--show-grid-in-current-buffer source title)
+      (when file
+        (setq buffer-file-name file)
+        (set-visited-file-modtime))
+      (set-buffer-modified-p modified))
+    (pop-to-buffer view)))
 
 (defun grid-table-etaf--record (state record)
   "Push RECORD on STATE's undo history and drop its redo history."
@@ -4523,7 +4603,8 @@ file."
             (set-visited-file-modtime)
             (set-buffer-modified-p nil)
             (message "Saved %s" buffer-file-name))
-        (grid-table-write-file)))
+        (grid-table-write-file))
+      (grid-table-etaf--saved))
     t))
 
 (define-derived-mode grid-table-etaf-mode grid-table-mode "Grid Table"

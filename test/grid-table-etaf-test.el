@@ -2185,6 +2185,33 @@ comes, with what reads it."
             (should (equal (grid-get-computed-value-at source 1 1) 5)))
         (grid-calc-calc-stop)))))
 
+(ert-deftest grid-table-etaf-new-view-shows-edits-and-outlives-the-other ()
+  "A second view of a sheet draws the edits made in the first, and the
+first goes on drawing once the second is killed.  Cloning a grid's
+buffer opens such a view."
+  (grid-table-etaf-test--with-grid (3 3)
+    (should (eq (key-binding [remap clone-indirect-buffer-other-window])
+                #'grid-table-etaf-new-view))
+    (let ((first (current-buffer))
+          (view (save-window-excursion
+                  (grid-table-etaf-new-view)
+                  (current-buffer))))
+      (unwind-protect
+          (progn
+            (should-not (eq view first))
+            (should (eq (buffer-local-value 'grid-table--data-source view) source))
+            (grid-table-etaf-set-cell 1 0 "seen-there")
+            (accept-process-output nil 0.05)
+            (with-current-buffer view
+              (should (string-search "seen-there" (grid-table-etaf-test--text))))
+            (with-current-buffer view
+              (grid-table-etaf-set-cell 2 0 "seen-here"))
+            (accept-process-output nil 0.05)
+            (should (string-search "seen-here" (grid-table-etaf-test--text))))
+        (kill-buffer view))
+      (grid-table-etaf-set-cell 0 1 "still-drawn")
+      (should (string-search "still-drawn" (grid-table-etaf-test--text))))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
