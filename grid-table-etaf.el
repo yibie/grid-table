@@ -4615,7 +4615,50 @@ Keys are owned by the mounted sheet; see `grid-table-etaf--keys'."
   (setq truncate-lines t)
   ;; The buffer's text is the drawn sheet, not the file's.
   (auto-save-mode -1)
-  (add-hook 'write-contents-functions #'grid-table-etaf--write-contents nil t))
+  (add-hook 'write-contents-functions #'grid-table-etaf--write-contents nil t)
+  (add-hook 'pre-command-hook #'grid-table-etaf--gc-hold nil t))
+
+;;;----------------------------------------------------------------------
+;;; Garbage collection
+;;;----------------------------------------------------------------------
+
+(defcustom grid-table-etaf-gc-cons-threshold (* 64 1024 1024)
+  "Bytes a grid's commands may allocate before Emacs collects garbage.
+Every move draws the cells on screen again, which allocates a few
+megabytes; at Emacs's default threshold that is several collections a
+move, slow enough that a held arrow key outruns the display.  While
+commands run in a grid `gc-cons-threshold' is raised to this, and put
+back, with one collection, once Emacs has been idle for a second.  nil
+leaves `gc-cons-threshold' alone."
+  :type '(choice (const :tag "Leave it alone" nil) integer)
+  :group 'grid-table)
+
+(defvar grid-table-etaf--gc-saved nil
+  "`gc-cons-threshold' as it was before a grid raised it, or nil.")
+
+(defvar grid-table-etaf--gc-timer nil
+  "Idle timer that puts `gc-cons-threshold' back.")
+
+(defun grid-table-etaf--gc-hold ()
+  "Raise `gc-cons-threshold' for a grid command, until Emacs is idle."
+  (when (and grid-table-etaf-gc-cons-threshold
+             (null grid-table-etaf--gc-saved)
+             (< gc-cons-threshold grid-table-etaf-gc-cons-threshold))
+    (setq grid-table-etaf--gc-saved gc-cons-threshold
+          gc-cons-threshold grid-table-etaf-gc-cons-threshold)
+    (unless (timerp grid-table-etaf--gc-timer)
+      (setq grid-table-etaf--gc-timer
+            (run-with-idle-timer 1 nil #'grid-table-etaf--gc-release)))))
+
+(defun grid-table-etaf--gc-release ()
+  "Put back the `gc-cons-threshold' a grid raised, and collect once."
+  (setq grid-table-etaf--gc-timer nil)
+  (when grid-table-etaf--gc-saved
+    ;; Something else changed it meanwhile (gcmh, say): leave theirs.
+    (when (eql gc-cons-threshold grid-table-etaf-gc-cons-threshold)
+      (setq gc-cons-threshold grid-table-etaf--gc-saved))
+    (setq grid-table-etaf--gc-saved nil)
+    (garbage-collect)))
 
 (defun grid-table-etaf-refresh (&optional restore-row restore-col)
   "Re-render the current grid from its data source.

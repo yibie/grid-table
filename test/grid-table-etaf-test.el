@@ -2212,6 +2212,39 @@ buffer opens such a view."
       (grid-table-etaf-set-cell 0 1 "still-drawn")
       (should (string-search "still-drawn" (grid-table-etaf-test--text))))))
 
+(ert-deftest grid-table-etaf-holds-garbage-collection-while-commands-run ()
+  "A grid's commands raise `gc-cons-threshold' until Emacs is idle.
+Each move allocates a few megabytes; collecting several times a move is
+what made held arrow keys outrun the display."
+  (grid-table-etaf-test--with-grid (5 3)
+    (let ((gc-cons-threshold 800000)
+          (grid-table-etaf-gc-cons-threshold (* 64 1024 1024))
+          (grid-table-etaf--gc-saved nil)
+          (grid-table-etaf--gc-timer nil))
+      (should (memq #'grid-table-etaf--gc-hold pre-command-hook))
+      (run-hooks 'pre-command-hook)
+      (should (= gc-cons-threshold (* 64 1024 1024)))
+      (should (timerp grid-table-etaf--gc-timer))
+      ;; A second command neither saves the raised value nor adds a timer.
+      (let ((timer grid-table-etaf--gc-timer))
+        (run-hooks 'pre-command-hook)
+        (should (eq grid-table-etaf--gc-timer timer))
+        (cancel-timer timer))
+      (grid-table-etaf--gc-release)
+      (should (= gc-cons-threshold 800000))
+      (should-not grid-table-etaf--gc-saved)
+      ;; A threshold someone else changed meanwhile is theirs to keep.
+      (run-hooks 'pre-command-hook)
+      (cancel-timer grid-table-etaf--gc-timer)
+      (setq gc-cons-threshold (* 100 1024 1024))
+      (grid-table-etaf--gc-release)
+      (should (= gc-cons-threshold (* 100 1024 1024)))
+      ;; nil leaves it alone.
+      (let ((grid-table-etaf-gc-cons-threshold nil)
+            (gc-cons-threshold 800000))
+        (run-hooks 'pre-command-hook)
+        (should (= gc-cons-threshold 800000))))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
