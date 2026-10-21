@@ -43,7 +43,7 @@ exc.el 需要 Emacs 29.1 或更新版本，以及 [emacs-taf](https://github.com
 的三个库：`ecss`、`ebox` 和 `etaf`。它们都还没有进软件包仓库，所以四个都要克隆：
 
 ```sh
-git clone https://github.com/yibie/exc.git
+git clone https://github.com/yibie/exc.el.git
 git clone https://github.com/emacs-taf/ecss.git
 git clone https://github.com/emacs-taf/ebox.git
 git clone https://github.com/emacs-taf/etaf.git
@@ -53,7 +53,7 @@ git clone https://github.com/emacs-taf/etaf.git
 
 ```elisp
 (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"
-               "~/src/exc" "~/src/exc/plugins"))
+               "~/src/exc.el" "~/src/exc.el/plugins"))
   (add-to-list 'load-path (expand-file-name dir)))
 
 (require 'exc)
@@ -66,7 +66,7 @@ git clone https://github.com/emacs-taf/etaf.git
 
 ```elisp
 (use-package exc
-  :load-path ("~/src/exc" "~/src/exc/plugins")
+  :load-path ("~/src/exc.el" "~/src/exc.el/plugins")
   :init
   (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"))
     (add-to-list 'load-path (expand-file-name dir)))
@@ -81,7 +81,7 @@ git clone https://github.com/emacs-taf/etaf.git
 make -C ~/src/ecss compile
 make -C ~/src/ebox compile
 make -C ~/src/etaf compile
-make -C ~/src/exc compile ETAF_SRC=$HOME/src
+make -C ~/src/exc.el compile ETAF_SRC=$HOME/src
 ```
 
 每次拉取新版本后都要重新编译，以免加载到过期的 `.elc` 而不是新的源码。
@@ -457,5 +457,5 @@ make test-etaf ETAF_SRC=~/src        # 界面；ETAF_SRC 是放 ecss、ebox、et
 插件可以增加数据源和文件格式，见 [docs/PLUGIN_DEVELOPMENT_CN.md](docs/PLUGIN_DEVELOPMENT_CN.md)
 和 `plugins/exc-example-plugin.el`。
 
-问题和建议请提到 [GitHub Issues](https://github.com/yibie/exc/issues)。
+问题和建议请提到 [GitHub Issues](https://github.com/yibie/exc.el/issues)。
 绘制和鼠标方面的问题可能属于 [ETAF](https://github.com/emacs-taf)。

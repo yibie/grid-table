@@ -50,7 +50,7 @@ exc.el needs Emacs 29.1 or later and three libraries from
 None of them is on a package archive yet, so clone all four:
 
 ```sh
-git clone https://github.com/yibie/exc.git
+git clone https://github.com/yibie/exc.el.git
 git clone https://github.com/emacs-taf/ecss.git
 git clone https://github.com/emacs-taf/ebox.git
 git clone https://github.com/emacs-taf/etaf.git
@@ -60,7 +60,7 @@ Then put them on `load-path`:
 
 ```elisp
 (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"
-               "~/src/exc" "~/src/exc/plugins"))
+               "~/src/exc.el" "~/src/exc.el/plugins"))
   (add-to-list 'load-path (expand-file-name dir)))
 
 (require 'exc)
@@ -73,7 +73,7 @@ Or with `use-package`:
 
 ```elisp
 (use-package exc
-  :load-path ("~/src/exc" "~/src/exc/plugins")
+  :load-path ("~/src/exc.el" "~/src/exc.el/plugins")
   :init
   (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"))
     (add-to-list 'load-path (expand-file-name dir)))
@@ -89,7 +89,7 @@ opening a grid warns when they are not compiled.
 make -C ~/src/ecss compile
 make -C ~/src/ebox compile
 make -C ~/src/etaf compile
-make -C ~/src/exc compile ETAF_SRC=$HOME/src
+make -C ~/src/exc.el compile ETAF_SRC=$HOME/src
 ```
 
 Compile again after every pull, so a stale `.elc` file is not loaded in
@@ -527,6 +527,6 @@ Plugins can add data sources and file formats; see
 [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) and
 `plugins/exc-example-plugin.el`.
 
-Bugs and suggestions: [GitHub Issues](https://github.com/yibie/exc/issues).
+Bugs and suggestions: [GitHub Issues](https://github.com/yibie/exc.el/issues).
 Problems in drawing or mouse handling may belong to
 [ETAF](https://github.com/emacs-taf).
