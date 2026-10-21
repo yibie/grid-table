@@ -204,11 +204,12 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 `=elisp:` 不同，`CALC` 不需要打开任何开关：Calc 的写法只能调用 Calc 自己的数学
 函数。这是 grid-table 自己的函数，Excel 里会显示 `#NAME?`。
 
-Calc 在另一个 Emacs 进程里计算：第一次用到 `CALC` 时启动，之后一直复用，所以很
-耗时的计算也不会卡住你的 Emacs。结果回来之前，单元格显示 `#GETTING_DATA`；结果
+Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之后一直复用，所以很
+耗时的计算也不会卡住你的 Emacs。这样的进程最多有 `grid-calc-calc-workers`（2）个，
+一个慢的计算只占住它自己那个，其他式子交给另一个接着算。结果回来之前，单元格显示 `#GETTING_DATA`；结果
 回来后，这一格和读取它的公式会重新计算。超过 `grid-calc-calc-timeout`（10 秒）
 还没算完的计算会被停掉，显示 `#CALC!`。算过的结果会保留，同一个式子不会算第二遍，
-`random()` 的结果也不会变；按 `C-c C-r` 会全部重新计算。那个 Emacs 以 `-Q` 启动，
+`random()` 的结果也不会变；按 `C-c C-r` 会全部重新计算。这些 Emacs 以 `-Q` 启动，
 所以你自己用 `defmath` 定义的 Calc 函数在里面用不了。在 batch 模式下，或者把
 `grid-calc-calc-async` 设为 nil 时，Calc 就在你的 Emacs 里计算，结果当场就有。
 

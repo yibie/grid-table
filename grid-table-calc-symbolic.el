@@ -16,13 +16,17 @@
 ;; Calc runs in another one, started once and kept, which
 ;; grid-table-calc-worker.el drives.  A cell whose answer has not come
 ;; yet shows #GETTING_DATA; when it comes, the cells that asked are
-;; computed again and `grid-calc-calc-ready-functions' run.  A job that
-;; takes longer than `grid-calc-calc-timeout' is #CALC!: that Emacs is
-;; stopped and another started for the jobs after it.  In batch, as in
-;; the tests, Calc runs here and the answer is there at once.
+;; computed again and `grid-calc-calc-ready-functions' run.  There are
+;; up to `grid-calc-calc-workers' of them, so a slow job holds only its
+;; own.  A job that takes longer than `grid-calc-calc-timeout' is
+;; #CALC!: that Emacs is stopped and another started for later jobs.
+;; In batch, as in the tests, Calc runs here and the answer is there at
+;; once.
 
 ;;; Code:
 
+(require 'cl-lib)
+(require 'seq)
 (require 'grid-table-calc)
 
 (declare-function calc-eval "calc" (str &optional separator &rest args))
@@ -37,6 +41,13 @@ Nil computes here: a long computation then holds Emacs until it ends or
 (defcustom grid-calc-calc-timeout 10
   "Seconds a CALC computation may take in the other Emacs before it is #CALC!."
   :type 'number
+  :group 'grid-table)
+
+(defcustom grid-calc-calc-workers 2
+  "How many other Emacsen CALC computes in at most.
+A slow computation holds only the one computing it, so the others go on
+with the texts after it."
+  :type 'natnum
   :group 'grid-table)
 
 (defvar grid-calc-calc-ready-functions nil
@@ -59,23 +70,20 @@ computed again.  The view uses it to recalculate and show them.")
 (defvar grid-calc--calc-waiting (make-hash-table :test 'equal)
   "For each text sent to the other Emacs, the formulas waiting for it.")
 
+;; One of the other Emacsen: its process, the job it is computing as
+;; (ID . TEXT), what it has written of an answer line not yet ended,
+;; and the timer that stops the job when it takes too long.
+(cl-defstruct (grid-calc--worker (:constructor grid-calc--worker-make))
+  process job (output "") timer)
+
 (defvar grid-calc--calc-queue nil
-  "The texts to send to the other Emacs after the one it is computing.")
+  "The texts waiting for one of the other Emacsen to be free.")
 
-(defvar grid-calc--calc-job nil
-  "(ID . TEXT) of what the other Emacs is computing, or nil.")
-
-(defvar grid-calc--calc-process nil
-  "The other Emacs, or nil before it is started.")
-
-(defvar grid-calc--calc-output ""
-  "What the other Emacs has written of an answer line not yet ended.")
-
-(defvar grid-calc--calc-timer nil
-  "The timer that stops the job in progress when it takes too long.")
+(defvar grid-calc--calc-workers nil
+  "The other Emacsen started so far, as `grid-calc--worker's.")
 
 (defvar grid-calc--calc-sent 0
-  "How many jobs have been sent to the other Emacs, also each one's id.")
+  "How many jobs have been sent to the other Emacsen, also each one's id.")
 
 (defun grid-calc--calc-value (printed)
   "The value of what Calc PRINTED: a number when it is one, else text.
@@ -117,11 +125,11 @@ PRINTED is what `calc-eval' gave, or (error MESSAGE) for Calc failing."
 ;;; The other Emacs
 ;;;----------------------------------------------------------------------
 
-(defun grid-calc--calc-start ()
-  "Start the other Emacs, unless it is running."
-  (unless (process-live-p grid-calc--calc-process)
-    (setq grid-calc--calc-output "")
-    (setq grid-calc--calc-process
+(defun grid-calc--calc-start (worker)
+  "Start WORKER's Emacs, unless it is running."
+  (unless (process-live-p (grid-calc--worker-process worker))
+    (setf (grid-calc--worker-output worker) "")
+    (setf (grid-calc--worker-process worker)
           (make-process
            :name "grid-table-calc"
            :command (list (expand-file-name invocation-name invocation-directory)
@@ -132,30 +140,43 @@ PRINTED is what `calc-eval' gave, or (error MESSAGE) for Calc failing."
            :connection-type 'pipe
            :noquery t
            :stderr (get-buffer-create " *grid-table-calc errors*")
-           :filter #'grid-calc--calc-filter
-           :sentinel #'grid-calc--calc-sentinel))))
+           :filter (lambda (process output)
+                     (grid-calc--calc-filter worker process output))
+           :sentinel (lambda (process event)
+                       (grid-calc--calc-sentinel worker process event))))
+    (when-let* ((stderr (get-buffer-process " *grid-table-calc errors*")))
+      (set-process-query-on-exit-flag stderr nil))))
+
+(defun grid-calc--calc-free-worker ()
+  "A worker computing nothing, made when there are fewer than allowed."
+  (or (seq-find (lambda (worker) (null (grid-calc--worker-job worker)))
+                grid-calc--calc-workers)
+      (when (< (length grid-calc--calc-workers) (max 1 grid-calc-calc-workers))
+        (car (push (grid-calc--worker-make) grid-calc--calc-workers)))))
 
 (defun grid-calc--calc-send-next ()
-  "Send the next text in the queue to the other Emacs, if it is free."
-  (when (and (null grid-calc--calc-job) grid-calc--calc-queue)
-    (let ((text (pop grid-calc--calc-queue))
-          (print-escape-newlines t) (print-length nil) (print-level nil))
-      (grid-calc--calc-start)
-      (setq grid-calc--calc-job (cons (cl-incf grid-calc--calc-sent) text))
-      (process-send-string
-       grid-calc--calc-process
-       (concat (prin1-to-string (list (car grid-calc--calc-job) text
-                                      grid-calc--calc-modes))
-               "\n"))
-      (setq grid-calc--calc-timer
-            (run-at-time grid-calc-calc-timeout nil #'grid-calc--calc-too-long
-                         (car grid-calc--calc-job))))))
+  "Send the texts in the queue to the other Emacsen that are free."
+  (let (worker)
+    (while (and grid-calc--calc-queue
+                (setq worker (grid-calc--calc-free-worker)))
+      (let* ((text (pop grid-calc--calc-queue))
+             (id (cl-incf grid-calc--calc-sent))
+             (print-escape-newlines t) (print-length nil) (print-level nil))
+        (grid-calc--calc-start worker)
+        (setf (grid-calc--worker-job worker) (cons id text))
+        (process-send-string
+         (grid-calc--worker-process worker)
+         (concat (prin1-to-string (list id text grid-calc--calc-modes)) "\n"))
+        (setf (grid-calc--worker-timer worker)
+              (run-at-time grid-calc-calc-timeout nil #'grid-calc--calc-too-long
+                           worker id))))))
 
-(defun grid-calc--calc-done (answer)
-  "Give ANSWER to what waits for the job in progress, and start the next."
-  (let ((text (cdr grid-calc--calc-job)))
-    (when (timerp grid-calc--calc-timer) (cancel-timer grid-calc--calc-timer))
-    (setq grid-calc--calc-timer nil grid-calc--calc-job nil)
+(defun grid-calc--calc-done (worker answer)
+  "Give ANSWER to what waits for WORKER's job, and send it the next one."
+  (let ((text (cdr (grid-calc--worker-job worker))))
+    (when (timerp (grid-calc--worker-timer worker))
+      (cancel-timer (grid-calc--worker-timer worker)))
+    (setf (grid-calc--worker-timer worker) nil (grid-calc--worker-job worker) nil)
     (grid-calc--calc-keep text answer)
     (let ((waiters (gethash text grid-calc--calc-waiting)))
       (remhash text grid-calc--calc-waiting)
@@ -167,33 +188,45 @@ PRINTED is what `calc-eval' gave, or (error MESSAGE) for Calc failing."
         (with-demoted-errors "grid-table CALC: %S"
           (run-hook-with-args 'grid-calc-calc-ready-functions waiters))))))
 
-(defun grid-calc--calc-filter (_process output)
-  "Take OUTPUT, part of the other Emacs's answers."
-  (setq grid-calc--calc-output (concat grid-calc--calc-output output))
-  (while (string-match "\n" grid-calc--calc-output)
-    (let ((line (substring grid-calc--calc-output 0 (match-beginning 0))))
-      (setq grid-calc--calc-output
-            (substring grid-calc--calc-output (match-end 0)))
+(defun grid-calc--calc-filter (worker _process output)
+  "Take OUTPUT, part of WORKER's answers."
+  (setf (grid-calc--worker-output worker)
+        (concat (grid-calc--worker-output worker) output))
+  (while (string-match "\n" (grid-calc--worker-output worker))
+    (let* ((pending (grid-calc--worker-output worker))
+           (line (substring pending 0 (match-beginning 0))))
+      (setf (grid-calc--worker-output worker) (substring pending (match-end 0)))
       (pcase (ignore-errors (car (read-from-string line)))
         (`(,id ,printed)
-         (when (eql id (car grid-calc--calc-job))
-           (grid-calc--calc-done (grid-calc--calc-value printed))))))))
+         (when (eql id (car (grid-calc--worker-job worker)))
+           (grid-calc--calc-done worker (grid-calc--calc-value printed))))))))
 
-(defun grid-calc--calc-too-long (id)
-  "Stop the job ID, which took too long; its answer is #CALC!."
-  (when (eql id (car grid-calc--calc-job))
-    (let ((process grid-calc--calc-process))
-      (setq grid-calc--calc-process nil)
+(defun grid-calc--calc-too-long (worker id)
+  "Stop WORKER's job ID, which took too long; its answer is #CALC!."
+  (when (eql id (car (grid-calc--worker-job worker)))
+    (let ((process (grid-calc--worker-process worker)))
+      (setf (grid-calc--worker-process worker) nil)
       (when (process-live-p process) (delete-process process)))
-    (grid-calc--calc-done (grid-calc-err "#CALC!"))))
+    (grid-calc--calc-done worker (grid-calc-err "#CALC!"))))
 
-(defun grid-calc--calc-sentinel (process _event)
-  "Pick up after the other Emacs, PROCESS, stopped by itself."
-  (when (and (eq process grid-calc--calc-process)
+(defun grid-calc--calc-sentinel (worker process _event)
+  "Pick up after WORKER's Emacs, PROCESS, stopped by itself."
+  (when (and (eq process (grid-calc--worker-process worker))
              (not (process-live-p process)))
-    (setq grid-calc--calc-process nil)
-    (when grid-calc--calc-job
-      (grid-calc--calc-done (grid-calc-err "#CALC!")))))
+    (setf (grid-calc--worker-process worker) nil)
+    (when (grid-calc--worker-job worker)
+      (grid-calc--calc-done worker (grid-calc-err "#CALC!")))))
+
+(defun grid-calc-calc-stop ()
+  "Stop the other Emacsen CALC computes in; jobs in progress are dropped."
+  (dolist (worker grid-calc--calc-workers)
+    (when (timerp (grid-calc--worker-timer worker))
+      (cancel-timer (grid-calc--worker-timer worker)))
+    (let ((process (grid-calc--worker-process worker)))
+      (setf (grid-calc--worker-process worker) nil)
+      (when (process-live-p process) (delete-process process))))
+  (setq grid-calc--calc-workers nil grid-calc--calc-queue nil)
+  (clrhash grid-calc--calc-waiting))
 
 (defun grid-calc--calc-ask (text)
   "Have the other Emacs compute TEXT for the formula being computed."

@@ -230,14 +230,16 @@ double, comes back as text. Text Calc cannot read is `#VALUE!`. Unlike
 own math functions. It is grid-table's own function, so Excel shows
 `#NAME?` for it.
 
-Calc computes in a second Emacs, started the first time `CALC` is used
-and kept, so a long computation does not hold yours. Until its answer
+Calc computes in other Emacsen, started the first time `CALC` is used
+and kept, so a long computation does not hold yours. There are up to
+`grid-calc-calc-workers` (2) of them, so a slow computation holds only
+its own and the others go on with the rest. Until its answer
 comes a cell shows `#GETTING_DATA`; then it and the formulas that read it
 are computed again. A computation that takes longer than
 `grid-calc-calc-timeout` (10 seconds) is stopped and shows `#CALC!`.
 Answers are kept, so the same text is not computed twice, and `random()`
-does not change; `C-c C-r` computes them all anew. The second Emacs
-starts with `-Q`, so Calc functions you defined with `defmath` are not
+does not change; `C-c C-r` computes them all anew. They start
+with `-Q`, so Calc functions you defined with `defmath` are not
 there. In batch, or with `grid-calc-calc-async` set to nil, Calc
 computes in your Emacs and the answer is there at once.
 

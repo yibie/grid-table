@@ -2168,8 +2168,8 @@ comes, with what reads it."
     (let ((grid-calc-calc-async t)
           (grid-calc--calc-answers (make-hash-table :test 'equal))
           (grid-calc--calc-waiting (make-hash-table :test 'equal))
-          (grid-calc--calc-queue nil) (grid-calc--calc-job nil)
-          (grid-calc--calc-process nil) (grid-calc--calc-sent 0)
+          (grid-calc--calc-queue nil) (grid-calc--calc-workers nil)
+          (grid-calc--calc-sent 0)
           (start (float-time)))
       (unwind-protect
           (progn
@@ -2183,8 +2183,7 @@ comes, with what reads it."
               (accept-process-output nil 0.05))
             (should (string-search "4 x^3" (grid-table-etaf-test--text)))
             (should (equal (grid-get-computed-value-at source 1 1) 5)))
-        (when (process-live-p grid-calc--calc-process)
-          (delete-process grid-calc--calc-process))))))
+        (grid-calc-calc-stop)))))
 
 (provide 'grid-table-etaf-test)
 

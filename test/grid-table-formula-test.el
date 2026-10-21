@@ -4495,11 +4495,10 @@ double holds, and leaves the user's Calc modes as they were."
   `(let ((grid-calc-calc-async t)
          (grid-calc--calc-answers (make-hash-table :test 'equal))
          (grid-calc--calc-waiting (make-hash-table :test 'equal))
-         (grid-calc--calc-queue nil) (grid-calc--calc-job nil)
-         (grid-calc--calc-process nil) (grid-calc--calc-sent 0))
+         (grid-calc--calc-queue nil) (grid-calc--calc-workers nil)
+         (grid-calc--calc-sent 0))
      (unwind-protect (progn ,@body)
-       (when (process-live-p grid-calc--calc-process)
-         (delete-process grid-calc--calc-process)))))
+       (grid-calc-calc-stop))))
 
 (ert-deftest grid-table-formula-calc-computes-in-another-emacs ()
   "Without holding Emacs, CALC shows #GETTING_DATA until its answer comes,
@@ -4519,9 +4518,9 @@ share is computed once."
 
 (ert-deftest grid-table-formula-calc-stops-what-takes-too-long ()
   "A computation past `grid-calc-calc-timeout' is #CALC!, and the job
-after it still has its answer."
+after it in the same Emacs still has its answer."
   (grid-table-formula-test--calc-async
-    (let* ((grid-calc-calc-timeout 0.3)
+    (let* ((grid-calc-calc-timeout 0.3) (grid-calc-calc-workers 1)
            (model (grid-model-create
                    1 2 '(("=CALC(\"vsum(index(5000000))\")" "=CALC(\"2+3\")")))))
       (grid-model-get-computed-value model 0 0)
@@ -4529,6 +4528,19 @@ after it still has its answer."
       (grid-table-calc-evaluate model)
       (should (equal (grid-model-get-computed-value model 0 0) "#CALC!"))
       (should (equal (grid-model-get-computed-value model 0 1) 5)))))
+
+(ert-deftest grid-table-formula-calc-slow-job-holds-only-its-own-emacs ()
+  "A slow CALC does not hold the quick ones after it: they are computed
+in another Emacs, and answer while the slow one is still going."
+  (grid-table-formula-test--calc-async
+    (let* ((grid-calc-calc-timeout 30) (grid-calc-calc-workers 2)
+           (model (grid-model-create
+                   1 2 '(("=CALC(\"sum(sqrt(k), k, 1, 1000000)\")" "=CALC(\"2+3\")")))))
+      (grid-model-get-computed-value model 0 0)
+      (should (= (grid-table-formula-test--calc-wait 1) 1))
+      (grid-table-calc-evaluate model)
+      (should (equal (grid-model-get-computed-value model 0 1) 5))
+      (should (equal (grid-model-get-computed-value model 0 0) "#GETTING_DATA")))))
 
 (provide 'grid-table-formula-test)
 
