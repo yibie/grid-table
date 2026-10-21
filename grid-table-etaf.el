@@ -2244,11 +2244,51 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
                    (equal (nth 1 drawn) cols)
                    (memq row (nth 2 drawn))
                    (not (eql row (car (last (nth 2 drawn))))))
+        ;; Far below the window, start from the first row that leaves
+        ;; the cursor's row last, instead of laying the window out again
+        ;; for every row between.
+        (let ((shown (grid-table-etaf--visible-rows
+                      state (etaf-value top-ref) cols)))
+          (when (and (>= row (car frozen))
+                     shown
+                     (> (grid-table-etaf--row-position state row)
+                        (grid-table-etaf--row-position
+                         state (car (last shown)))))
+            (etaf-set-value top-ref
+                            (grid-table-etaf--top-ending-at state row cols))))
         (while (and (>= row (car frozen))
                     (not (memq row (grid-table-etaf--visible-rows
                                     state (etaf-value top-ref) cols))))
           (etaf-set-value top-ref (grid-table-etaf--step-row
                                    state (etaf-value top-ref) 1)))))))
+
+(defun grid-table-etaf--top-ending-at (state row cols)
+  "Return the first scrolled row of STATE that shows ROW last, over COLS.
+Rows are laid out from ROW upwards only as far as the window reaches."
+  (let* ((source (grid-table-etaf--source state))
+         (merges (grid-get-merges source))
+         (frozen (car (grid-table-frozen source)))
+         (position (grid-table-etaf--row-position state row))
+         (first 0)
+         ;; As in `grid-table-etaf--visible-rows'.
+         (budget (- (cdr (grid-table-etaf--viewport state))
+                    3 (grid-table-etaf--title-lines state)
+                    (grid-table-etaf--row-lines state row cols merges))))
+    (while (and (< first position)
+                (< (grid-table-etaf--row-at state first) frozen))
+      (setq budget (- budget (grid-table-etaf--row-lines
+                              state (grid-table-etaf--row-at state first)
+                              cols merges))
+            first (1+ first)))
+    (while (and (> position first)
+                (let ((need (grid-table-etaf--row-lines
+                             state (grid-table-etaf--row-at state (1- position))
+                             cols merges)))
+                  (when (<= need budget)
+                    (setq budget (- budget need))
+                    t)))
+      (setq position (1- position)))
+    (grid-table-etaf--row-at state position)))
 
 (defun grid-table-etaf--settle (state)
   "Show STATE's cursor and put point on it.

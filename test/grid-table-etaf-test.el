@@ -2309,6 +2309,30 @@ what made held arrow keys outrun the display."
                                 (grid-table-etaf--state-or-error)))
                    '(5 . 1)))))
 
+(ert-deftest grid-table-etaf-far-jump-lays-out-a-window-not-every-row ()
+  "Going far down lays the window out a few times, not once a row."
+  (grid-table-etaf-test--with-grid (2000 3)
+    (grid-table-etaf-set-cell 1990 0 "near-end")
+    (let ((calls 0)
+          (real (symbol-function 'grid-table-etaf--visible-rows)))
+      (cl-letf (((symbol-function 'grid-table-etaf--visible-rows)
+                 (lambda (&rest args) (cl-incf calls) (apply real args))))
+        (grid-table-etaf-goto 1990 0))
+      (should (<= calls 4)))
+    (should (string-search "near-end" (grid-table-etaf-test--text)))
+    ;; The row is the window's last, as stepping down one row at a time
+    ;; left it.
+    (let* ((state (grid-table-etaf--state-or-error))
+           (cols (grid-table-etaf--visible-cols
+                  state (etaf-value (grid-table-etaf--state-left state))))
+           (rows (grid-table-etaf--visible-rows
+                  state (etaf-value (grid-table-etaf--state-top state)) cols)))
+      (should (eql (car (last rows)) 1990))
+      (should-not (memq 1990 (grid-table-etaf--visible-rows
+                              state (1- (etaf-value
+                                         (grid-table-etaf--state-top state)))
+                              cols))))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here
