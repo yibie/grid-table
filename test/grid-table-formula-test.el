@@ -4458,6 +4458,26 @@ E21 empty as 0, and the ones with a label show it."
   (should (equal (grid-table-formula-test--eval "=HYPERLINK(\"https://\"&B1,B1)")
                  0)))
 
+(ert-deftest grid-table-formula-calc-hands-its-text-to-emacs-calc ()
+  "CALC computes in radians, gives a number when Calc prints one a
+double holds, and leaves the user's Calc modes as they were."
+  (require 'calc)
+  (let ((calc-angle-mode 'deg))
+    (dolist (case '(("=CALC(\"deriv(x^2 + 3 x, x)\")" . "2 x + 3")
+                    ("=CALC(\"integ(sin(x), x)\")" . "-cos(x)")
+                    ("=CALC(\"roots(x^2 - 5 x + 6, x)\")" . "[3., 2.]")
+                    ("=CALC(\"nrat((x^2 - 1) / (x - 1))\")" . "x + 1")
+                    ("=CALC(\"2^10\")*2" . 2048)
+                    ("=CALC(\"2^0.5\")" . 1.4142135623731)
+                    ("=CALC(\"2^100\")" . "1267650600228229401496703205376")
+                    ("=calc(\"fact(3)\")+1" . 7)
+                    ("=CALC(\"x^\")" . "#VALUE!")))
+      (grid-table-formula-test--should-be case))
+    (should (eq calc-angle-mode 'deg)))
+  (should (equal (grid-table-formula-test--eval
+                  "=CALC(\"deriv(\" & B1 & \", x)\")" "sin(x)")
+                 "cos(x)")))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

@@ -3470,6 +3470,7 @@ cells there are blank."
 (require 'grid-table-calc-date)
 (require 'grid-table-calc-finance)
 (require 'grid-table-calc-engineering)
+(require 'grid-table-calc-symbolic)
 
 (grid-calc-declare-known-functions)
 
