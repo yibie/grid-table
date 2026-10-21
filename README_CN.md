@@ -202,8 +202,15 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 精度计算。结果是数字就返回数字（`=CALC("2^10")*2` 等于 2048）；其他结果，以及
 大到双精度放不下的数字，返回文本。Calc 读不懂的参数得到 `#VALUE!`。和
 `=elisp:` 不同，`CALC` 不需要打开任何开关：Calc 的写法只能调用 Calc 自己的数学
-函数。这是 grid-table 自己的函数，Excel 里会显示 `#NAME?`。很耗时的计算，比如
-`fact(10^7)`，会让 Emacs 一直等到算完，或者你按 `C-g`。
+函数。这是 grid-table 自己的函数，Excel 里会显示 `#NAME?`。
+
+Calc 在另一个 Emacs 进程里计算：第一次用到 `CALC` 时启动，之后一直复用，所以很
+耗时的计算也不会卡住你的 Emacs。结果回来之前，单元格显示 `#GETTING_DATA`；结果
+回来后，这一格和读取它的公式会重新计算。超过 `grid-calc-calc-timeout`（10 秒）
+还没算完的计算会被停掉，显示 `#CALC!`。算过的结果会保留，同一个式子不会算第二遍，
+`random()` 的结果也不会变；按 `C-c C-r` 会全部重新计算。那个 Emacs 以 `-Q` 启动，
+所以你自己用 `defmath` 定义的 Calc 函数在里面用不了。在 batch 模式下，或者把
+`grid-calc-calc-async` 设为 nil 时，Calc 就在你的 Emacs 里计算，结果当场就有。
 
 ### Lisp 公式
 
