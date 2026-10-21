@@ -1,9 +1,9 @@
 [English](KEYS.md) | [中文](KEYS_CN.md)
 
-# grid-table 按键
+# exc 按键
 
-表格 buffer 里的全部按键。这份表照 `grid-table-etaf.el` 里的
-`grid-table-etaf--keys` 整理。在 macOS 上，Command 键的快捷键（`s-c`、`s-v`、`s-z` …）也能用。
+表格 buffer 里的全部按键。这份表照 `exc-etaf.el` 里的
+`exc-etaf--keys` 整理。在 macOS 上，Command 键的快捷键（`s-c`、`s-v`、`s-z` …）也能用。
 
 ## 移动和选择
 
@@ -24,7 +24,7 @@
 
 | 按键 | 作用 |
 |---|---|
-| 任意字符 | 替换单元格内容并开始编辑（把 `grid-table-etaf-type-to-edit` 设为 nil 可关闭） |
+| 任意字符 | 替换单元格内容并开始编辑（把 `exc-etaf-type-to-edit` 设为 nil 可关闭） |
 | `F2`、`RET` | 编辑单元格原有的文字 |
 | `RET`（编辑中） | 存入并下移 |
 | `TAB`（编辑中） | 存入并右移 |

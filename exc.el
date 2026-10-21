@@ -1,5 +1,5 @@
 ;;; exc.el --- A spreadsheet inside Emacs -*- lexical-binding: t -*-
-;; Version: 0.5.0
+;; Version: 0.6.0
 ;; Package-Requires: ((emacs "29.1"))
 
 (require 'cl-lib)
@@ -28,7 +28,7 @@
   :prefix "exc-")
 
 ;; Public version identifier.
-(defconst exc-version "0.5.0")
+(defconst exc-version "0.6.0")
 
 ;;;----------------------------------------------------------------------
 ;;; Helper functions for data source access

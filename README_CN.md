@@ -1,9 +1,12 @@
 [English](README.md) | [中文](README_CN.md)
 
-# grid-table
+# exc
 
 Emacs 里的电子表格：在单元格里直接编辑，Excel 风格的公式，多个工作表，
 格式、筛选、浮动图表，还能打开 xlsx 文件并写回。
+
+这个包到 0.5.0 为止叫 grid-table，从 0.6.0 起叫 exc。旧名字照常能用，但已标为过时；
+要改哪些地方见 [从 grid-table 迁移](#从-grid-table-迁移)。
 
 <div align="center">
 
@@ -13,7 +16,7 @@ Emacs 里的电子表格：在单元格里直接编辑，Excel 风格的公式�
 
 ## 这是什么
 
-grid-table 把表格存在 `.grid` 文件里，用 [ETAF](https://github.com/emacs-taf)
+exc 把表格存在 `.grid` 文件里，用 [ETAF](https://github.com/emacs-taf)
 画成电子表格。操作方式照着 Excel 用户的习惯，同时在合适的地方保留 Emacs
 的习惯：
 
@@ -36,11 +39,11 @@ grid-table 把表格存在 `.grid` 文件里，用 [ETAF](https://github.com/ema
 
 ## 安装
 
-grid-table 需要 Emacs 29.1 或更新版本，以及 [emacs-taf](https://github.com/emacs-taf)
+exc 需要 Emacs 29.1 或更新版本，以及 [emacs-taf](https://github.com/emacs-taf)
 的三个库：`ecss`、`ebox` 和 `etaf`。它们都还没有进软件包仓库，所以四个都要克隆：
 
 ```sh
-git clone https://github.com/yibie/grid-table.git
+git clone https://github.com/yibie/exc.git
 git clone https://github.com/emacs-taf/ecss.git
 git clone https://github.com/emacs-taf/ebox.git
 git clone https://github.com/emacs-taf/etaf.git
@@ -50,25 +53,25 @@ git clone https://github.com/emacs-taf/etaf.git
 
 ```elisp
 (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"
-               "~/src/grid-table" "~/src/grid-table/plugins"))
+               "~/src/exc" "~/src/exc/plugins"))
   (add-to-list 'load-path (expand-file-name dir)))
 
-(require 'grid-table)
-(require 'grid-table-xlsx)   ; xlsx 工作簿（可选）
-(require 'grid-table-csv)    ; CSV 文件（可选）
-(require 'grid-table-org)    ; 在 Org 里预览（可选）
+(require 'exc)
+(require 'exc-xlsx)  ; xlsx 工作簿（可选）
+(require 'exc-csv)   ; CSV 文件（可选）
+(require 'exc-org)   ; 在 Org 里预览（可选）
 ```
 
 或者用 `use-package`：
 
 ```elisp
-(use-package grid-table
-  :load-path ("~/src/grid-table" "~/src/grid-table/plugins")
+(use-package exc
+  :load-path ("~/src/exc" "~/src/exc/plugins")
   :init
   (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"))
     (add-to-list 'load-path (expand-file-name dir)))
   :config
-  (require 'grid-table-xlsx))
+  (require 'exc-xlsx))
 ```
 
 然后把四个库都编译一遍。不编译的话，在表格里移动光标要慢十倍左右，
@@ -78,7 +81,7 @@ git clone https://github.com/emacs-taf/etaf.git
 make -C ~/src/ecss compile
 make -C ~/src/ebox compile
 make -C ~/src/etaf compile
-make -C ~/src/grid-table compile ETAF_SRC=$HOME/src
+make -C ~/src/exc compile ETAF_SRC=$HOME/src
 ```
 
 每次拉取新版本后都要重新编译，以免加载到过期的 `.elc` 而不是新的源码。
@@ -87,15 +90,15 @@ make -C ~/src/grid-table compile ETAF_SRC=$HOME/src
 ### xlsx 模块
 
 xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所以 Emacs 必须
-编译时带有模块支持。`plugins/grid-table-xlsx-module.dylib` 是为 macOS 预编译的
-模块（Apple 芯片和 Intel 都能用）。其他系统上用 `M-x grid-table-xlsx-build-module`
+编译时带有模块支持。`plugins/exc-xlsx-module.dylib` 是为 macOS 预编译的
+模块（Apple 芯片和 Intel 都能用）。其他系统上用 `M-x exc-xlsx-build-module`
 或 `make module` 编译，需要 [cargo](https://rustup.rs)。自己编译的模块会优先于
-预编译的那个，也可以用 `grid-table-xlsx-module-file` 指定放在别处的模块。
+预编译的那个，也可以用 `exc-xlsx-module-file` 指定放在别处的模块。
 
 ## 快速上手
 
 1. `C-x C-f data.grid`。文件还不存在时会打开一张空表。
-   `M-x grid-table-xlsx-find-file` 打开 xlsx 工作簿，`M-x grid-table-find-file-csv`
+   `M-x exc-xlsx-find-file` 打开 xlsx 工作簿，`M-x exc-find-file-csv`
    打开 CSV 文件，它的第一行就是表格的第一行，`C-x C-s` 按 CSV 存回去。
 2. 用方向键或 `C-n`/`C-p`/`C-f`/`C-b` 移动。直接输入就替换光标所在的单元格，
    按 `RET` 存入并下移。
@@ -141,7 +144,7 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 ### 尽量用键盘代替鼠标
 
 在 macOS 上，系统有时收不到鼠标松开的事件，拖动会在松手后继续：选区一直
-跟着指针变，或者图表一直跟着移动，直到下一次点击才停。grid-table 在拖动时
+跟着指针变，或者图表一直跟着移动，直到下一次点击才停。exc 在拖动时
 会隐藏提示框，这让问题很少出现，但仍然可能发生
 （[ebox#1](https://github.com/emacs-taf/ebox/issues/1)）。遇到时点一下鼠标或按
 `Esc` 就能停下；图表被误挪了，可以用 `C-/` 撤销。
@@ -213,21 +216,21 @@ xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所
 精度计算。结果是数字就返回数字（`=CALC("2^10")*2` 等于 2048）；其他结果，以及
 大到双精度放不下的数字，返回文本。Calc 读不懂的参数得到 `#VALUE!`。和
 `=elisp:` 不同，`CALC` 不需要打开任何开关：Calc 的写法只能调用 Calc 自己的数学
-函数。这是 grid-table 自己的函数，Excel 里会显示 `#NAME?`。
+函数。这是 exc 自己的函数，Excel 里会显示 `#NAME?`。
 
 Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之后一直复用，所以很
-耗时的计算也不会卡住你的 Emacs。这样的进程最多有 `grid-calc-calc-workers`（2）个，
+耗时的计算也不会卡住你的 Emacs。这样的进程最多有 `exc-calc-calc-workers`（2）个，
 一个慢的计算只占住它自己那个，其他式子交给另一个接着算。结果回来之前，单元格显示 `#GETTING_DATA`；结果
-回来后，这一格和读取它的公式会重新计算。超过 `grid-calc-calc-timeout`（10 秒）
+回来后，这一格和读取它的公式会重新计算。超过 `exc-calc-calc-timeout`（10 秒）
 还没算完的计算会被停掉，显示 `#CALC!`。算过的结果会保留，同一个式子不会算第二遍，
 `random()` 的结果也不会变；按 `C-c C-r` 会全部重新计算。这些 Emacs 以 `-Q` 启动，
 所以你自己用 `defmath` 定义的 Calc 函数在里面用不了。在 batch 模式下，或者把
-`grid-calc-calc-async` 设为 nil 时，Calc 就在你的 Emacs 里计算，结果当场就有。
+`exc-calc-calc-async` 设为 nil 时，Calc 就在你的 Emacs 里计算，结果当场就有。
 
 ### Lisp 公式
 
 `=elisp:(+ (cell "A1") (cell "B2"))` 执行 Emacs Lisp。它默认关闭，因为表格文件
-可以借此执行任意代码：只对信得过的文件把 `grid-table-allow-elisp` 设为 `t`。
+可以借此执行任意代码：只对信得过的文件把 `exc-allow-elisp` 设为 `t`。
 详见 [docs/ELISP_FORMULA_GUIDE_CN.md](docs/ELISP_FORMULA_GUIDE_CN.md)。
 
 ## 格式、筛选和工作表
@@ -298,7 +301,7 @@ Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之
 ### 图表公式
 
 图表公式在单元格里用 Unicode 方块和盲文点画出一张小图；`C-c v` 在单独的 buffer
-里打开它。`M-x grid-table-insert-chart` 插入一个图表公式。
+里打开它。`M-x exc-insert-chart` 插入一个图表公式。
 
 | 函数 | 图表 |
 |---|---|
@@ -342,12 +345,12 @@ Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之
 
 </div>
 
-`(require 'grid-table-xlsx)` 增加两个命令：
+`(require 'exc-xlsx)` 增加两个命令：
 
 | 命令 | 作用 |
 |---|---|
-| `M-x grid-table-xlsx-find-file` | 打开工作簿，每个工作表对应一个 sheet |
-| `M-x grid-table-xlsx-export` | 把表格和它的所有工作表写进工作簿 |
+| `M-x exc-xlsx-find-file` | 打开工作簿，每个工作表对应一个 sheet |
+| `M-x exc-xlsx-export` | 把表格和它的所有工作表写进工作簿 |
 
 从工作簿打开的表格不和它关联：`C-x C-s` 存成 `.grid` 文件，导出才写回工作簿。
 
@@ -361,8 +364,8 @@ Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之
 - 边框、字体、其他类型的条件格式和校验、只属于一个工作表的名称，导入时会丢掉。
   导出时，工作表里的单元格、合并、批注、条件格式、校验和隐藏行列会被表格里的替换，
   所以导入时丢掉的那些就没了；工作表的其他部分和其他工作表保持原样。
-- grid-table 没有对应的数字格式，按"常规"显示，写回时原样保留。
-- 用了 grid-table 没有的函数的公式会显示错误值，但公式原样保留，导出时原样写回。
+- exc 没有对应的数字格式，按"常规"显示，写回时原样保留。
+- 用了 exc 没有的函数的公式会显示错误值，但公式原样保留，导出时原样写回。
 - 其他类型的图表（雷达图、三维图、引用其他工作表数据的图表）不导入，写回时保持原样。
   图表公式导出为文本。
 - 1900 年 3 月以前的日期会差一天，因为工作簿的日历里那年有 2 月 29 日。
@@ -371,24 +374,24 @@ Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之
 
 ## Org、Markdown 和 reStructuredText
 
-**Org**：`M-x grid-table-org-insert-block` 插入一个预览 `.grid` 文件的源码块。
-光标在块里时，`M-x grid-table-org-refresh-block` 按文件重画预览，
-`M-x grid-table-org-open-block` 打开表格。
+**Org**：`M-x exc-org-insert-block` 插入一个预览 `.grid` 文件的源码块。
+光标在块里时，`M-x exc-org-refresh-block` 按文件重画预览，
+`M-x exc-org-open-block` 打开表格。
 
 ```org
-#+BEGIN_SRC grid-table :file /home/me/project/data.grid
+#+BEGIN_SRC exc :file /home/me/project/data.grid
 | Region | Total |
 |--------+-------|
 | North  | 120   |
 #+END_SRC
 ```
 
-**Markdown**：`M-x grid-table-markdown-insert-block` 用同样的方式插入一个代码块，
-光标所在的块用 `grid-table-markdown-refresh-block` 刷新、
-`grid-table-markdown-open-block` 打开。
+**Markdown**：`M-x exc-markdown-insert-block` 用同样的方式插入一个代码块，
+光标所在的块用 `exc-markdown-refresh-block` 刷新、
+`exc-markdown-open-block` 打开。
 
 ````markdown
-```grid-view file=/home/me/project/data.grid
+```exc file=/home/me/project/data.grid
 ┌───┬────────┬───────┐
 │   │ A      │ B     │
 …
@@ -397,23 +400,43 @@ Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之
 
 路径里有空格时，用双引号括起来。
 
-**reStructuredText**：`M-x grid-table-export-as-rst` 把表格写成 RST 表，
-`M-x grid-table-rst-insert-table-from-file` 从 `.grid` 文件插入一张。
+**reStructuredText**：`M-x exc-export-as-rst` 把表格写成 RST 表，
+`M-x exc-rst-insert-table-from-file` 从 `.grid` 文件插入一张。
 
-这些预览是 `grid-table-text.el` 画的纯文本表格，不需要 ETAF。
+这些预览是 `exc-text.el` 画的纯文本表格，不需要 ETAF。
+
+## 从 grid-table 迁移
+
+这个包到 0.5.0 为止叫 grid-table，从 0.6.0 起叫 exc。旧名字定义的东西现在都还能用，只是已标为过时，
+以后的版本会删掉。
+
+- **加载**：`(require 'grid-table)` 改成 `(require 'exc)`。旧写法仍然会把包加载起来，
+  并提示改掉。
+- **插件**：旧 feature 名不再提供，`(require 'grid-table-xlsx)` 这类会失败。改用
+  `exc-xlsx`、`exc-csv`、`exc-org`、`exc-markdown`、`exc-rst`、`exc-example-plugin`。
+- **`.grid` 文件**：这个版本能读 0.5.0 存的文件。0.6.0 存出的文件以 `exc-file` 开头，
+  0.5.0 及更早的版本读不了；如果可能回退，留一份旧版本的副本。
+- **Org 和 Markdown 块**：语言写成旧名 `grid-table` 的块、围栏仍写 `grid-view` 的块，
+  照常识别和刷新；新插入的块写成 `exc`。
+- **xlsx**：旧版本存在工作簿里的表格标题照常读出，再保存时写新的属性名。
+- **customize**：旧变量名上设过的值会落到新名上，所以 0.5.0 的 `custom-file` 照样生效。
+  方便的时候把里面的旧名改成新名 —— 旧名已标为过时，以后会删掉。
+- **编译**：Makefile 的目标没变，但模块和它的文件名跟着包名走：
+  `plugins/exc-xlsx-module`，由 `make module` 或 `make module-dist` 从 `plugins/xlsx/`
+  编译得到。`ETAF_SRC` 的用法不变。
 
 ## 开发
 
 ```
-grid-table.el              入口、命令、文件读写
-grid-table-etaf.el         电子表格界面（ETAF）
-grid-data-model.el         单元格、行、工作表
-grid-data-source.el        数据源接口
-grid-table-calc*.el        公式解析和函数
-grid-table-format.el       数字格式
-grid-table-persistence.el  .grid 文件格式
-grid-table-text.el         预览和导出用的纯文本表格
-grid-table-chart*.el       图表公式和浮动图表
+exc.el                    入口、命令、文件读写
+exc-etaf.el               电子表格界面（ETAF）
+exc-data-model.el         单元格、行、工作表
+exc-data-source.el        数据源接口
+exc-calc*.el              公式解析和函数
+exc-format.el             数字格式
+exc-persistence.el        .grid 文件格式
+exc-text.el               预览和导出用的纯文本表格
+exc-chart*.el             图表公式和浮动图表
 plugins/                   CSV、xlsx（含 Rust 模块）、Org、Markdown、RST
 test/                      ERT 测试和公式语料库
 docs/                      按键表、Lisp 公式、插件开发
@@ -432,7 +455,7 @@ make test-etaf ETAF_SRC=~/src        # 界面；ETAF_SRC 是放 ecss、ebox、et
 `make corpus-fetch` 下载这批文件。
 
 插件可以增加数据源和文件格式，见 [docs/PLUGIN_DEVELOPMENT_CN.md](docs/PLUGIN_DEVELOPMENT_CN.md)
-和 `plugins/grid-table-example-plugin.el`。
+和 `plugins/exc-example-plugin.el`。
 
-问题和建议请提到 [GitHub Issues](https://github.com/yibie/grid-table/issues)。
+问题和建议请提到 [GitHub Issues](https://github.com/yibie/exc/issues)。
 绘制和鼠标方面的问题可能属于 [ETAF](https://github.com/emacs-taf)。

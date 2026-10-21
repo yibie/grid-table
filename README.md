@@ -1,10 +1,14 @@
 [English](README.md) | [中文](README_CN.md)
 
-# grid-table
+# exc
 
 A spreadsheet inside Emacs: cells edited in place, Excel-style formulas,
 several sheets, formats, filters, floating charts, and xlsx files opened
 and written back.
+
+The package was called grid-table up to 0.5.0, and is exc from 0.6.0. The old names still work and
+are marked obsolete; [Migrating from grid-table](#migrating-from-grid-table)
+says what to change.
 
 <div align="center">
 
@@ -14,7 +18,7 @@ and written back.
 
 ## What it is
 
-grid-table keeps a table in a `.grid` file and shows it as a spreadsheet,
+exc keeps a table in a `.grid` file and shows it as a spreadsheet,
 drawn with [ETAF](https://github.com/emacs-taf). It behaves the way people
 who use Excel expect, and keeps Emacs habits where they apply:
 
@@ -41,12 +45,12 @@ thousands of rows opens and scrolls without drawing all of it.
 
 ## Installation
 
-grid-table needs Emacs 29.1 or later and three libraries from
+exc needs Emacs 29.1 or later and three libraries from
 [emacs-taf](https://github.com/emacs-taf): `ecss`, `ebox` and `etaf`.
 None of them is on a package archive yet, so clone all four:
 
 ```sh
-git clone https://github.com/yibie/grid-table.git
+git clone https://github.com/yibie/exc.git
 git clone https://github.com/emacs-taf/ecss.git
 git clone https://github.com/emacs-taf/ebox.git
 git clone https://github.com/emacs-taf/etaf.git
@@ -56,25 +60,25 @@ Then put them on `load-path`:
 
 ```elisp
 (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"
-               "~/src/grid-table" "~/src/grid-table/plugins"))
+               "~/src/exc" "~/src/exc/plugins"))
   (add-to-list 'load-path (expand-file-name dir)))
 
-(require 'grid-table)
-(require 'grid-table-xlsx)   ; xlsx workbooks (optional)
-(require 'grid-table-csv)    ; CSV files (optional)
-(require 'grid-table-org)    ; grids in Org (optional)
+(require 'exc)
+(require 'exc-xlsx)  ; xlsx workbooks (optional)
+(require 'exc-csv)   ; CSV files (optional)
+(require 'exc-org)   ; grids in Org (optional)
 ```
 
 Or with `use-package`:
 
 ```elisp
-(use-package grid-table
-  :load-path ("~/src/grid-table" "~/src/grid-table/plugins")
+(use-package exc
+  :load-path ("~/src/exc" "~/src/exc/plugins")
   :init
   (dolist (dir '("~/src/ecss" "~/src/ebox" "~/src/etaf"))
     (add-to-list 'load-path (expand-file-name dir)))
   :config
-  (require 'grid-table-xlsx))
+  (require 'exc-xlsx))
 ```
 
 Then byte-compile all four.  Uncompiled, moving around a grid is about
@@ -85,7 +89,7 @@ opening a grid warns when they are not compiled.
 make -C ~/src/ecss compile
 make -C ~/src/ebox compile
 make -C ~/src/etaf compile
-make -C ~/src/grid-table compile ETAF_SRC=$HOME/src
+make -C ~/src/exc compile ETAF_SRC=$HOME/src
 ```
 
 Compile again after every pull, so a stale `.elc` file is not loaded in
@@ -96,18 +100,18 @@ a grid says which one.
 
 xlsx files are read and written by a dynamic module written in Rust
 (`plugins/xlsx/`), so Emacs must be built with module support.
-`plugins/grid-table-xlsx-module.dylib` is a prebuilt module for macOS
+`plugins/exc-xlsx-module.dylib` is a prebuilt module for macOS
 (Apple silicon and Intel). On other systems build it with
-`M-x grid-table-xlsx-build-module` or `make module`, which needs
+`M-x exc-xlsx-build-module` or `make module`, which needs
 [cargo](https://rustup.rs). A module you build is used in place of the
-prebuilt one, and `grid-table-xlsx-module-file` can name a module kept
+prebuilt one, and `exc-xlsx-module-file` can name a module kept
 elsewhere.
 
 ## Getting started
 
 1. `C-x C-f data.grid`. A file that does not exist yet opens as an empty
-   grid. `M-x grid-table-xlsx-find-file` opens an xlsx workbook, and
-   `M-x grid-table-find-file-csv` a CSV file, whose first line is the
+   grid. `M-x exc-xlsx-find-file` opens an xlsx workbook, and
+   `M-x exc-find-file-csv` a CSV file, whose first line is the
    grid's first row; `C-x C-s` writes it back as CSV.
 2. Move with the arrow keys or `C-n`/`C-p`/`C-f`/`C-b`. Type to replace
    the cell under the cursor; press `RET` to store it and move down.
@@ -159,7 +163,7 @@ window scrolls the sheet.
 On macOS the window system sometimes never hands Emacs the release of the
 mouse button. The drag then goes on after the button is up: a selection
 keeps following the pointer, or a chart keeps moving, until the next
-click. grid-table hides tooltips during a drag, which makes this rare, but
+click. exc hides tooltips during a drag, which makes this rare, but
 it can still happen ([ebox#1](https://github.com/emacs-taf/ebox/issues/1)).
 If it does, click once or press `Esc`; `C-/` undoes a chart moved by
 mistake.
@@ -240,27 +244,27 @@ digits, whatever your own Calc is set to. A number comes back as a number
 (`=CALC("2^10")*2` is 2048); anything else, or a number too large for a
 double, comes back as text. Text Calc cannot read is `#VALUE!`. Unlike
 `=elisp:`, `CALC` needs no leave to run: Calc's notation reaches only its
-own math functions. It is grid-table's own function, so Excel shows
+own math functions. It is exc's own function, so Excel shows
 `#NAME?` for it.
 
 Calc computes in other Emacsen, started the first time `CALC` is used
 and kept, so a long computation does not hold yours. There are up to
-`grid-calc-calc-workers` (2) of them, so a slow computation holds only
+`exc-calc-calc-workers` (2) of them, so a slow computation holds only
 its own and the others go on with the rest. Until its answer
 comes a cell shows `#GETTING_DATA`; then it and the formulas that read it
 are computed again. A computation that takes longer than
-`grid-calc-calc-timeout` (10 seconds) is stopped and shows `#CALC!`.
+`exc-calc-calc-timeout` (10 seconds) is stopped and shows `#CALC!`.
 Answers are kept, so the same text is not computed twice, and `random()`
 does not change; `C-c C-r` computes them all anew. They start
 with `-Q`, so Calc functions you defined with `defmath` are not
-there. In batch, or with `grid-calc-calc-async` set to nil, Calc
+there. In batch, or with `exc-calc-calc-async` set to nil, Calc
 computes in your Emacs and the answer is there at once.
 
 ### Lisp formulas
 
 `=elisp:(+ (cell "A1") (cell "B2"))` runs Emacs Lisp. It is off by
 default, since a grid file could run any code: set
-`grid-table-allow-elisp` to `t` only for files you trust. See
+`exc-allow-elisp` to `t` only for files you trust. See
 [docs/ELISP_FORMULA_GUIDE.md](docs/ELISP_FORMULA_GUIDE.md).
 
 ## Formats, filters and sheets
@@ -347,7 +351,7 @@ they change.
 
 A chart formula draws a small chart inside its cell, out of Unicode
 blocks and Braille dots; `C-c v` opens it in its own buffer.
-`M-x grid-table-insert-chart` inserts one.
+`M-x exc-insert-chart` inserts one.
 
 | Function | Chart |
 |---|---|
@@ -391,12 +395,12 @@ blocks and Braille dots; `C-c v` opens it in its own buffer.
 
 </div>
 
-`(require 'grid-table-xlsx)` adds two commands:
+`(require 'exc-xlsx)` adds two commands:
 
 | Command | What it does |
 |---|---|
-| `M-x grid-table-xlsx-find-file` | Open a workbook, with a sheet for each of its sheets |
-| `M-x grid-table-xlsx-export` | Write the grid and all its sheets to a workbook |
+| `M-x exc-xlsx-find-file` | Open a workbook, with a sheet for each of its sheets |
+| `M-x exc-xlsx-export` | Write the grid and all its sheets to a workbook |
 
 A grid opened from a workbook is not tied to it: `C-x C-s` saves a
 `.grid` file, and exporting writes the workbook.
@@ -415,9 +419,9 @@ Not carried, or changed on the way:
   cells, merges, notes, conditional formats, validations and hidden lines
   of a sheet are replaced by the grid's, so those left out are gone; the
   rest of the sheet and the other sheets stay as they were.
-- A number format grid-table has no counterpart for is shown in the
+- A number format exc has no counterpart for is shown in the
   general format and written back unchanged.
-- A formula using a function grid-table lacks shows an error value but is
+- A formula using a function exc lacks shows an error value but is
   kept and exported as written.
 - Other kinds of chart (radar, 3-D, ones reading another sheet) are not
   imported and are written back as they were. Chart formulas are exported
@@ -429,25 +433,25 @@ Not carried, or changed on the way:
 
 ## Org, Markdown and reStructuredText
 
-**Org**: `M-x grid-table-org-insert-block` inserts a source block that
-previews a `.grid` file. Inside the block, `M-x grid-table-org-refresh-block`
-draws the preview again from the file and `M-x grid-table-org-open-block`
+**Org**: `M-x exc-org-insert-block` inserts a source block that
+previews a `.grid` file. Inside the block, `M-x exc-org-refresh-block`
+draws the preview again from the file and `M-x exc-org-open-block`
 opens the grid.
 
 ```org
-#+BEGIN_SRC grid-table :file /home/me/project/data.grid
+#+BEGIN_SRC exc :file /home/me/project/data.grid
 | Region | Total |
 |--------+-------|
 | North  | 120   |
 #+END_SRC
 ```
 
-**Markdown**: `M-x grid-table-markdown-insert-block` inserts a fenced
-block the same way, with `grid-table-markdown-refresh-block` and
-`grid-table-markdown-open-block` for the block at point.
+**Markdown**: `M-x exc-markdown-insert-block` inserts a fenced
+block the same way, with `exc-markdown-refresh-block` and
+`exc-markdown-open-block` for the block at point.
 
 ````markdown
-```grid-view file=/home/me/project/data.grid
+```exc file=/home/me/project/data.grid
 ┌───┬────────┬───────┐
 │   │ A      │ B     │
 …
@@ -456,25 +460,52 @@ block the same way, with `grid-table-markdown-refresh-block` and
 
 A path with spaces is written in double quotes.
 
-**reStructuredText**: `M-x grid-table-export-as-rst` writes a grid as an
-RST table, and `M-x grid-table-rst-insert-table-from-file` inserts one
+**reStructuredText**: `M-x exc-export-as-rst` writes a grid as an
+RST table, and `M-x exc-rst-insert-table-from-file` inserts one
 from a `.grid` file.
 
-The previews are plain-text tables drawn by `grid-table-text.el`, which
+The previews are plain-text tables drawn by `exc-text.el`, which
 needs no ETAF.
+
+## Migrating from grid-table
+
+The package was called grid-table up to 0.5.0, and is exc from 0.6.0.
+Every grid-table name still works, marked obsolete, and will be removed
+in a later version.
+
+- **Loading.** Change `(require 'grid-table)` to `(require 'exc)`. The old
+  form still loads the package and says so.
+- **Plugins.** The old feature names are gone: `(require 'grid-table-xlsx)`
+  and the rest fail. Use `exc-xlsx`, `exc-csv`, `exc-org`, `exc-markdown`,
+  `exc-rst` and `exc-example-plugin`.
+- **`.grid` files.** This version reads what 0.5.0 wrote. A file 0.6.0
+  saves starts with `exc-file`, which 0.5.0 and earlier cannot read, so keep
+  the old version's copy if you may need to go back.
+- **Org and Markdown blocks.** A block whose language is the old
+  `grid-table`, and a fence that still says `grid-view`, are recognised and
+  refreshed as before; blocks inserted now say `exc`.
+- **xlsx.** A grid title kept in a workbook by an older version is still
+  read, and saving writes the new property name.
+- **Customize.** A value set on an old variable name reaches the new one, so
+  a `custom-file` written for 0.5.0 still applies. Rename those entries when
+  convenient: the old names are marked obsolete and will go away.
+- **Building.** The Makefile targets are unchanged, but the module and its
+  file are named after the package: `plugins/exc-xlsx-module`, built from
+  `plugins/xlsx/` by `make module` or `make module-dist`. `ETAF_SRC` means
+  what it did.
 
 ## Development
 
 ```
-grid-table.el              entry point, commands, file handling
-grid-table-etaf.el         the spreadsheet view (ETAF)
-grid-data-model.el         cells, rows, sheets
-grid-data-source.el        data source interface
-grid-table-calc*.el        formula parser and functions
-grid-table-format.el       number formats
-grid-table-persistence.el  the .grid file format
-grid-table-text.el         plain-text tables for previews and export
-grid-table-chart*.el       chart formulas and floating charts
+exc.el                    entry point, commands, file handling
+exc-etaf.el               the spreadsheet view (ETAF)
+exc-data-model.el         cells, rows, sheets
+exc-data-source.el        data source interface
+exc-calc*.el              formula parser and functions
+exc-format.el             number formats
+exc-persistence.el        the .grid file format
+exc-text.el               plain-text tables for previews and export
+exc-chart*.el             chart formulas and floating charts
 plugins/                   CSV, xlsx (with the Rust module), Org, Markdown, RST
 test/                      ERT tests and the formula corpus
 docs/                      key reference, Lisp formulas, plugins
@@ -494,8 +525,8 @@ a corpus of real workbooks; `make corpus-fetch` downloads it.
 
 Plugins can add data sources and file formats; see
 [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) and
-`plugins/grid-table-example-plugin.el`.
+`plugins/exc-example-plugin.el`.
 
-Bugs and suggestions: [GitHub Issues](https://github.com/yibie/grid-table/issues).
+Bugs and suggestions: [GitHub Issues](https://github.com/yibie/exc/issues).
 Problems in drawing or mouse handling may belong to
 [ETAF](https://github.com/emacs-taf).

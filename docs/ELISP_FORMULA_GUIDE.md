@@ -21,15 +21,15 @@ hands its text to Emacs Calc and needs no leave to run Lisp. See
 Lisp formulas are off by default. While they are off, such a cell shows
 `#ERROR!`, and so does every cell that reads it.
 
-They are controlled by `grid-table-allow-elisp`, which is buffer-local
+They are controlled by `exc-allow-elisp`, which is buffer-local
 and `nil` by default.
 
 | To allow them | Do this |
 |---|---|
-| In every grid | `(setq-default grid-table-allow-elisp t)` in your init file. Lisp formulas are computed as soon as a grid opens. |
-| In one grid already open | `M-: (setq grid-table-allow-elisp t)` in its buffer, then `C-c C-r` to compute everything again. |
+| In every grid | `(setq-default exc-allow-elisp t)` in your init file. Lisp formulas are computed as soon as a grid opens. |
+| In one grid already open | `M-: (setq exc-allow-elisp t)` in its buffer, then `C-c C-r` to compute everything again. |
 
-Setting the variable from `grid-table-etaf-mode-hook` does not work: when
+Setting the variable from `exc-etaf-mode-hook` does not work: when
 a grid is shown, the view puts back the value the buffer had before, so
 the hook's value is lost. The variable is marked as risky, so Emacs
 asks before applying it from a file's local variables.
@@ -84,7 +84,7 @@ holds `=elisp:(* 2 21)`, then `=C2+1` is `43`.
 ## When it is computed
 
 A Lisp formula is computed again at every edit, wherever the edit is,
-since grid-table cannot tell which cells the code reads. `C-c C-r`
+since exc cannot tell which cells the code reads. `C-c C-r`
 computes it too. Keep the code fast: slow code slows every keystroke
 that stores a cell.
 

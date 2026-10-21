@@ -1,9 +1,9 @@
 [English](KEYS.md) | [中文](KEYS_CN.md)
 
-# grid-table keys
+# exc keys
 
-Every key of a grid buffer. The list follows `grid-table-etaf--keys` in
-`grid-table-etaf.el`. On macOS the Command-key shortcuts (`s-c`, `s-v`, `s-z` …) work too.
+Every key of a grid buffer. The list follows `exc-etaf--keys` in
+`exc-etaf.el`. On macOS the Command-key shortcuts (`s-c`, `s-v`, `s-z` …) work too.
 
 ## Moving and selecting
 
@@ -25,7 +25,7 @@ there makes the sheet grow to hold it.
 
 | Key | Action |
 |---|---|
-| Any character | Replace the cell and start editing (set `grid-table-etaf-type-to-edit` to nil to turn off) |
+| Any character | Replace the cell and start editing (set `exc-etaf-type-to-edit` to nil to turn off) |
 | `F2`, `RET` | Edit the cell's text |
 | `RET` (editing) | Store and move down |
 | `TAB` (editing) | Store and move right |
