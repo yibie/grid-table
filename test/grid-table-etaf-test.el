@@ -2245,6 +2245,21 @@ what made held arrow keys outrun the display."
         (run-hooks 'pre-command-hook)
         (should (= gc-cons-threshold 800000))))))
 
+;; A move to a row already on screen needs only the drawing's own layout.
+(ert-deftest grid-table-etaf-lays-out-rows-once-per-move-on-screen ()
+  "Moving within the window lays the rows out once, for the drawing."
+  (grid-table-etaf-test--with-grid (40 3)
+    (grid-table-etaf-set-cell 39 0 "far-down")
+    (let ((calls 0)
+          (real (symbol-function 'grid-table-etaf--visible-rows)))
+      (cl-letf (((symbol-function 'grid-table-etaf--visible-rows)
+                 (lambda (&rest args) (cl-incf calls) (apply real args))))
+        (grid-table-etaf-goto 2 0)
+        (should (= calls 1))
+        ;; A row off screen still scrolls into view.
+        (grid-table-etaf-goto 39 0)))
+    (should (string-search "far-down" (grid-table-etaf-test--text)))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

@@ -1290,6 +1290,9 @@ LINE, the grid line border."
                 sheets)
         (list status))))))
 
+(defvar-local grid-table-etaf--drawn nil
+  "(TOP COLS ROWS) of the last drawing: its first row, columns and rows.")
+
 (defun grid-table-etaf--render (state)
   "Return the View of STATE's visible window."
   (etaf-value (grid-table-etaf--state-tick state))
@@ -1308,6 +1311,8 @@ LINE, the grid line border."
          (rows (grid-table-etaf--visible-rows state top cols))
          (frozen (grid-table-frozen source))
          (merges (grid-get-merges source))
+         (_ (with-current-buffer buffer
+              (setq grid-table-etaf--drawn (list top cols rows))))
          (rules (grid-get-conditional-formats source))
          (cursor-merge (grid-table--merge-at merges (car cursor) (cdr cursor)))
          (cursor-row (if cursor-merge (nth 0 cursor-merge) (car cursor)))
@@ -2228,12 +2233,22 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
       (etaf-set-value left-ref (1+ (etaf-value left-ref))))
     (when (and (>= row (car frozen)) (< row (etaf-value top-ref)))
       (etaf-set-value top-ref row))
-    (let ((cols (grid-table-etaf--visible-cols state (etaf-value left-ref))))
-      (while (and (>= row (car frozen))
-                  (not (memq row (grid-table-etaf--visible-rows
-                                  state (etaf-value top-ref) cols))))
-        (etaf-set-value top-ref (grid-table-etaf--step-row
-                                 state (etaf-value top-ref) 1))))))
+    (let ((cols (grid-table-etaf--visible-cols state (etaf-value left-ref)))
+          (drawn (buffer-local-value 'grid-table-etaf--drawn
+                                     (grid-table-etaf--state-buffer state))))
+      ;; A row the last drawing showed, above its last one, is still
+      ;; shown when the window has not moved: no need to lay the rows
+      ;; out again.  Should its content have grown meanwhile,
+      ;; `grid-table-etaf--settle' scrolls on from where it is painted.
+      (unless (and (eql (nth 0 drawn) (etaf-value top-ref))
+                   (equal (nth 1 drawn) cols)
+                   (memq row (nth 2 drawn))
+                   (not (eql row (car (last (nth 2 drawn))))))
+        (while (and (>= row (car frozen))
+                    (not (memq row (grid-table-etaf--visible-rows
+                                    state (etaf-value top-ref) cols))))
+          (etaf-set-value top-ref (grid-table-etaf--step-row
+                                   state (etaf-value top-ref) 1)))))))
 
 (defun grid-table-etaf--settle (state)
   "Show STATE's cursor and put point on it.
