@@ -7,6 +7,25 @@
 (require 'cl-lib)
 (require 'exc-obsolete)
 
+(defconst exc-org-block-languages '("exc" "grid-table")
+  "Languages a grid of a source block may be written under.
+A block written before the rename says `grid-table'; both are read, and
+new blocks are written as `exc'.")
+
+(defconst exc-org-block-language-regexp
+  (concat "\\(?:" (regexp-opt exc-org-block-languages) "\\)")
+  "Regexp matching the language of a grid's source block.
+Made from `exc-org-block-languages', so a language is named once.")
+
+(defun exc-org--block-language-p (language)
+  "Return non-nil when LANGUAGE is one of `exc-org-block-languages'."
+  (and (stringp language) (member language exc-org-block-languages)))
+
+(defgroup exc-org nil
+  "Grids previewed in Org buffers."
+  :group 'exc
+  :prefix "exc-org-")
+
 (defcustom exc-org-image-column-width 20
   "Default display width of image column in Org table preview (in characters)."
   :type 'integer
@@ -27,7 +46,7 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
       preview)))
 
 (defun exc-org-insert-block (file-path)
-  "Insert a grid-table source block previewing the grid FILE-PATH.
+  "Insert an exc source block previewing the grid FILE-PATH.
 `exc-org-refresh-block' draws the preview again and
 `exc-org-open-block' opens the grid."
   (interactive
@@ -35,7 +54,7 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
   (let* ((fpath (expand-file-name file-path))
          (preview (exc-org--render-preview-from-file fpath nil default-directory)))
     (unless (bolp) (insert "\n"))
-    (insert (format "#+BEGIN_SRC grid-table :file %s\n"
+    (insert (format "#+BEGIN_SRC exc :file %s\n"
                     (exc-org--quote-path fpath)))
     (insert preview)
     (unless (string-suffix-p "\n" preview)
@@ -209,13 +228,14 @@ This function is called from exc-org--process-row, which handles wrapping."
     (format "[[file:%s]]" (replace-regexp-in-string "\\\\" "/" relative-path))))
 
 (defun exc-org--find-current-block ()
-  "Return (BEGIN . END) of the grid-table src block at point, or nil.
+  "Return (BEGIN . END) of the exc src block at point, or nil.
 BEGIN is the start of its #+BEGIN_SRC line and END the start of its
-#+END_SRC line."
+#+END_SRC line.  A block whose language is the old name counts too."
   (save-excursion
     (let ((element (org-element-at-point)))
       (when (and (eq (org-element-type element) 'src-block)
-                 (equal (org-element-property :language element) "grid-table"))
+                 (exc-org--block-language-p
+                  (org-element-property :language element)))
         (let ((begin (org-element-property :begin element)))
           (goto-char (org-element-property :end element))
           (when (re-search-backward "^[ \t]*#\\+END_SRC" begin t)
@@ -233,23 +253,27 @@ A value with spaces is written in double quotes."
     (or (match-string 1 params) (match-string 2 params))))
 
 (defun exc-org--get-file-params-at-begin ()
-  "Return (:file FILE :pic-dir DIR) of the #+BEGIN_SRC grid-table line at point.
+  "Return (:file FILE :pic-dir DIR) of the #+BEGIN_SRC exc line at point.
 Either is nil when the line does not give it; the result is nil when the
-line is not such a line."
+line is not such a line.  A line naming the block by its old name counts."
   (let ((line (buffer-substring-no-properties (line-beginning-position)
                                               (line-end-position)))
         (case-fold-search t))
-    (when (string-match "^[ \t]*#\\+BEGIN_SRC[ \t]+grid-table\\(.*\\)$" line)
-      (let* ((params (match-string 1 line))
+    (when (string-match
+           (concat "^[ \t]*#\\+BEGIN_SRC[ \t]+"
+                   exc-org-block-language-regexp
+                   "\\(?:[ \t]+\\(.*\\)\\|$\\)")
+           line)
+      (let* ((params (or (match-string 1 line) ""))
              (file (exc-org--header-arg params ":file"))
              (pic-dir (exc-org--header-arg params ":pic-dir")))
         (list :file (and file (expand-file-name file))
               :pic-dir (and pic-dir (expand-file-name pic-dir)))))))
 
 (defun exc-org--block-file ()
-  "Return the bounds and header arguments of the grid-table block at point."
+  "Return the bounds and header arguments of the exc block at point."
   (let ((bounds (exc-org--find-current-block)))
-    (unless bounds (user-error "Not inside a grid-table src block"))
+    (unless bounds (user-error "Not inside an exc src block"))
     (let ((params (save-excursion
                     (goto-char (car bounds))
                     (exc-org--get-file-params-at-begin))))
@@ -258,7 +282,7 @@ line is not such a line."
       (cons bounds params))))
 
 (defun exc-org-refresh-block ()
-  "Draw the preview of the grid-table src block at point again from its :file."
+  "Draw the preview of the exc src block at point again from its :file."
   (interactive)
   (pcase-let* ((`((,begin . ,end) . ,params) (exc-org--block-file))
                (preview (exc-org--render-preview-from-file
@@ -274,7 +298,7 @@ line is not such a line."
           (insert "\n"))))))
 
 (defun exc-org-open-block ()
-  "Open the grid file of the grid-table src block at point."
+  "Open the grid file of the exc src block at point."
   (interactive)
   (exc-find-file (plist-get (cdr (exc-org--block-file)) :file)))
 

@@ -1,4 +1,4 @@
-;;; exc.el --- Grid table for displaying and editing tabular data -*- lexical-binding: t -*-
+;;; exc.el --- A spreadsheet inside Emacs -*- lexical-binding: t -*-
 ;; Version: 0.5.0
 ;; Package-Requires: ((emacs "29.1"))
 
@@ -21,6 +21,11 @@
 (require 'exc-chart-svg)
 (require 'exc-plugins)
 (require 'exc-obsolete)
+
+(defgroup exc nil
+  "A spreadsheet inside Emacs."
+  :group 'applications
+  :prefix "exc-")
 
 ;; Public version identifier.
 (defconst exc-version "0.5.0")
@@ -459,7 +464,7 @@ winning.  RULES, when given, saves fetching the rules for every cell."
   (funcall (gethash :unmerge-cell source) source row col))
 
 ;;;----------------------------------------------------------------------
-;;; Grid Table Configuration
+;;; Display Configuration
 ;;;----------------------------------------------------------------------
 
 
@@ -525,7 +530,7 @@ If nil, uses the `default-directory` of the current buffer."
 checkouts from https://github.com/emacs-taf on `load-path' (%s)"
                    (error-message-string err))))))
 
-(define-derived-mode exc-mode special-mode "Grid Table"
+(define-derived-mode exc-mode special-mode "Exc"
   "Parent of the major mode that shows a grid.
 Grids are shown in `exc-etaf-mode', which derives from this mode,
 so hooks and checks written for `exc-mode' keep working."
@@ -978,7 +983,7 @@ grid."
 
 
 (defun exc--show-grid-in-current-buffer (data-source &optional title)
-  "Display the grid table in the current buffer.
+  "Display the grid in the current buffer.
 
 DATA-SOURCE is a hash table containing the data source functions.
 TITLE is an optional title for the grid."
@@ -1151,7 +1156,7 @@ Formulas that read the sheet show #REF! afterwards."
 
 (defun exc--show-grid (data-source &optional buffer-name)
   "Show a grid view in a dedicated buffer using DATA-SOURCE."
-  (let ((buffer (get-buffer-create (or buffer-name "*Grid Table*"))))
+  (let ((buffer (get-buffer-create (or buffer-name "*Exc*"))))
     (with-current-buffer buffer
       (exc--show-grid-in-current-buffer data-source))
     (switch-to-buffer buffer)))
@@ -1244,7 +1249,7 @@ cannot see, such as a formula function defined since."
               (val (exc-get-computed-value-at exc--data-source row data-col)))
     (if (and (listp val) (plist-get val :exc-chart))
         (let ((chart-content (exc-chart-content val)))
-          (with-current-buffer (get-buffer-create "*Grid Plot*")
+          (with-current-buffer (get-buffer-create "*Exc Plot*")
             (read-only-mode -1)
             (erase-buffer)
             (insert chart-content)
@@ -1281,7 +1286,7 @@ cannot see, such as a formula function defined since."
     (exc-etaf-set-cell display-row-idx (1- display-col-idx) value)))
 
 (defun exc--open-demo ()
-  "Open a exc buffer with a demonstration table for internal testing."
+  "Open an exc buffer with a demonstration table for internal testing."
   (interactive)
   (let* ((headers '("Item" "Quantity" "Unit Price" "Total" "Notes"))
          (rows
@@ -1293,8 +1298,8 @@ cannot see, such as a formula function defined since."
             ("Grand Total" "" "" "=D4+D5" "Final Price")
             ("" "" "" "" "/Users/chenyibin/Pictures/GEdZiU0WUAAoaSj.jpg")
             ("Stats" "Count:" "=COUNT(B1:B3)" "Max Price:" "=MAX(C1:C3)")))
-         (data-source (make-exc-default-data-source headers rows "Demo Grid Table")))
-    (setq-local exc--title "Demo Grid Table") ; Set default title for demo
+         (data-source (make-exc-default-data-source headers rows "Demo Grid")))
+    (setq-local exc--title "Demo Grid") ; Set default title for demo
     (exc--show-grid data-source)))
 
 ;;;###autoload
@@ -1309,9 +1314,9 @@ ROWS is a list of lists of strings."
                (list "" "" "" "")
                (list "" "" "" "")
                (list "" "" "" ""))))
-  (let ((data-source (make-exc-default-data-source headers rows "New Grid Table"))) ; headers are now the first data row
-    (setq-local exc--title "New Grid Table") ; Set default title for new grids
-    (exc--show-grid data-source (generate-new-buffer-name "*grid*"))))
+  (let ((data-source (make-exc-default-data-source headers rows "New Grid"))) ; headers are now the first data row
+    (setq-local exc--title "New Grid") ; Set default title for new grids
+    (exc--show-grid data-source (generate-new-buffer-name "*exc*"))))
 
 
 (provide 'exc)

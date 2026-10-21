@@ -810,6 +810,12 @@ This is inefficient but guaranteed to terminate. Includes a circuit breaker."
 (define-error 'exc-model-covered-cell
   "Cannot set non-empty value in covered merged cell")
 
+;; Code written before the rename catches it by its old name too; an error
+;; symbol has no alias form, so the old name joins the condition list.
+(put 'exc-model-covered-cell 'error-conditions
+     (append (get 'exc-model-covered-cell 'error-conditions)
+             '(grid-model-covered-cell)))
+
 (defun exc-model-set-raw-value (model row col raw-value)
   "Set the raw value for a cell at ROW, COL and trigger recalculation.
 This is the main entry point for changing data in the model.

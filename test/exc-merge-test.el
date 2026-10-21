@@ -145,7 +145,7 @@
             (should (keywordp (car (read (current-buffer))))))
           (with-temp-buffer
             (insert-file-contents merged-file)
-            (should (eq (car (read (current-buffer))) 'grid-table-file)))
+            (should (eq (car (read (current-buffer))) 'exc-file)))
           (let ((loaded
                  (exc-persistence-create-data-source-from-file
                   merged-file)))
@@ -305,12 +305,12 @@ save from the old version)."
           (exc-persistence--save-to-file plain plain-file)
           (exc-persistence--save-to-file merged merged-file)
           ;; (a) v2 tagged data saved by the new loader is rejected by
-          ;; the old dispatch: its car is the symbol `grid-table-file',
-          ;; neither a keyword nor a list.
+          ;; the old dispatch: its car is the symbol `exc-file', neither a
+          ;; keyword nor a list.
           (let ((v2 (with-temp-buffer
                       (insert-file-contents merged-file)
                       (read (current-buffer)))))
-            (should (eq (car v2) 'grid-table-file))
+            (should (eq (car v2) 'exc-file))
             (let ((err (should-error
                         (exc-test--legacy-loader-dispatch v2))))
               (should (string-match-p

@@ -65,7 +65,7 @@ The header line is the grid's first row, as it was read."
         (insert "\n")))))
 
 (defun exc-csv-create-data-source (file-path)
-  "Create a exc data source from the CSV file FILE-PATH.
+  "Create an exc data source from the CSV file FILE-PATH.
 Its first line is the grid's first row, as a .grid file's header line is."
   (when (file-exists-p file-path)
     (with-temp-buffer

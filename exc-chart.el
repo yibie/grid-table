@@ -1294,7 +1294,7 @@ COUNT itself counts the numbers in a range, as in a spreadsheet."
                           (list :title title :width (or width 40) :height (or height 15))))
 
 ;;;----------------------------------------------------------------------
-;;; Register with Grid Table Calc (Sparkline)
+;;; Register with Exc Calc (Sparkline)
 ;;;----------------------------------------------------------------------
                                                                           
 (exc-calc-defun SPARKLINE (&rest args)

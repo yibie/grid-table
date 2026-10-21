@@ -561,6 +561,48 @@ grid reads them back without it."
                       (format "unzip -p %s docProps/custom.xml 2>/dev/null"
                               (shell-quote-argument file)))))))))
 
+(ert-deftest exc-xlsx-test-reads-a-title-kept-under-the-old-prefix ()
+  "A workbook written before the rename keeps its grid title."
+  (skip-unless exc-xlsx-test--available)
+  (exc-xlsx-test--with-file file
+    (let* ((data (make-exc-default-data-source '("") '(("1"))))
+           (workbook (exc-workbook-create (list (cons "Data" data)))))
+      (puthash :title "Northwind · Data" data)
+      (exc-xlsx-write-workbook workbook file)
+      ;; Rewrite the custom property the way the old version named it.
+      (let ((dir (make-temp-file "exc-xlsx-old-" t)))
+        (unwind-protect
+            (progn
+              (call-process "unzip" nil nil nil "-o" "-q" file
+                            "docProps/custom.xml" "-d" dir)
+              (let ((xml (expand-file-name "docProps/custom.xml" dir)))
+                (with-temp-file xml
+                  (insert-file-contents xml)
+                  (goto-char (point-min))
+                  (while (search-forward "exc title: " nil t)
+                    (replace-match "grid-table title: " t t)))
+                (let ((default-directory (file-name-as-directory dir)))
+                  (call-process "zip" nil nil nil "-q" file
+                                "docProps/custom.xml")))
+              (should (string-match-p
+                       "grid-table title: Data"
+                       (shell-command-to-string
+                        (format "unzip -p %s docProps/custom.xml"
+                                (shell-quote-argument file))))))
+          (delete-directory dir t)))
+      ;; The old name reads back.
+      (should (equal (gethash :title
+                              (exc-workbook-sheet
+                               (exc-xlsx-create-workbook file) "Data"))
+                     "Northwind · Data"))
+      ;; Saving again writes the new name, and only that one.
+      (exc-xlsx-write-workbook (exc-xlsx-create-workbook file) file)
+      (let ((xml (shell-command-to-string
+                  (format "unzip -p %s docProps/custom.xml"
+                          (shell-quote-argument file)))))
+        (should (string-match-p "exc title: Data" xml))
+        (should-not (string-match-p "grid-table title" xml))))))
+
 (ert-deftest exc-xlsx-test-table-column-with-a-line-break ()
   "A column name with a line break is read whole, however written.
 Excel writes it as _x000a_ in the table, and a formula may write it

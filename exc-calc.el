@@ -24,6 +24,16 @@
 (define-error 'exc-calc-error "Formula error")
 (define-error 'exc-calc-cycle "Circular reference" 'exc-calc-error)
 
+;; Code written before the rename catches them by their old names too.
+;; An error symbol has no alias form, so the old name joins the condition
+;; list of the new one; `exc-calc-cycle' keeps carrying the parent's old name
+;; as well, since `define-error' copied the parent's list when it was made.
+(put 'exc-calc-error 'error-conditions
+     (append (get 'exc-calc-error 'error-conditions) '(grid-calc-error)))
+(put 'exc-calc-cycle 'error-conditions
+     (append (get 'exc-calc-cycle 'error-conditions)
+             '(grid-calc-cycle grid-calc-error)))
+
 (defconst exc-calc-error-values
   '("#DIV/0!" "#NAME?" "#N/A" "#REF!" "#VALUE!" "#NUM!" "#NULL!" "#CALC!" "#SPILL!"
     "#GETTING_DATA" "#CYCLE!" "#ERROR!")
@@ -327,7 +337,8 @@ for it, and through it for every formula put off before it that is not
 done: one of them read while any is computed is on a cycle.")
 
 ;; Not an `error', so no formula takes it for a failure of its own.
-(put 'exc-calc-put-off 'error-conditions '(exc-calc-put-off))
+(put 'exc-calc-put-off 'error-conditions
+     '(exc-calc-put-off grid-calc-put-off))
 (put 'exc-calc-put-off 'error-message "Formula put off")
 
 (defun exc-calc--compute-cell (model index)

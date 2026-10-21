@@ -424,8 +424,8 @@
           (exc-workbook-remove-sheet workbook data)
           (should (equal (exc-get-computed-value-at totals 1 0) "#REF!"))
           (should-not
-           (eq (car-safe (exc-persistence--file-data totals))
-               'grid-table-file))
+           (memq (car-safe (exc-persistence--file-data totals))
+                 '(exc-file grid-table-file)))
           (should-error (exc-workbook-remove-sheet workbook totals)))
       (delete-file file))))
 
@@ -945,7 +945,7 @@
           (let ((saved (with-temp-buffer
                          (insert-file-contents file)
                          (read (current-buffer)))))
-            (should (eq (car saved) 'grid-table-file))
+            (should (eq (car saved) 'exc-file))
             (should (= (plist-get (cdr saved) :version) 4)))
           (let ((loaded (exc-persistence-create-data-source-from-file
                          file)))

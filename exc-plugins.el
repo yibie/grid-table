@@ -21,7 +21,7 @@
 ;;;----------------------------------------------------------------------
 
 (defun exc-register-plugin (plugin)
-  "Register a plugin for grid table functionality.
+  "Register a plugin for exc functionality.
 PLUGIN should be a symbol representing the plugin name."
   (add-to-list 'exc-plugins plugin)
   (message "Plugin registered: %s" plugin))

@@ -67,7 +67,7 @@ Properties can include :type, :width, :renderer, etc."
 ;;;----------------------------------------------------------------------
 
 (defun exc-api-create (&rest args)
-  "Create a grid table with ARGS.
+  "Create a grid with ARGS.
 Supported arguments:
   :data-source - The data source instance
   :columns - List of column definitions
@@ -87,12 +87,12 @@ Supported arguments:
     (when plugins
       (mapc #'exc-load-plugin plugins))
     
-    ;; Create the grid table
+    ;; Create the grid
     (exc--create-grid data-source columns key-bindings title file-path)))
 
 (defun exc--create-grid (data-source columns key-bindings title file-path)
-  "Internal function to create a grid table."
-  (let ((buffer (generate-new-buffer "*Grid Table*")))
+  "Internal function to create a grid buffer."
+  (let ((buffer (generate-new-buffer "*Exc*")))
     (with-current-buffer buffer
       (setq exc--title title)
       (setq exc--file-path file-path)
@@ -143,7 +143,7 @@ not overridden this way."
   exc--file-path)
 
 (defun exc-save ()
-  "Save the current grid table.
+  "Save the current grid.
 Without a file to save to, ask for one, as `exc-save-as' does."
   (interactive)
   (if (not exc--file-path)
@@ -152,18 +152,18 @@ Without a file to save to, ask for one, as `exc-save-as' does."
       (if save-func
           (progn
             (funcall save-func exc--data-source exc--file-path)
-            (message "Grid table saved to: %s" exc--file-path))
+            (message "Saved to %s" exc--file-path))
         (message "No save function available for this data source")))))
 
 (defun exc-save-as (file-path)
-  "Save the current grid table to FILE-PATH."
+  "Save the current grid to FILE-PATH."
   (interactive "FSave to file: ")
   (let ((save-func (gethash :save-to-file exc--data-source)))
     (if save-func
         (progn
           (funcall save-func exc--data-source file-path)
           (setq exc--file-path file-path)
-          (message "Grid table saved to: %s" file-path))
+          (message "Saved to %s" file-path))
       (message "No save function available for this data source"))))
 
 ;;;----------------------------------------------------------------------
@@ -171,7 +171,7 @@ Without a file to save to, ask for one, as `exc-save-as' does."
 ;;;----------------------------------------------------------------------
 
 (defun exc-example-basic ()
-  "Example of basic grid table usage."
+  "Example of basic grid usage."
   (interactive)
   (let* ((headers '("Name" "Age" "City"))
          (data '(("Alice" "25" "New York")
@@ -187,7 +187,7 @@ Without a file to save to, ask for one, as `exc-save-as' does."
      :title "Basic Example")))
 
 (defun exc-example-csv (file-path)
-  "Example of CSV grid table usage."
+  "Example of CSV grid usage."
   (interactive "fCSV file: ")
   (when-let ((data-source (exc-csv-create-data-source file-path)))
     (exc-api-create

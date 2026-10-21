@@ -995,7 +995,7 @@ grid is not tied to the file: `exc-xlsx-export' writes it back."
       (exc--show-grid-in-current-buffer source))
     (switch-to-buffer buffer)
     (when (> skipped 0)
-      (message "%d conditional format%s exc has no counterpart for %s left out"
+      (message "%d conditional format%s left out: exc has no counterpart for %s"
                skipped (if (= skipped 1) "" "s")
                (if (= skipped 1) "was" "were")))
     buffer))

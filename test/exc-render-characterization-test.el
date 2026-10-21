@@ -278,10 +278,10 @@ The result is (TEXT-AFTER-INSERT TEXT-AFTER-REFRESH OPENED-FILE FILE)."
                 #'org-mode #'exc-org-insert-block
                 #'exc-org-refresh-block #'exc-org-open-block)))
     (should (string-match-p
-             (concat "^#\\+BEGIN_SRC grid-table :file \"" (regexp-quote file) "\"$")
+             (concat "^#\\+BEGIN_SRC exc :file \"" (regexp-quote file) "\"$")
              inserted))
     (should (string-match-p "| b +| 2 +|\n#\\+END_SRC\nAfter\n\\'" inserted))
-    (should (string-match-p "^#\\+BEGIN_SRC grid-table :file " refreshed))
+    (should (string-match-p "^#\\+BEGIN_SRC exc :file " refreshed))
     (should (string-match-p "| c +| 7 +|\n#\\+END_SRC\nAfter\n\\'" refreshed))
     (should-not (string-match-p "| b +| 2 +|" refreshed))
     (should (equal opened file))))
@@ -294,10 +294,77 @@ The result is (TEXT-AFTER-INSERT TEXT-AFTER-REFRESH OPENED-FILE FILE)."
                 #'ignore #'exc-markdown-insert-block
                 #'exc-markdown-refresh-block #'exc-markdown-open-block)))
     (should (string-match-p
-             (concat "^```grid-view file=\"" (regexp-quote file) "\"$")
+             (concat "^```exc file=\"" (regexp-quote file) "\"$")
              inserted))
     (should (string-match-p "\n```\nAfter\n\\'" inserted))
     (should (string-match-p "│ c +│ 7 +│" refreshed))
     (should-not (string-match-p "│ b +│ 2 +│" refreshed))
     (should (string-match-p "\n```\nAfter\n\\'" refreshed))
     (should (equal opened file))))
+
+(ert-deftest exc-org-block-naming-the-old-language-still-works ()
+  "A source block that says grid-table instead of exc is still found and redrawn."
+  (require 'exc-org)
+  (let ((file (exc-test--block-file)) opened)
+    (unwind-protect
+        (with-temp-buffer
+          (org-mode)
+          (insert (format "#+BEGIN_SRC grid-table :file \"%s\"\nstale\n#+END_SRC\n"
+                          file))
+          (exc-persistence--save-to-file
+           (make-exc-default-data-source
+            '("Name" "Qty") '(("Name" "Qty") ("a" "1") ("c" "7")))
+           file)
+          (goto-char (point-min))
+          (re-search-forward "stale")
+          (exc-org-refresh-block)
+          (should (string-match-p "| c +| 7 +|" (buffer-string)))
+          (should-not (string-match-p "stale" (buffer-string)))
+          (cl-letf (((symbol-function 'exc-find-file)
+                     (lambda (f) (setq opened f))))
+            (goto-char (point-min))
+            (re-search-forward "| c ")
+            (exc-org-open-block))
+          (should (equal opened file)))
+      (delete-directory (file-name-directory file) t))))
+
+(ert-deftest exc-markdown-block-naming-the-old-language-still-works ()
+  "A fence that says grid-view instead of exc is still found and redrawn."
+  (require 'exc-markdown)
+  (let ((file (exc-test--block-file)) opened)
+    (unwind-protect
+        (with-temp-buffer
+          (insert (format "```grid-view file=\"%s\"\nstale\n```\n" file))
+          (exc-persistence--save-to-file
+           (make-exc-default-data-source
+            '("Name" "Qty") '(("Name" "Qty") ("a" "1") ("c" "7")))
+           file)
+          (goto-char (point-min))
+          (re-search-forward "stale")
+          (exc-markdown-refresh-block)
+          (should (string-match-p "│ c +│ 7 +│" (buffer-string)))
+          (should-not (string-match-p "stale" (buffer-string)))
+          (cl-letf (((symbol-function 'exc-find-file)
+                     (lambda (f) (setq opened f))))
+            (goto-char (point-min))
+            (re-search-forward "│ c ")
+            (exc-markdown-open-block))
+          (should (equal opened file)))
+      (delete-directory (file-name-directory file) t))))
+
+(ert-deftest exc-fenced-block-language-is-not-a-prefix-of-another ()
+  "A fence or a source block naming another language is not taken for a grid."
+  (require 'exc-markdown)
+  (require 'exc-org)
+  (with-temp-buffer
+    (insert "```excel file=x.grid\nstale\n```\n```exc-other file=y\n")
+    (goto-char (point-min))
+    (should-not (exc-markdown--find-current-block))
+    (search-forward "exc-other")
+    (should-not (exc-markdown--find-current-block)))
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+BEGIN_SRC excel :file x.grid\nstale\n#+END_SRC\n")
+    (goto-char (point-min))
+    (search-forward "stale")
+    (should-not (exc-org--find-current-block))))

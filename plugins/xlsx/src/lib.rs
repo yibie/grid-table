@@ -512,33 +512,46 @@ fn read(path: String, sheet: String) -> Result<String> {
     Ok(out)
 }
 
+const TITLE_PREFIX: &str = "exc title: ";
+
+/// What a workbook written before the rename says instead.
+const OLD_TITLE_PREFIX: &str = "grid-table title: ";
+
 /// The custom document property that keeps the grid title of SHEET.
 /// Excel shows a sheet's name only; exc's title rides along in
 /// the workbook's custom properties, where Excel leaves it alone.
 fn title_property(sheet: &str) -> String {
-    format!("grid-table title: {}", sheet)
+    format!("{}{}", TITLE_PREFIX, sheet)
+}
+
+fn old_title_property(sheet: &str) -> String {
+    format!("{}{}", OLD_TITLE_PREFIX, sheet)
 }
 
 /// Return the grid title kept for SHEET of BOOK, if any.
+/// A title kept under the old prefix is read too.
 fn sheet_title(book: &Workbook, sheet: &str) -> Option<String> {
     let name = title_property(sheet);
+    let old = old_title_property(sheet);
     book.properties()
         .custom_properties()
         .custom_document_property_list()
         .iter()
-        .find(|property| property.name() == name)
+        .find(|property| property.name() == name || property.name() == old)
         .map(|property| property.value().to_string())
 }
 
 /// Keep TITLE as the grid title of SHEET of BOOK, or drop the one kept
-/// when TITLE is None.  Other custom properties are left as they are.
+/// when TITLE is None.  A title kept under the old prefix is dropped too.
+/// Other custom properties are left as they are.
 fn set_sheet_title(book: &mut Workbook, sheet: &str, title: Option<&str>) {
     let name = title_property(sheet);
+    let old = old_title_property(sheet);
     let list = book
         .properties_mut()
         .custom_properties_mut()
         .custom_document_property_list_mut();
-    list.retain(|property| property.name() != name);
+    list.retain(|property| property.name() != name && property.name() != old);
     if let Some(title) = title {
         let mut property = CustomDocumentProperty::default();
         property.set_name(name).set_value_string(title);
@@ -844,7 +857,7 @@ fn fill(sheet: &mut Worksheet, payload: &str) -> Result<()> {
                 let mut comment = Comment::default();
                 comment
                     .new_comment((col + 1, row + 1))
-                    .set_author("grid-table")
+                    .set_author("exc")
                     .set_text_string(fields[3]);
                 sheet.add_comments(comment);
             }

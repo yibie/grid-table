@@ -5,6 +5,21 @@
 (require 'exc-chart-svg)
 
 ;;;----------------------------------------------------------------------
+;;; The tag a saved file starts with
+;;;----------------------------------------------------------------------
+
+(defconst exc-persistence-file-tag 'exc-file
+  "Symbol a saved grid starts with.")
+
+(defconst exc-persistence-old-file-tag 'grid-table-file
+  "Symbol a grid saved before the rename starts with; still read.")
+
+(defun exc-persistence--tagged-p (data)
+  "Return non-nil when DATA is a form a saved grid could start with."
+  (memq (car-safe data) (list exc-persistence-file-tag
+                              exc-persistence-old-file-tag)))
+
+;;;----------------------------------------------------------------------
 ;;; Public API
 ;;;----------------------------------------------------------------------
 
@@ -99,7 +114,7 @@ releases keep reading the files they can represent."
          (sheets (and workbook (exc-workbook-sheets workbook))))
     (if (cdr sheets)
         (append
-         (list 'grid-table-file
+         (list exc-persistence-file-tag
                :version 5
                :active (cl-position data-source sheets)
                :sheets (mapcar
@@ -122,12 +137,12 @@ releases keep reading the files they can represent."
                        merges)))
         (cond
          ((or (plist-get data :styles) (plist-get data :conditional-formats))
-          (cons 'grid-table-file (append (list :version 4) data)))
+          (cons exc-persistence-file-tag (append (list :version 4) data)))
          ;; Column widths are an extra key older releases pass over, so
          ;; they do not raise the version.
          (merges
           (append
-           (list 'grid-table-file
+           (list exc-persistence-file-tag
                  :version (if has-vertical 3 2)
                  :title (plist-get data :title)
                  :headers (plist-get data :headers)
@@ -325,7 +340,7 @@ saved; the others are in its workbook."
     (with-temp-buffer
       (insert-file-contents file-path)
       (let ((data (read (current-buffer))))
-        (if (and (eq (car-safe data) 'grid-table-file)
+        (if (and (exc-persistence--tagged-p data)
                  (exc-persistence--plist-p (cdr data))
                  (eql (plist-get (cdr data) :version) 5))
             (exc-persistence--make-workbook file-path (cdr data))
@@ -333,7 +348,7 @@ saved; the others are in its workbook."
                       frozen hidden validations charts)
           (cond
            ;; Case 1: Tagged v2 format with merge metadata
-           ((eq (car-safe data) 'grid-table-file)
+           ((exc-persistence--tagged-p data)
             (let ((plist (cdr data)))
               (unless (and (exc-persistence--plist-p plist)
                            (memq (plist-get plist :version) '(2 3 4)))
@@ -398,7 +413,7 @@ saved; the others are in its workbook."
                           file-path headers rows title merges styles conditionals
                           widths no-header frozen hidden validations
                           charts))
-                 (plist (cond ((eq (car-safe data) 'grid-table-file) (cdr data))
+                 (plist (cond ((exc-persistence--tagged-p data) (cdr data))
                               ((keywordp (car-safe data)) data)))
                  (names (exc-persistence--names
                          (plist-get plist :names))))

@@ -2,7 +2,7 @@
 
 ;;; Commentary:
 
-;; Shows a exc data source through ETAF (https://github.com/emacs-taf).
+;; Shows an exc data source through ETAF (https://github.com/emacs-taf).
 ;; Only the rows and columns that fit the window are mounted, so the cost
 ;; of moving, scrolling and editing does not grow with the size of the
 ;; sheet.
@@ -4865,7 +4865,7 @@ file."
       (exc-etaf--saved))
     t))
 
-(define-derived-mode exc-etaf-mode exc-mode "Grid Table"
+(define-derived-mode exc-etaf-mode exc-mode "Exc"
   "Major mode for a grid, which ETAF shows.
 Keys are owned by the mounted sheet; see `exc-etaf--keys'."
   :group 'exc

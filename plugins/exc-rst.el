@@ -68,10 +68,10 @@
 
 ;;;###autoload
 (defun exc-export-as-rst ()
-  "Export the current grid table to a reStructuredText-formatted file."
+  "Export the current grid to a reStructuredText-formatted file."
   (interactive)
   (unless (derived-mode-p 'exc-mode)
-    (error "Not in a exc buffer"))
+    (error "Not in an exc buffer"))
   (when-let ((data-source exc--data-source))
     (let ((file-path (read-file-name "Export as rST to: " nil nil nil ".rst")))
       (when file-path

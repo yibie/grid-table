@@ -806,6 +806,74 @@ package had been loaded some other way."
     (should (string-match-p "now exc" out))
     (should (string-match-p "require 'exc" out))))
 
+;;; Things written by the old version, and read by the new one
+
+(ert-deftest exc-obsolete-test-old-grid-file-tag-is-read ()
+  "A .grid file whose head says grid-table-file still loads."
+  (require 'exc)
+  (require 'exc-persistence)
+  (let ((file (make-temp-file "exc-old-tag-" nil ".grid")))
+    (unwind-protect
+        (progn
+          ;; Both forms the old version wrote: a tagged v4 sheet and a
+          ;; tagged v5 workbook.
+          (with-temp-file file
+            (prin1 '(grid-table-file
+                     :version 4
+                     :title "Old"
+                     :headers ("A" "B")
+                     :rows (("1" "2"))
+                     :styles ((0 0 :bold t)))
+                   (current-buffer)))
+          (let ((source (exc-persistence-create-data-source-from-file file)))
+            (should (equal (exc-get-raw-value-at source 0 0) "A"))
+            (should (equal (exc-get-raw-value-at source 1 1) "2"))
+            (should (equal (exc-get-style-at source 0 0) '(:bold t))))
+          (with-temp-file file
+            (prin1 '(grid-table-file
+                     :version 5
+                     :active 1
+                     :sheets ((:name "One" :title nil
+                                     :headers ("A") :rows (("1")))
+                              (:name "Two" :title nil
+                                     :headers ("B") :rows (("2")))))
+                   (current-buffer)))
+          (let* ((source (exc-persistence-create-data-source-from-file file))
+                 (workbook (exc-workbook-of source)))
+            (should (equal (exc-workbook-sheet-name source) "Two"))
+            (should (equal (mapcar #'exc-workbook-sheet-name
+                                   (exc-workbook-sheets workbook))
+                           '("One" "Two"))))
+          ;; What is written now starts with exc-file, and reads back.
+          (exc-persistence--save-to-file
+           (exc-persistence-create-data-source-from-file file) file)
+          (with-temp-buffer
+            (insert-file-contents file)
+            (goto-char (point-min))
+            (should (eq (car (read (current-buffer))) 'exc-file)))
+          (should (exc-persistence-create-data-source-from-file file)))
+      (delete-file file))))
+
+(ert-deftest exc-obsolete-test-old-error-names-still-catch ()
+  "A `condition-case' written with an old error name still catches."
+  (require 'exc)
+  (dolist (pair '((grid-calc-error exc-calc-error)
+                  (grid-calc-cycle exc-calc-cycle)
+                  (grid-model-covered-cell exc-model-covered-cell)
+                  (grid-calc-put-off exc-calc-put-off)))
+    (let ((old (nth 0 pair))
+          (new (nth 1 pair)))
+      (should (memq old (get new 'error-conditions)))
+      (should (eq (eval `(condition-case nil
+                             (signal ',new '("test"))
+                           (,old 'caught)))
+                  'caught))))
+  ;; A cycle is still a `grid-calc-error' to old code, as it was before.
+  (should (eq (eval '(condition-case nil
+                         (signal 'exc-calc-cycle '("test"))
+                       (grid-calc-error 'caught)))
+              'caught)))
+
 (provide 'exc-obsolete-test)
 
 ;;; exc-obsolete-test.el ends here
