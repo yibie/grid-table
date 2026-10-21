@@ -2623,6 +2623,31 @@ display coordinates: display column is model column plus one."
   (let ((tick (grid-table-etaf--state-tick state)))
     (etaf-set-value tick (1+ (etaf-value tick)))))
 
+(defun grid-table-etaf--calc-ready (waiters)
+  "Show the answers CALC's WAITERS, (MODEL ROW COL) each, were waiting for.
+Every grid showing one of their sheets, or a sheet of the same book, is
+recalculated and drawn again."
+  (let ((models (delete-dups (mapcar #'car waiters)))
+        (everything (cl-some (lambda (waiter) (null (nth 1 waiter))) waiters))
+        (done nil))
+    (dolist (buffer (buffer-list))
+      (let ((state (buffer-local-value 'grid-table-etaf--state buffer))
+            (source (buffer-local-value 'grid-table--data-source buffer)))
+        (when (and state source (gethash :model source))
+          (let* ((workbook (grid-workbook-of source))
+                 (shown (if workbook (grid-workbook--models workbook)
+                          (list (gethash :model source)))))
+            (when (cl-some (lambda (model) (memq model shown)) models)
+              ;; Sheets of one book are recalculated once, together.
+              (unless (memq (or workbook source) done)
+                (push (or workbook source) done)
+                (grid-table-recalculate source everything))
+              (with-current-buffer buffer
+                (grid-table-etaf--widen-visible state)
+                (grid-table-etaf--bump state)))))))))
+
+(add-hook 'grid-calc-calc-ready-functions #'grid-table-etaf--calc-ready)
+
 (defun grid-table-etaf--widen-visible (state)
   "Widen STATE's columns to fit the values now in the window.
 An edit can change any formula cell, so every shown cell is measured.

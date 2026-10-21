@@ -1168,6 +1168,7 @@ cannot see, such as a formula function defined since."
   (let ((source (or grid-table--data-source
                     (user-error "No grid in this buffer"))))
     (when (gethash :model source)
+      (grid-calc-calc-forget)
       (grid-table-recalculate source t))
     (grid-table-refresh)))
 

@@ -4478,6 +4478,58 @@ double holds, and leaves the user's Calc modes as they were."
                   "=CALC(\"deriv(\" & B1 & \", x)\")" "sin(x)")
                  "cos(x)")))
 
+(defun grid-table-formula-test--calc-wait (answers)
+  "Wait, at most 10 seconds, until CALC has had ANSWERS more answers."
+  (let ((ready 0) (start (float-time)))
+    (let ((count (lambda (_waiters) (cl-incf ready))))
+      (add-hook 'grid-calc-calc-ready-functions count)
+      (unwind-protect
+          (while (and (< ready answers) (< (- (float-time) start) 10))
+            (accept-process-output nil 0.05))
+        (remove-hook 'grid-calc-calc-ready-functions count)))
+    ready))
+
+(defmacro grid-table-formula-test--calc-async (&rest body)
+  "Run BODY with CALC computing in another Emacs, from a fresh start."
+  (declare (indent 0))
+  `(let ((grid-calc-calc-async t)
+         (grid-calc--calc-answers (make-hash-table :test 'equal))
+         (grid-calc--calc-waiting (make-hash-table :test 'equal))
+         (grid-calc--calc-queue nil) (grid-calc--calc-job nil)
+         (grid-calc--calc-process nil) (grid-calc--calc-sent 0))
+     (unwind-protect (progn ,@body)
+       (when (process-live-p grid-calc--calc-process)
+         (delete-process grid-calc--calc-process)))))
+
+(ert-deftest grid-table-formula-calc-computes-in-another-emacs ()
+  "Without holding Emacs, CALC shows #GETTING_DATA until its answer comes,
+then the cell and what reads it are computed again.  A text two cells
+share is computed once."
+  (grid-table-formula-test--calc-async
+    (let ((model (grid-model-create
+                  2 2 '(("=CALC(\"deriv(x^3, x)\")" "=LEN(A1)")
+                        ("=CALC(\"deriv(x^3, x)\")" "")))))
+      (should (equal (grid-model-get-computed-value model 0 0) "#GETTING_DATA"))
+      (should (= (grid-table-formula-test--calc-wait 1) 1))
+      (grid-table-calc-evaluate model)
+      (should (equal (grid-model-get-computed-value model 0 0) "3 x^2"))
+      (should (equal (grid-model-get-computed-value model 1 0) "3 x^2"))
+      (should (equal (grid-model-get-computed-value model 0 1) 5))
+      (should (= grid-calc--calc-sent 1)))))
+
+(ert-deftest grid-table-formula-calc-stops-what-takes-too-long ()
+  "A computation past `grid-calc-calc-timeout' is #CALC!, and the job
+after it still has its answer."
+  (grid-table-formula-test--calc-async
+    (let* ((grid-calc-calc-timeout 0.3)
+           (model (grid-model-create
+                   1 2 '(("=CALC(\"vsum(index(5000000))\")" "=CALC(\"2+3\")")))))
+      (grid-model-get-computed-value model 0 0)
+      (should (= (grid-table-formula-test--calc-wait 2) 2))
+      (grid-table-calc-evaluate model)
+      (should (equal (grid-model-get-computed-value model 0 0) "#CALC!"))
+      (should (equal (grid-model-get-computed-value model 0 1) 5)))))
+
 (provide 'grid-table-formula-test)
 
 ;;; grid-table-formula-test.el ends here

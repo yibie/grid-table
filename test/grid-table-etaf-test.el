@@ -2161,6 +2161,30 @@ cell in the way makes such a formula #SPILL!."
       (should (equal grid-table-etaf--chart-drag-scroll '(0 . 0)))
       (grid-table-etaf-undo)
       (should (equal (plist-get (car (grid-table-charts source)) :anchor) '(0 . 3))))))
+(ert-deftest grid-table-etaf-shows-calc-answers-when-they-come ()
+  "A CALC cell computed in another Emacs is drawn again once its answer
+comes, with what reads it."
+  (grid-table-etaf-test--with-grid (3 3)
+    (let ((grid-calc-calc-async t)
+          (grid-calc--calc-answers (make-hash-table :test 'equal))
+          (grid-calc--calc-waiting (make-hash-table :test 'equal))
+          (grid-calc--calc-queue nil) (grid-calc--calc-job nil)
+          (grid-calc--calc-process nil) (grid-calc--calc-sent 0)
+          (start (float-time)))
+      (unwind-protect
+          (progn
+            (grid-set-raw-value-at source 1 0 "=CALC(\"deriv(x^4, x)\")")
+            (grid-set-raw-value-at source 1 1 "=LEN(A2)")
+            (grid-table-recalculate source)
+            (grid-table-refresh)
+            (should (equal (grid-get-computed-value-at source 1 0) "#GETTING_DATA"))
+            (while (and (not (string-search "4 x^3" (grid-table-etaf-test--text)))
+                        (< (- (float-time) start) 10))
+              (accept-process-output nil 0.05))
+            (should (string-search "4 x^3" (grid-table-etaf-test--text)))
+            (should (equal (grid-get-computed-value-at source 1 1) 5)))
+        (when (process-live-p grid-calc--calc-process)
+          (delete-process grid-calc--calc-process))))))
 
 (provide 'grid-table-etaf-test)
 
