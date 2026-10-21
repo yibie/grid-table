@@ -1,6 +1,6 @@
 [English](KEYS.md) | [中文](KEYS_CN.md)
 
-# exc keys
+# exc.el keys
 
 Every key of a grid buffer. The list follows `exc-etaf--keys` in
 `exc-etaf.el`. On macOS the Command-key shortcuts (`s-c`, `s-v`, `s-z` …) work too.

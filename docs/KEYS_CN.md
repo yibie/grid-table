@@ -1,6 +1,6 @@
 [English](KEYS.md) | [中文](KEYS_CN.md)
 
-# exc 按键
+# exc.el 按键
 
 表格 buffer 里的全部按键。这份表照 `exc-etaf.el` 里的
 `exc-etaf--keys` 整理。在 macOS 上，Command 键的快捷键（`s-c`、`s-v`、`s-z` …）也能用。

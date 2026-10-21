@@ -84,7 +84,7 @@ holds `=elisp:(* 2 21)`, then `=C2+1` is `43`.
 ## When it is computed
 
 A Lisp formula is computed again at every edit, wherever the edit is,
-since exc cannot tell which cells the code reads. `C-c C-r`
+since exc.el cannot tell which cells the code reads. `C-c C-r`
 computes it too. Keep the code fast: slow code slows every keystroke
 that stores a cell.
 

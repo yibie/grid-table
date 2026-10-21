@@ -5,7 +5,7 @@
 A plugin is an Emacs Lisp file that requires `exc` and adds
 something to it: a file format to open, an export, a command. There is
 no plugin loader to satisfy; the file is loaded with `require` like any
-other library. The plugins that come with exc live in `plugins/`,
+other library. The plugins that come with exc.el live in `plugins/`,
 which `exc.el` adds to `load-path`.
 
 ## Where things are
@@ -39,7 +39,7 @@ Build one with `make-default-data-source`:
 - The first row of `ROWS` is the header row the grid shows, which stays
   in place when sorting and filtering. `HEADERS` is not drawn. So pass
   the header line both ways: as `HEADERS` and as the first element of
-  `ROWS`. This is what exc does when it reads a `.grid` file.
+  `ROWS`. This is what exc.el does when it reads a `.grid` file.
 
 Do not build the hash table by hand. The view reads the sheet's model
 (`:model`) directly in many places, and only `make-default-data-source`
@@ -69,7 +69,7 @@ Rows and columns count from 0. A value typed as a number comes back from
 `exc-get-computed-value-at` as text (`"12"`).
 
 A plugin can store its own keys in the same table. The CSV plugin adds
-two that exc uses:
+two that exc.el uses:
 
 | Key | Used by |
 |---|---|
@@ -127,7 +127,7 @@ This plugin opens a tab-separated file as a grid and saves it back. It
 was loaded and run as shown below.
 
 ```elisp
-;;; exc-tsv.el --- Tab-separated files for exc -*- lexical-binding: t -*-
+;;; exc-tsv.el --- Tab-separated files for exc.el -*- lexical-binding: t -*-
 
 (require 'exc)
 (require 'exc-api)
@@ -206,7 +206,7 @@ free key, and check it with `C-h k` in a grid.
 
 After changing cells from Lisp, `exc-refresh` redraws the grid.
 
-## The plugins that come with exc
+## The plugins that come with exc.el
 
 | File | How it hooks in |
 |---|---|

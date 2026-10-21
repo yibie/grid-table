@@ -1,12 +1,12 @@
 [English](README.md) | [中文](README_CN.md)
 
-# exc
+# exc.el
 
 A spreadsheet inside Emacs: cells edited in place, Excel-style formulas,
 several sheets, formats, filters, floating charts, and xlsx files opened
 and written back.
 
-The package was called grid-table up to 0.5.0, and is exc from 0.5.1. The old names still work and
+The package was called grid-table up to 0.5.0, and is exc.el from 0.5.1. The old names still work and
 are marked obsolete; [Migrating from grid-table](#migrating-from-grid-table)
 says what to change.
 
@@ -18,7 +18,7 @@ says what to change.
 
 ## What it is
 
-exc keeps a table in a `.grid` file and shows it as a spreadsheet,
+exc.el keeps a table in a `.grid` file and shows it as a spreadsheet,
 drawn with [ETAF](https://github.com/emacs-taf). It behaves the way people
 who use Excel expect, and keeps Emacs habits where they apply:
 
@@ -45,7 +45,7 @@ thousands of rows opens and scrolls without drawing all of it.
 
 ## Installation
 
-exc needs Emacs 29.1 or later and three libraries from
+exc.el needs Emacs 29.1 or later and three libraries from
 [emacs-taf](https://github.com/emacs-taf): `ecss`, `ebox` and `etaf`.
 None of them is on a package archive yet, so clone all four:
 
@@ -163,7 +163,7 @@ window scrolls the sheet.
 On macOS the window system sometimes never hands Emacs the release of the
 mouse button. The drag then goes on after the button is up: a selection
 keeps following the pointer, or a chart keeps moving, until the next
-click. exc hides tooltips during a drag, which makes this rare, but
+click. exc.el hides tooltips during a drag, which makes this rare, but
 it can still happen ([ebox#1](https://github.com/emacs-taf/ebox/issues/1)).
 If it does, click once or press `Esc`; `C-/` undoes a chart moved by
 mistake.
@@ -244,7 +244,7 @@ digits, whatever your own Calc is set to. A number comes back as a number
 (`=CALC("2^10")*2` is 2048); anything else, or a number too large for a
 double, comes back as text. Text Calc cannot read is `#VALUE!`. Unlike
 `=elisp:`, `CALC` needs no leave to run: Calc's notation reaches only its
-own math functions. It is exc's own function, so Excel shows
+own math functions. It is exc.el's own function, so Excel shows
 `#NAME?` for it.
 
 Calc computes in other Emacsen, started the first time `CALC` is used
@@ -419,9 +419,9 @@ Not carried, or changed on the way:
   cells, merges, notes, conditional formats, validations and hidden lines
   of a sheet are replaced by the grid's, so those left out are gone; the
   rest of the sheet and the other sheets stay as they were.
-- A number format exc has no counterpart for is shown in the
+- A number format exc.el has no counterpart for is shown in the
   general format and written back unchanged.
-- A formula using a function exc lacks shows an error value but is
+- A formula using a function exc.el lacks shows an error value but is
   kept and exported as written.
 - Other kinds of chart (radar, 3-D, ones reading another sheet) are not
   imported and are written back as they were. Chart formulas are exported
@@ -469,7 +469,7 @@ needs no ETAF.
 
 ## Migrating from grid-table
 
-The package was called grid-table up to 0.5.0, and is exc from 0.5.1.
+The package was called grid-table up to 0.5.0, and is exc.el from 0.5.1.
 Every grid-table name still works, marked obsolete, and will be removed
 in a later version.
 

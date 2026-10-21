@@ -4,7 +4,7 @@
 
 插件是一个 require 了 `exc` 并为它增加功能的 Emacs Lisp 文件：一种可以打开的
 文件格式、一种导出、一个命令。没有需要迎合的插件加载器；这个文件和别的库一样用
-`require` 加载。exc 自带的插件放在 `plugins/` 里，`exc.el` 会把这个
+`require` 加载。exc.el 自带的插件放在 `plugins/` 里，`exc.el` 会把这个
 目录加入 `load-path`。
 
 ## 东西在哪里
@@ -33,7 +33,7 @@
   `"=SUM(B2:B3)"`、`"pen"`。短的行用空单元格补齐。
 - `HEADERS` 是字符串列表，每列一个；它的长度就是列数。
 - `ROWS` 的第一行就是表格显示的表头行，排序和筛选时它保持不动。`HEADERS` 不会被画出来。
-  所以表头要两处都传：作为 `HEADERS`，也作为 `ROWS` 的第一个元素。exc 读取
+  所以表头要两处都传：作为 `HEADERS`，也作为 `ROWS` 的第一个元素。exc.el 读取
   `.grid` 文件时就是这样做的。
 
 不要手工拼这个哈希表。视图在很多地方直接读取工作表的模型（`:model`），而只有
@@ -59,7 +59,7 @@
 `:set-filters`、`:set-charts` 等）；详见这个函数本身。行和列从 0 开始数。输入为数字的值，
 `exc-get-computed-value-at` 返回的是文本（`"12"`）。
 
-插件可以在同一个表里存放自己的键。CSV 插件加了两个，exc 会用到：
+插件可以在同一个表里存放自己的键。CSV 插件加了两个，exc.el 会用到：
 
 | 键 | 使用者 |
 |---|---|
@@ -111,7 +111,7 @@
 这个插件把制表符分隔的文件作为表格打开，并能存回去。它按下文所示加载和运行过。
 
 ```elisp
-;;; exc-tsv.el --- Tab-separated files for exc -*- lexical-binding: t -*-
+;;; exc-tsv.el --- Tab-separated files for exc.el -*- lexical-binding: t -*-
 
 (require 'exc)
 (require 'exc-api)
@@ -187,7 +187,7 @@ total	=SUM(B2:B3)
 
 从 Lisp 修改单元格之后，用 `exc-refresh` 重画表格。
 
-## exc 自带的插件
+## exc.el 自带的插件
 
 | 文件 | 如何接入 |
 |---|---|
