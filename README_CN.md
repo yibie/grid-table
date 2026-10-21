@@ -5,7 +5,7 @@
 Emacs 里的电子表格：在单元格里直接编辑，Excel 风格的公式，多个工作表，
 格式、筛选、浮动图表，还能打开 xlsx 文件并写回。
 
-这个包到 0.5.0 为止叫 grid-table，从 0.6.0 起叫 exc。旧名字照常能用，但已标为过时；
+这个包到 0.5.0 为止叫 grid-table，从 0.5.1 起叫 exc。旧名字照常能用，但已标为过时；
 要改哪些地方见 [从 grid-table 迁移](#从-grid-table-迁移)。
 
 <div align="center">
@@ -407,14 +407,14 @@ Calc 在另外的 Emacs 进程里计算：第一次用到 `CALC` 时启动，之
 
 ## 从 grid-table 迁移
 
-这个包到 0.5.0 为止叫 grid-table，从 0.6.0 起叫 exc。旧名字定义的东西现在都还能用，只是已标为过时，
+这个包到 0.5.0 为止叫 grid-table，从 0.5.1 起叫 exc。旧名字定义的东西现在都还能用，只是已标为过时，
 以后的版本会删掉。
 
 - **加载**：`(require 'grid-table)` 改成 `(require 'exc)`。旧写法仍然会把包加载起来，
   并提示改掉。
 - **插件**：旧 feature 名不再提供，`(require 'grid-table-xlsx)` 这类会失败。改用
   `exc-xlsx`、`exc-csv`、`exc-org`、`exc-markdown`、`exc-rst`、`exc-example-plugin`。
-- **`.grid` 文件**：这个版本能读 0.5.0 存的文件。0.6.0 存出的文件以 `exc-file` 开头，
+- **`.grid` 文件**：这个版本能读 0.5.0 存的文件。0.5.1 存出的文件以 `exc-file` 开头，
   0.5.0 及更早的版本读不了；如果可能回退，留一份旧版本的副本。
 - **Org 和 Markdown 块**：语言写成旧名 `grid-table` 的块、围栏仍写 `grid-view` 的块，
   照常识别和刷新；新插入的块写成 `exc`。

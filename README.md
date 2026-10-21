@@ -6,7 +6,7 @@ A spreadsheet inside Emacs: cells edited in place, Excel-style formulas,
 several sheets, formats, filters, floating charts, and xlsx files opened
 and written back.
 
-The package was called grid-table up to 0.5.0, and is exc from 0.6.0. The old names still work and
+The package was called grid-table up to 0.5.0, and is exc from 0.5.1. The old names still work and
 are marked obsolete; [Migrating from grid-table](#migrating-from-grid-table)
 says what to change.
 
@@ -469,7 +469,7 @@ needs no ETAF.
 
 ## Migrating from grid-table
 
-The package was called grid-table up to 0.5.0, and is exc from 0.6.0.
+The package was called grid-table up to 0.5.0, and is exc from 0.5.1.
 Every grid-table name still works, marked obsolete, and will be removed
 in a later version.
 
@@ -478,7 +478,7 @@ in a later version.
 - **Plugins.** The old feature names are gone: `(require 'grid-table-xlsx)`
   and the rest fail. Use `exc-xlsx`, `exc-csv`, `exc-org`, `exc-markdown`,
   `exc-rst` and `exc-example-plugin`.
-- **`.grid` files.** This version reads what 0.5.0 wrote. A file 0.6.0
+- **`.grid` files.** This version reads what 0.5.0 wrote. A file 0.5.1
   saves starts with `exc-file`, which 0.5.0 and earlier cannot read, so keep
   the old version's copy if you may need to go back.
 - **Org and Markdown blocks.** A block whose language is the old
