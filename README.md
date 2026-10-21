@@ -19,7 +19,9 @@ drawn with [ETAF](https://github.com/emacs-taf). It behaves the way people
 who use Excel expect, and keeps Emacs habits where they apply:
 
 - **Editing**: type to replace a cell, `F2` or `RET` to edit it, `RET` to
-  store and move down, `TAB` to store and move right. `C-x C-s` saves.
+  store and move down, `TAB` to store and move right. After typing, the
+  arrow keys store the text and move the way they point; one `ESC` or
+  `C-c C-k` throws the edit away again. `C-x C-s` saves.
 - **Formulas**: about 470 Excel functions, with cell and range references,
   references to other sheets, names, dynamic arrays that spill, and Excel's
   error values. Results are checked against a corpus of real Excel files.
@@ -124,14 +126,15 @@ lists every key.
 | Action | Keys |
 |---|---|
 | Edit the cell / store and move down / store and move right | `F2` or `RET` / `RET` / `TAB` |
-| New line inside a cell while editing / cancel editing | `M-RET` / `C-c C-k` |
+| New line inside a cell while editing / cancel editing | `M-RET` / `C-c C-k` or `ESC` |
+| Store and move, after starting the edit by typing | `<arrow>` |
 | Select a range / select everything | `S-<arrow>` / `C-x h` |
 | Go to a cell, range or name (`D120`, `A1:B3`, `Sheet2!A1`) | `C-c g` |
 | Copy / cut / paste | `M-w` / `C-w` / `C-y` |
 | Paste values / formats / transposed | `C-c y v` / `C-c y f` / `C-c y t` |
 | Fill down / right / continue a series | `C-d` / `C-r` / `C-c C-s` |
 | Clear the selection | `DEL` |
-| Undo / redo | `C-/` / `C-?` |
+| Undo / redo | `C-/` / `C-?` (while editing, undo takes back the typing; a typed-in edit goes in one step) |
 | Find / replace | `C-s` / `M-%` |
 | Insert row above / add row below / delete row | `C-c r i` / `C-c r a` / `C-c r d` |
 | Add column / delete column | `C-c c a` / `C-c c d` |

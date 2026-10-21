@@ -942,6 +942,11 @@ Printing keys are not commands: see `grid-table-etaf-typing-map' and
       (define-key map (vector event) #'grid-table-etaf-scroll-down))
     (dolist (event '(wheel-up double-wheel-up triple-wheel-up))
       (define-key map (vector event) #'grid-table-etaf-scroll-up))
+    ;; Undo, from a key of the user's or from the toolbar and Edit menu,
+    ;; means the sheet's own undo while a grid is shown.
+    (define-key map [remap undo] #'grid-table-etaf-undo)
+    (define-key map [remap undo-only] #'grid-table-etaf-undo)
+    (define-key map [remap undo-redo] #'grid-table-etaf-redo)
     ;; An indirect buffer shares the drawn text, which one sheet owns.
     (define-key map [remap clone-indirect-buffer] #'grid-table-etaf-new-view)
     (define-key map [remap clone-indirect-buffer-other-window]
@@ -2873,6 +2878,24 @@ Columns only shrink on `grid-table-refresh'."
   (grid-table-etaf-commit-edit)
   (grid-table-etaf-move 1 0))
 
+(defun grid-table-etaf-commit-edit-and-move-up ()
+  "Store the text of the in-place edit and move to the row above."
+  (interactive)
+  (grid-table-etaf-commit-edit)
+  (grid-table-etaf-move -1 0))
+
+(defun grid-table-etaf-commit-edit-and-move-right ()
+  "Store the text of the in-place edit and move to the cell on the right."
+  (interactive)
+  (grid-table-etaf-commit-edit)
+  (grid-table-etaf-move 0 1))
+
+(defun grid-table-etaf-commit-edit-and-move-left ()
+  "Store the text of the in-place edit and move to the cell on the left."
+  (interactive)
+  (grid-table-etaf-commit-edit)
+  (grid-table-etaf-move 0 -1))
+
 (defvar grid-table-etaf-edit-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'grid-table-etaf-commit-edit-and-move-down)
@@ -2881,36 +2904,126 @@ Columns only shrink on `grid-table-refresh'."
     (define-key map (kbd "M-RET") #'newline)
     (define-key map [M-return] #'newline)
     (define-key map (kbd "C-c C-k") #'grid-table-etaf-cancel-edit)
+    (define-key map [escape] #'grid-table-etaf-cancel-edit)
     (define-key map (kbd "TAB") #'grid-table-next-cell)
     (define-key map [tab] #'grid-table-next-cell)
     (define-key map [backtab] #'grid-table-previous-cell)
+    ;; Undoing in an edit takes back typing, not the change before the cell.
+    (define-key map [remap undo] #'grid-table-etaf-edit-undo)
+    (define-key map [remap undo-only] #'grid-table-etaf-edit-undo)
+    (define-key map [remap undo-redo] #'grid-table-etaf-edit-redo)
+    (dolist (key '("C-/" "C-_" "C-x u" "s-z"))
+      (define-key map (kbd key) #'grid-table-etaf-edit-undo))
+    (dolist (key '("C-?" "C-M-_" "s-Z"))
+      (define-key map (kbd key) #'grid-table-etaf-edit-redo))
     map)
-  "Keymap consulted before the editing commands of an in-place cell edit.")
+  "Keymap consulted before the editing commands of an in-place cell edit.
+`ESC' and `C-c C-k' cancel the edit, and the undo keys undo the typing.
+In a window system `ESC' is a key of its own, so `ESC x' cannot start
+`M-x' while an edit is open; a terminal sends `ESC' and the next key
+together, and those still reach `M-x'.")
 
-(defun grid-table-etaf-edit-cell (&optional initial)
+(defvar grid-table-etaf-input-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map grid-table-etaf-edit-map)
+    (define-key map [down] #'grid-table-etaf-commit-edit-and-move-down)
+    (define-key map [up] #'grid-table-etaf-commit-edit-and-move-up)
+    (define-key map [right] #'grid-table-etaf-commit-edit-and-move-right)
+    (define-key map [left] #'grid-table-etaf-commit-edit-and-move-left)
+    map)
+  "Keymap of an edit begun by typing a character, as in a spreadsheet.
+It is `grid-table-etaf-edit-map' plus the arrow keys, which store the text
+and move to the next cell.  An edit begun with F2 or RET uses the arrow
+keys to move within the text instead.")
+
+(defvar-local grid-table-etaf--edit-buffer nil
+  "The grid buffer of the edit whose draft the current buffer holds.")
+
+(defvar-local grid-table-etaf--edit-start nil
+  "The text the draft of the edit in the current buffer began from.")
+
+(defvar-local grid-table-etaf--edit-input nil
+  "Non-nil when the edit in the current buffer began by typing a character.")
+
+(defun grid-table-etaf--end-edit-from-draft ()
+  "Cancel the in-place edit whose draft is in the current buffer."
+  (let ((owner grid-table-etaf--edit-buffer))
+    (when (buffer-live-p owner)
+      (with-current-buffer owner
+        (grid-table-etaf-cancel-edit)))))
+
+(defun grid-table-etaf-edit-undo ()
+  "Undo the last change to the text being typed, or cancel the edit.
+An edit begun by typing is one step: undo throws the whole input away,
+and the cell keeps what it held before.  An edit begun with F2 or RET
+takes the typing back a change at a time, and with the text back to what
+the cell held when the edit began, one more undo cancels the edit.  Either
+way nothing is stored and no undo record is made."
+  (interactive)
+  (if grid-table-etaf--edit-input
+      (grid-table-etaf--end-edit-from-draft)
+    (let ((start (or grid-table-etaf--edit-start "")))
+      (if (equal (buffer-substring-no-properties (point-min) (point-max)) start)
+          (grid-table-etaf--end-edit-from-draft)
+        ;; `undo' alone would redo the last undo when this command is not
+        ;; `undo' itself; `undo-only' keeps taking text back.
+        (undo-only)
+        ;; A reused editing buffer can hold steps from an earlier edit; never
+        ;; walk past the text this edit began from.
+        (when (< (buffer-size) (length start))
+          (grid-table-etaf--end-edit-from-draft))))))
+
+(defun grid-table-etaf-edit-redo ()
+  "Redo the text last undone in the edit being typed.
+Nothing is redone, and nothing is reported, when there is no such text."
+  (interactive)
+  (when (fboundp 'undo-redo)
+    (ignore-errors (undo-redo))))
+
+(defun grid-table-etaf-edit-cell (&optional initial input)
   "Edit the raw value of the cursor cell in place.
-INITIAL, a string, replaces the cell text the edit starts from.
+INITIAL, a string, replaces the cell text the edit starts from.  INPUT,
+non-nil when the edit began by typing a character, gives the arrow keys
+the meaning they have in a spreadsheet: store the text and move to the
+adjacent cell.  An edit begun any other way, with F2 or RET, leaves the
+arrow keys moving within the text.
 RET stores the text and moves down, C-c C-c stores it and stays, M-RET
-inserts a newline and C-c C-k cancels.  Moving to another cell, with
-TAB or the mouse, stores the text too."
+inserts a newline and C-c C-k or ESC cancels.  Moving to another cell,
+with TAB or the mouse, stores the text too.  In an edit begun by typing,
+the undo keys throw the whole input away in one step; in one begun with
+F2 or RET they take the typing back a change at a time, and cancel the
+edit once the text is back to what the cell held."
   (interactive)
   (let* ((state (grid-table-etaf--state-or-error))
          (buffer (grid-table-etaf--state-buffer state))
          (cursor (grid-table-etaf--cursor))
+         (source (grid-table-etaf--source state))
+         (extent (grid-table-etaf--cell-extent (car cursor) (cdr cursor)))
+         (start (or initial (grid-table-edit-text
+                             source (nth 0 extent) (nth 1 extent))))
          (rule (and (not initial)
-                    (grid-table-validation-at (grid-table-etaf--source state)
-                                              (car cursor) (cdr cursor)))))
+                    (grid-table-validation-at source (car cursor) (cdr cursor)))))
     (if (eq (nth 4 rule) 'list)
         (grid-table-etaf--choose state cursor rule)
       (unless (grid-table-etaf--state-session state)
         (grid-table-etaf--settle state)
         (etaf-set-value (grid-table-etaf--state-editing state) (or initial t))
+        ;; An undo in the edit runs in the editing buffer, which is why it
+        ;; is told where the grid and the text it started from are.
+        (etaf-input-edit-command-add 'grid-table-etaf-edit-undo)
+        (etaf-input-edit-command-add 'grid-table-etaf-edit-redo)
         (condition-case err
             (progn
               (setf (grid-table-etaf--state-session state)
                     (etaf-input-begin
                      (grid-table-etaf--runtime buffer) 'grid-table-etaf-cursor
-                     :keymap grid-table-etaf-edit-map
+                     :keymap (if input
+                                 grid-table-etaf-input-map
+                               grid-table-etaf-edit-map)
+                     :local-variables
+                     (list (cons 'grid-table-etaf--edit-buffer buffer)
+                           (cons 'grid-table-etaf--edit-start start)
+                           (cons 'grid-table-etaf--edit-input (and input t)))
                      :on-leave (lambda ()
                                  (when (buffer-live-p buffer)
                                    (with-current-buffer buffer
@@ -2952,7 +3065,7 @@ edit."
   (cond ((not grid-table-etaf-type-to-edit)
          (message "Press RET or F2 to edit this cell"))
         ((characterp last-command-event)
-         (grid-table-etaf-edit-cell (string last-command-event)))
+         (grid-table-etaf-edit-cell (string last-command-event) t))
         (t (grid-table-etaf-edit-cell))))
 
 (defun grid-table-etaf-clear-cells ()

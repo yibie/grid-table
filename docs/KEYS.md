@@ -31,7 +31,8 @@ there makes the sheet grow to hold it.
 | `TAB` (editing) | Store and move right |
 | `C-c C-c` (editing) | Store in place |
 | `M-RET` (editing) | New line inside the cell |
-| `C-c C-k` (editing) | Cancel |
+| `C-c C-k`, `ESC` (editing) | Cancel |
+| `<arrow>` (editing after typing) | Store and move to the adjacent cell |
 | `DEL`, `<deletechar>` | Clear the selected cells |
 | `M-w` / `C-w` / `C-y` | Copy / cut / paste, with formats |
 | `C-c y v` | Paste only the values shown |
@@ -41,7 +42,7 @@ there makes the sheet grow to hold it.
 | `C-c C-s` | Continue a series (1, 2 → 3, 4; dates; `Week 1` → `Week 2`) |
 | `C-s` (`C-u C-s` backward) | Find |
 | `M-%` | Replace in the selection or the sheet |
-| `C-/`, `C-_`, `C-x u` | Undo |
+| `C-/`, `C-_`, `C-x u`, `s-z` | Undo; while editing, it takes back the typing (one step when the edit began by typing) |
 | `C-?`, `C-M-_` | Redo |
 | `C-c t` | Edit the title |
 
