@@ -402,6 +402,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "exc-xlsx-module"
+version = "0.1.0"
+dependencies = [
+ "emacs",
+ "quick-xml",
+ "umya-spreadsheet",
+ "zip",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,16 +483,6 @@ dependencies = [
  "libc",
  "r-efi",
  "rand_core",
-]
-
-[[package]]
-name = "exc-xlsx-module"
-version = "0.1.0"
-dependencies = [
- "emacs",
- "quick-xml",
- "umya-spreadsheet",
- "zip",
 ]
 
 [[package]]
