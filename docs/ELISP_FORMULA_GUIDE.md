@@ -12,6 +12,10 @@ value is what the cell holds.
 
 The prefix comes right after `=`, in any case: `=ELISP:` works too.
 
+For symbolic math, `CALC` is the safer route: `=CALC("deriv(x^2, x)")`
+hands its text to Emacs Calc and needs no leave to run Lisp. See
+[the README](../README.md#symbolic-math-with-emacs-calc).
+
 ## Turning it on
 
 Lisp formulas are off by default. While they are off, such a cell shows

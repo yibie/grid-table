@@ -23,6 +23,7 @@ who use Excel expect, and keeps Emacs habits where they apply:
 - **Formulas**: about 470 Excel functions, with cell and range references,
   references to other sheets, names, dynamic arrays that spill, and Excel's
   error values. Results are checked against a corpus of real Excel files.
+  `CALC` adds symbolic math through Emacs Calc.
 - **Workbooks**: several sheets with tabs, frozen panes, hidden rows and
   columns, filters, sorting, merged cells, notes, links and list validation.
 - **Formats**: bold, italic, colors, alignment, number formats (thousands,
@@ -206,6 +207,29 @@ What to expect:
   columns, so on a sheet of 20 rows `A:A` is those 20 cells and
   `=ROWS(A:A)` is 20. Sorting moves a formula with its row, including
   references that name the sheet itself.
+
+### Symbolic math with Emacs Calc
+
+`CALC` hands its text to Emacs Calc and shows what Calc gives back, so a
+cell can take a derivative, integrate, factor or find roots:
+
+| Formula | Value |
+|---|---|
+| `=CALC("deriv(x^2 + 3 x, x)")` | `2 x + 3` |
+| `=CALC("integ(sin(x), x)")` | `-cos(x)` |
+| `=CALC("factor(x^2 - 5 x + 6)")` | `(x - 2) (x - 3)` |
+| `=CALC("roots(x^2 - 5 x + 6, x)")` | `[3., 2.]` |
+| `=CALC("nrat((x^2 - 1) / (x - 1))")` | `x + 1` |
+| `=CALC("deriv(" & A2 & ", x)")` | the derivative of the expression in A2 |
+
+The text is in Calc's algebraic notation. Calc runs in radians at 15
+digits, whatever your own Calc is set to. A number comes back as a number
+(`=CALC("2^10")*2` is 2048); anything else, or a number too large for a
+double, comes back as text. Text Calc cannot read is `#VALUE!`. Unlike
+`=elisp:`, `CALC` needs no leave to run: Calc's notation reaches only its
+own math functions. It is grid-table's own function, so Excel shows
+`#NAME?` for it. A long computation, such as `fact(10^7)`, holds Emacs
+until it ends or you press `C-g`.
 
 ### Lisp formulas
 

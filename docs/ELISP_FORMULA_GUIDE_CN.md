@@ -11,6 +11,10 @@
 
 前缀紧跟在 `=` 后面，大小写都行：`=ELISP:` 也可以。
 
+做符号运算的话，用 `CALC` 更安全：`=CALC("deriv(x^2, x)")` 把参数交给
+Emacs Calc 计算，不需要允许执行 Lisp。见
+[README](../README_CN.md#用-emacs-calc-做符号运算)。
+
 ## 打开这个功能
 
 Lisp 公式默认关闭。关闭时，这样的单元格显示 `#ERROR!`，读取它的单元格也一样。
