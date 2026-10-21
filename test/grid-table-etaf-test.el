@@ -2333,6 +2333,30 @@ what made held arrow keys outrun the display."
                                          (grid-table-etaf--state-top state)))
                               cols))))))
 
+(ert-deftest grid-table-etaf-first-cell-scrolls-home-past-frozen-panes ()
+  "M-< and C-<home> go to the first cell past frozen panes, scrolled home."
+  (grid-table-etaf-test--with-grid (300 30)
+    (grid-table-etaf-goto 1 1)
+    (grid-table-etaf-freeze-panes)
+    (grid-table-etaf-goto 250 25)
+    (grid-table-etaf-first-cell)
+    (let ((state (grid-table-etaf--state-or-error)))
+      (should (equal (grid-table-etaf--cursor) '(1 . 1)))
+      (should (= (etaf-value (grid-table-etaf--state-top state)) 1))
+      (should (= (etaf-value (grid-table-etaf--state-left state)) 1)))))
+
+(ert-deftest grid-table-etaf-binds-fast-wheel-and-ctrl-home-end ()
+  "Double and triple wheel events scroll; C-<home> and C-<end> jump."
+  (grid-table-etaf-test--with-grid (5 3)
+    (dolist (event '(wheel-down double-wheel-down triple-wheel-down))
+      (should (eq (lookup-key grid-table-etaf-traverse-map (vector event))
+                  #'grid-table-etaf-scroll-down)))
+    (dolist (event '(wheel-up double-wheel-up triple-wheel-up))
+      (should (eq (lookup-key grid-table-etaf-traverse-map (vector event))
+                  #'grid-table-etaf-scroll-up)))
+    (should (assoc "C-<home>" grid-table-etaf--keys))
+    (should (assoc "C-<end>" grid-table-etaf--keys))))
+
 (provide 'grid-table-etaf-test)
 
 ;;; grid-table-etaf-test.el ends here

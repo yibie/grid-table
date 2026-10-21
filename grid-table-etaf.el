@@ -799,6 +799,8 @@ The column follows the pointer; a cancelled drag restores its width."
     ("C-e" grid-table-move-end-of-line "Last column")
     ("M-<" grid-table-etaf-first-cell "First cell")
     ("M->" grid-table-etaf-last-cell "Last cell")
+    ("C-<home>" grid-table-etaf-first-cell "First cell")
+    ("C-<end>" grid-table-etaf-last-cell "Last cell")
     ("<next>" grid-table-etaf-page-down "Page down")
     ("<prior>" grid-table-etaf-page-up "Page up")
     ("S-<down>" grid-table-etaf-extend-down "Extend selection down")
@@ -917,8 +919,11 @@ Printing keys are not commands: see `grid-table-etaf-typing-map' and
     (define-key map [tab] #'grid-table-next-cell)
     (define-key map [backtab] #'grid-table-previous-cell)
     (define-key map (kbd "S-TAB") #'grid-table-previous-cell)
-    (define-key map [wheel-down] #'grid-table-etaf-scroll-down)
-    (define-key map [wheel-up] #'grid-table-etaf-scroll-up)
+    ;; A quick turn of the wheel arrives as double and triple events.
+    (dolist (event '(wheel-down double-wheel-down triple-wheel-down))
+      (define-key map (vector event) #'grid-table-etaf-scroll-down))
+    (dolist (event '(wheel-up double-wheel-up triple-wheel-up))
+      (define-key map (vector event) #'grid-table-etaf-scroll-up))
     ;; An indirect buffer shares the drawn text, which one sheet owns.
     (define-key map [remap clone-indirect-buffer] #'grid-table-etaf-new-view)
     (define-key map [remap clone-indirect-buffer-other-window]
@@ -2596,9 +2601,16 @@ scrolls again, as after `grid-table-unfreeze-panes'."
              rows (if (= rows 1) "" "s") cols (if (= cols 1) "" "s"))))
 
 (defun grid-table-etaf-first-cell ()
-  "Move the cursor to the first cell of the sheet."
+  "Move the cursor to the first cell of the sheet, scrolling back home.
+With frozen rows or columns that is the first cell past them, as
+Ctrl+Home goes in a spreadsheet."
   (interactive)
-  (grid-table-etaf-goto 0 0))
+  (let* ((state (grid-table-etaf--state-or-error))
+         (frozen (grid-table-frozen (grid-table-etaf--source state))))
+    (etaf-batch
+      (etaf-set-value (grid-table-etaf--state-top state) (car frozen))
+      (etaf-set-value (grid-table-etaf--state-left state) (cdr frozen)))
+    (grid-table-etaf-goto (car frozen) (cdr frozen))))
 
 (defun grid-table-etaf-last-cell ()
   "Move the cursor to the last cell of the sheet."
