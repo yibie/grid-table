@@ -115,6 +115,10 @@ there makes the sheet grow to hold it.
 | `C-c k n` / `C-c k x` / `C-c k d` | Select next / deselect / delete |
 | `C-c v` | Open a chart formula in its own buffer |
 
+`Esc`, `C-c k x`, a click on a cell, or starting to edit a cell deselects
+a chart.  The arrow keys keep it selected, so `C-c k m` can move the
+chart to the cursor.
+
 ## Files
 
 | Key | Action |

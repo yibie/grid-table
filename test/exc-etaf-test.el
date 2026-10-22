@@ -2314,6 +2314,105 @@ cell in the way makes such a formula #SPILL!."
       (should (equal exc-etaf--chart-drag-scroll '(0 . 0)))
       (exc-etaf-undo)
       (should (equal (plist-get (car (exc-charts source)) :anchor) '(0 . 3))))))
+
+;; A pointer on a cell leaves the selected chart, and one on the chart
+;; still takes it.  The press is dispatched as Ebox dispatches one, at the
+;; painted Host of the cell and of the chart, so it is the handlers the
+;; nodes carry that run.
+(ert-deftest exc-etaf-clicking-a-cell-leaves-the-chart ()
+  (exc-etaf-test--with-grid (12 6 120 24)
+    (let ((state exc-etaf--state)
+          (normal (exc-etaf--status-text
+                   exc-etaf--state exc--data-source nil)))
+      (exc-etaf-goto 1 1)
+      (exc-etaf-insert-chart 'column)
+      (should (eql exc-etaf--chart 0))
+      (should (string-match-p "Chart: untitled" (exc-etaf-test--text)))
+      (let* ((cols (exc-etaf--visible-cols
+                    state (etaf-value (exc-etaf--state-left state))))
+             (rows (exc-etaf--visible-rows
+                    state (etaf-value (exc-etaf--state-top state)) cols))
+             (ref (exc-etaf--slot-ref (cl-position 4 rows)
+                                      (cl-position 2 cols))))
+        (etaf-drag-step (exc-etaf--runtime) ref 0 0)
+        (should-not exc-etaf--chart)
+        (should (equal (exc-etaf--cursor) '(4 . 2)))
+        (should-not (string-match-p "Chart:" (exc-etaf-test--text)))
+        ;; The status bar tells the cells' figures again.
+        (should (equal (exc-etaf--status-text
+                        state exc--data-source nil)
+                       normal)))
+      ;; The chart itself is still the thing a press on it selects.
+      (etaf-drag-step (exc-etaf--runtime) 'exc-etaf-chart-0 0 0)
+      (should (eql exc-etaf--chart 0)))))
+
+;; ESC takes the selection off a chart, and is only a command while one is
+;; selected: otherwise it stays the prefix key it is everywhere in Emacs.
+(ert-deftest exc-etaf-escape-leaves-the-chart ()
+  (exc-etaf-test--with-grid (10 5)
+    (switch-to-buffer buffer)
+    (let ((state exc-etaf--state))
+      (should-not (key-binding [escape]))
+      (exc-etaf-goto 1 1)
+      (exc-etaf-insert-chart 'column)
+      (should (eq (key-binding [escape]) #'exc-etaf-chart-deselect))
+      (execute-kbd-macro [escape])
+      (should-not exc-etaf--chart)
+      (should-not (key-binding [escape]))
+      (should (keymapp (key-binding (kbd "ESC"))))
+      (should-not (string-match-p "Chart:" (exc-etaf-test--text)))
+      ;; ESC in an edit belongs to the edit, which it cancels; the chart
+      ;; the edit began on is already left, and one selected since stays.
+      (exc-etaf-insert-chart 'column)
+      (execute-kbd-macro (kbd "<f2>"))
+      (should (exc-etaf-test--session))
+      (should-not exc-etaf--chart)
+      (exc-etaf--select-chart state 0)
+      (execute-kbd-macro [escape])
+      (should-not (exc-etaf-test--session))
+      (should (eql exc-etaf--chart 0))
+      (should-not (etaf-value (exc-etaf--state-editing state))))))
+
+;; Starting an edit leaves the chart: by typing, with F2, or with RET.
+(ert-deftest exc-etaf-editing-a-cell-leaves-the-chart ()
+  (exc-etaf-test--with-grid (8 5)
+    (switch-to-buffer buffer)
+    (let ((state exc-etaf--state))
+      (dolist (start (list (lambda () (exc-etaf-test--type "7"))
+                           (lambda () (execute-kbd-macro (kbd "<f2>")))
+                           (lambda () (execute-kbd-macro (kbd "RET")))))
+        (exc-etaf-goto 1 1)
+        (exc-etaf-insert-chart 'column)
+        (should (eql exc-etaf--chart 0))
+        (funcall start)
+        (should (exc-etaf-test--session))
+        (should-not exc-etaf--chart)
+        (should-not (string-match-p "Chart:" (exc-etaf-test--text)))
+        (execute-kbd-macro [escape])
+        (should-not (exc-etaf-test--session))
+        (should-not exc-etaf--chart)
+        (should (equal (exc-get-raw-value-at exc--data-source 1 1) "2"))
+        ;; Take the chart away again for the next way of starting an edit.
+        (exc-etaf-undo)
+        (should-not (exc-charts exc--data-source))))))
+
+;; The keyboard moves the cursor and keeps the chart, so that C-c k m can
+;; be told where to put it.
+(ert-deftest exc-etaf-arrows-keep-the-chart-to-move-it-here ()
+  (exc-etaf-test--with-grid (10 6 120 24)
+    (switch-to-buffer buffer)
+    (let ((source exc--data-source))
+      (exc-etaf-goto 1 1)
+      (exc-etaf-insert-chart 'column)
+      (should (eql exc-etaf--chart 0))
+      (execute-kbd-macro (kbd "<down>"))
+      (execute-kbd-macro (kbd "<right>"))
+      (should (equal (exc-etaf--cursor) '(2 . 2)))
+      (should (eql exc-etaf--chart 0))
+      (execute-kbd-macro (kbd "C-c k m"))
+      (should (equal (plist-get (car (exc-charts source)) :anchor) '(2 . 2)))
+      (should (eql exc-etaf--chart 0)))))
+
 (ert-deftest exc-etaf-shows-calc-answers-when-they-come ()
   "A CALC cell computed in another Emacs is drawn again once its answer
 comes, with what reads it."

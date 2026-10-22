@@ -584,6 +584,10 @@ held; dragging extends the selection to the cell under the pointer."
         (let ((state exc-etaf--state))
           (pcase (exc-etaf--drag-phase gesture)
             ('start
+             ;; A pointer on a cell leaves the chart: what is clicked is
+             ;; the cell.  A pointer on the chart itself is taken by the
+             ;; chart's own node, and never comes here.
+             (exc-etaf--deselect-chart state)
              (exc-etaf-goto
               row col
               (memq 'shift (event-modifiers (plist-get gesture :event)))))
@@ -977,8 +981,24 @@ is on, and change nothing otherwise.")
 (defvar-local exc-etaf--typing-keys nil
   "Non-nil while `exc-etaf-typing-map' is active in the buffer.")
 
+(defvar exc-etaf-chart-map
+  (let ((map (make-sparse-keymap)))
+    ;; ESC takes the selection off a chart.  The map is only in force
+    ;; while a chart is selected: bound all the time, it would shadow the
+    ;; ESC prefix key, and with it ESC x and the rest of the meta keys.
+    (define-key map [escape] #'exc-etaf-chart-deselect)
+    map)
+  "Keymap of ESC while a floating chart is selected.
+A chart is left by ESC, by a click on a cell, by editing a cell, and by
+`exc-etaf-chart-deselect'.")
+
+(defvar-local exc-etaf--chart-keys nil
+  "Non-nil while `exc-etaf-chart-map' is active in the buffer, so while
+`exc-etaf--chart' selects a chart.")
+
 (defvar exc-etaf--emulation-alist
   (list (cons 'exc-etaf--typing-keys exc-etaf-typing-map)
+        (cons 'exc-etaf--chart-keys exc-etaf-chart-map)
         (cons 'exc-etaf--traverse-keys exc-etaf-traverse-map))
   "Entry of `emulation-mode-map-alists' carrying the sheet's own key maps.")
 
@@ -1777,10 +1797,21 @@ columns shown."
               (cons (plist-get frame :x0) (plist-get frame :y0)))))
     nodes))
 
+(defun exc-etaf--note-chart (index)
+  "Make INDEX the selected chart of the sheet, without drawing it again.
+The chart keys, ESC among them, follow the selection."
+  (setq exc-etaf--chart index
+        exc-etaf--chart-keys (and index t)))
+
 (defun exc-etaf--select-chart (state index)
   "Select floating chart INDEX of STATE's sheet; nil selects none."
-  (setq exc-etaf--chart index)
+  (exc-etaf--note-chart index)
   (exc-etaf--bump state))
+
+(defun exc-etaf--deselect-chart (state)
+  "Select none of STATE's charts, if one is selected, and draw it so."
+  (when exc-etaf--chart
+    (exc-etaf--select-chart state nil)))
 
 (defun exc-etaf--set-charts (state charts)
   "Give STATE's sheet the floating CHARTS, as one undo step."
@@ -2058,7 +2089,7 @@ the cells hold."
                       :range (apply #'exc-chart-svg-range-text range)
                       :by nil :title nil))
          (charts (append (exc-charts source) (list chart))))
-    (setq exc-etaf--chart (1- (length charts)))
+    (exc-etaf--note-chart (1- (length charts)))
     (exc-etaf--set-charts state charts)
     (message "Chart of %s added" (plist-get chart :range))))
 
@@ -2088,7 +2119,7 @@ FUNCTION gets a copy of the chart; nil from it deletes the chart."
          (index (exc-etaf--chart-index state))
          (charts (copy-tree (exc-charts (exc-etaf--source state))))
          (chart (funcall function (nth index charts))))
-    (setq exc-etaf--chart (and chart index))
+    (exc-etaf--note-chart (and chart index))
     (exc-etaf--set-charts
      state (if chart
                (progn (setf (nth index charts) chart) charts)
@@ -3004,6 +3035,9 @@ edit once the text is back to what the cell held."
                              source (nth 0 extent) (nth 1 extent))))
          (rule (and (not initial)
                     (exc-validation-at source (car cursor) (cdr cursor)))))
+    ;; An edit of a cell leaves the chart: the typing is for the cell, and
+    ;; the status bar goes back to telling the cells' figures.
+    (exc-etaf--deselect-chart state)
     (if (eq (nth 4 rule) 'list)
         (exc-etaf--choose state cursor rule)
       (unless (exc-etaf--state-session state)
@@ -3442,7 +3476,7 @@ shifts."
        (exc-etaf--bump state))
       (`(charts ,old ,new)
        (exc-set-charts source (if forward new old))
-       (setq exc-etaf--chart nil)
+       (exc-etaf--note-chart nil)
        (exc-etaf--bump state))
       (`(hidden ,old ,new)
        (let ((hidden (if forward new old)))
@@ -4973,7 +5007,7 @@ cursor moves to: display column is model column plus one."
 (defun exc-etaf-show-in-current-buffer (data-source &optional title)
   "Mount DATA-SOURCE in the current buffer.  TITLE replaces the grid title."
   ;; A chart selected on another sheet is not one of this sheet's.
-  (setq exc-etaf--chart nil)
+  (exc-etaf--note-chart nil)
   (let ((file-path exc--file-path)
         (old-title exc--title)
         (allow-elisp exc-allow-elisp)

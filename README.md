@@ -333,6 +333,9 @@ they change.
   the categories. `C-c k s` switches rows and columns.
 - Click a chart to select it and drag it to move it. It moves to the
   pixel across and by lines down, and stays where it is let go.
+- `Esc`, `C-c k x`, or a click on a cell takes the selection off a
+  chart, and so does starting to edit a cell. The arrow keys keep it, so
+  `C-c k m` can move the chart to the cursor.
 - Inserting or deleting rows and columns moves a chart with its cells. A
   chart anchored in frozen rows or columns stays put along that axis.
 - Charts are saved in the `.grid` file and written to xlsx as the
