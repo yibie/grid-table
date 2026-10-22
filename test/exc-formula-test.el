@@ -1446,27 +1446,106 @@
                    '("" 1 2 3)))
     (should (equal (exc-model-get-computed-value moved 0 1) 6))))
 
+(ert-deftest exc-a-spill-gives-up-cells-to-one-earlier-on-the-sheet ()
+  "An edit that makes a formula spill over cells another formula spills
+into gives them to the one earlier on the sheet, which shows #SPILL!
+then, as computing every cell does; the one that had them does not keep
+them, whatever order the pass reaches the two in."
+  (let ((model (exc-model-create 4 3 (make-list 4 (make-list 3 "")))))
+    ;; A3 spills over B4 and C4.
+    (exc-model-set-raw-value model 2 0 "=SEQUENCE(2,2)")
+    (should (equal (exc-model-get-computed-value model 3 1) 4))
+    ;; B1 spills over the same cells and comes first on the sheet.
+    (exc-model-set-raw-value model 0 1 "=SEQUENCE(3,2)")
+    (should (equal (exc-formula-test--all-values model)
+                   (exc-formula-test--fresh-values model)))
+    (should (equal (exc-model-get-computed-value model 0 1) 1))
+    (should (equal (exc-model-get-computed-value model 2 2) 6))
+    (should (equal (exc-model-get-computed-value model 3 1) ""))
+    (should (equal (exc-model-get-computed-value model 2 0) "#SPILL!"))
+    ;; And back again: what the first spilled shows once more.
+    (exc-model-set-raw-value model 0 1 "")
+    (should (equal (exc-formula-test--all-values model)
+                   (exc-formula-test--fresh-values model)))
+    (should (equal (exc-model-get-computed-value model 2 0) 1))
+    (should (equal (exc-model-get-computed-value model 3 1) 4))))
+
+(ert-deftest exc-cells-put-off-too-often-make-it-compute-every-cell ()
+  "A recalculation that keeps putting cells off does not keep them as
+they are: it computes every cell, and its answer is what computing every
+cell gives.  `exc-calc--again-limit' says how many rounds it takes
+before it does."
+  ;; It gives up past the limit, leaving nothing queued.
+  (let* ((model (exc-model-create 2 2 (make-list 2 (make-list 2 ""))))
+         (exc-calc--again-limit 0)
+         (exc-calc--again (list (cons model 0))))
+    (should-not (exc-calc--compute-again))
+    (should-not exc-calc--again))
+  ;; A pass that gives up is not trusted, even when no spill moved to ask
+  ;; for every cell: nothing incremental stands.
+  (let* ((model (exc-model-create 2 2 '(("1" "=A1*2") ("=A2+1" ""))))
+         (gave-up nil)
+         (changed nil)
+         (spy-pass (lambda (orig models)
+                     (let ((result (funcall orig models)))
+                       (setq gave-up (null result)
+                             changed exc-calc--spill-changed)
+                       result)))
+         (spy-again (lambda (&rest _) nil)))
+    (advice-add 'exc-calc--evaluate-dirty :around spy-pass)
+    (advice-add 'exc-calc--compute-again :override spy-again)
+    (unwind-protect
+        (exc-model-set-raw-value model 0 0 "3")
+      (advice-remove 'exc-calc--evaluate-dirty spy-pass)
+      (advice-remove 'exc-calc--compute-again spy-again))
+    (should gave-up)
+    (should-not changed)
+    (should (equal (exc-formula-test--all-values model)
+                   (exc-formula-test--fresh-values model)))
+    (should (equal (exc-model-get-computed-value model 0 1) 6)))
+  ;; The same for the edit that moves a spill: the answer stays what
+  ;; computing every cell gives.
+  (let* ((model (exc-model-create 4 3 (make-list 4 (make-list 3 ""))))
+         (gave-up 0))
+    (exc-model-set-raw-value model 2 0 "=SEQUENCE(2,2)")
+    (let ((exc-calc--again-limit 0)
+          (spy (lambda (orig)
+                 (let ((done (funcall orig)))
+                   (unless done (setq gave-up (1+ gave-up)))
+                   done))))
+      (advice-add 'exc-calc--compute-again :around spy)
+      (unwind-protect
+          (exc-model-set-raw-value model 0 1 "=SEQUENCE(3,2)")
+        (advice-remove 'exc-calc--compute-again spy)))
+    (should (> gave-up 0))
+    (should (equal (exc-formula-test--all-values model)
+                   (exc-formula-test--fresh-values model)))
+    (should (equal (exc-model-get-computed-value model 2 0) "#SPILL!"))))
+
 (ert-deftest exc-edits-give-what-computing-everything-gives-with-spills ()
-  (let* ((rows 10) (cols 5)
-         (formulas '("=SEQUENCE(2)" "=SEQUENCE(3,2)" "=A1:A3" "=SORT(B1:B4)"
-                     "=SUM(A1:B6)" "=A2+1" "=C4*2" "=COUNT(C1:C10)"
-                     "=ROWS(A1#)" "=B3" "=TRANSPOSE(A1:A3)"))
-         (pick (lambda ()
-                 (pcase (random 5)
-                   (0 (number-to-string (random 20)))
-                   ((or 1 2) (nth (random (length formulas)) formulas))
-                   (_ ""))))
-         model)
-    (random "grid-table-spills")
-    (setq model (exc-model-create
-                 rows cols
-                 (cl-loop repeat rows collect
-                          (cl-loop repeat cols collect (funcall pick)))))
-    (dotimes (_ 300)
-      (exc-model-set-raw-value model (random rows) (random cols)
-                                (funcall pick))
-      (should (equal (exc-formula-test--all-values model)
-                     (exc-formula-test--fresh-values model))))))
+  ;; The seeds that found a spill that moved without the cells it
+  ;; covers, and a cycle a spill takes apart and puts back.
+  (dolist (seed '("grid-table-spills" "exc-spills" "s5" "s11"))
+    (let* ((rows 10) (cols 5)
+           (formulas '("=SEQUENCE(2)" "=SEQUENCE(3,2)" "=A1:A3" "=SORT(B1:B4)"
+                       "=SUM(A1:B6)" "=A2+1" "=C4*2" "=COUNT(C1:C10)"
+                       "=ROWS(A1#)" "=B3" "=TRANSPOSE(A1:A3)"))
+           (pick (lambda ()
+                   (pcase (random 5)
+                     (0 (number-to-string (random 20)))
+                     ((or 1 2) (nth (random (length formulas)) formulas))
+                     (_ ""))))
+           model)
+      (random seed)
+      (setq model (exc-model-create
+                   rows cols
+                   (cl-loop repeat rows collect
+                            (cl-loop repeat cols collect (funcall pick)))))
+      (dotimes (_ 300)
+        (exc-model-set-raw-value model (random rows) (random cols)
+                                 (funcall pick))
+        (should (equal (exc-formula-test--all-values model)
+                       (exc-formula-test--fresh-values model)))))))
 
 (ert-deftest exc-edits-give-what-computing-everything-gives ()
   (let* ((rows 12) (cols 6)

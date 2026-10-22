@@ -341,6 +341,43 @@ done: one of them read while any is computed is on a cycle.")
      '(exc-calc-put-off grid-calc-put-off))
 (put 'exc-calc-put-off 'error-message "Formula put off")
 
+(defvar exc-calc--cycles nil
+  "The cells the recalculation in progress found on a cycle, by model.
+A cycle through a spill may come apart as the pass goes on, the spill
+that made it retracted and made again: these cells show #CYCLE! for the
+rest of the recalculation, so that the same spills give the same
+answers in any order the pass finds them.")
+
+(defun exc-calc--on-cycle-p (model index)
+  "Return non-nil when INDEX of MODEL is a cell the recalculation found
+on a cycle."
+  (when exc-calc--any-cycle
+    (when-let* ((cells (gethash model exc-calc--cycles)))
+      (gethash index cells))))
+
+(defun exc-calc--note-cycle (model index on)
+  "Note whether INDEX of MODEL is a cell the recalculation found on a cycle."
+  (when exc-calc--cycles
+    (if on
+        (progn (setq exc-calc--any-cycle t)
+               (puthash index t
+                        (or (gethash model exc-calc--cycles)
+                            (puthash model (make-hash-table)
+                                     exc-calc--cycles))))
+      (when-let* ((cells (gethash model exc-calc--cycles)))
+        (remhash index cells)))))
+
+(defvar exc-calc--any-cycle nil
+  "Non-nil once the recalculation in progress has found a cycle.")
+
+(defvar exc-calc--aborted nil
+  "The formulas a cycle stopped while a blank cell was being filled.
+A list of (MODEL . INDEX), and nil when a formula is not being computed
+to fill a blank cell.")
+
+(defvar exc-calc--undoing nil
+  "Non-nil while a formula is computed to fill the blank cell that reads it.")
+
 (defun exc-calc--compute-cell (model index)
   "Compute the cell at INDEX of MODEL unless this pass already did.
 A formula that fails gives its cell one of `exc-calc-error-values'
@@ -380,7 +417,23 @@ Signal `exc-calc-put-off' when its formula would go too deep."
        ;; it spills; that formula is computed first, and writes it.
        (when (equal (exc-cell-raw-input cell) "")
          (dolist (anchor (exc-calc--spill-wanted model index))
-           (exc-calc--compute-cell model anchor)))
+           (let ((exc-calc--aborted nil)
+                 (exc-calc--undoing t))
+             (condition-case nil
+                 (exc-calc--compute-cell model anchor)
+               (exc-calc-cycle
+                ;; It reads the cell it would fill, which reads it: the
+                ;; cycle is there only because the cell is read through
+                ;; a spill that is not there yet.  The cell stands
+                ;; blank, and the formulas it stopped are computed
+                ;; again, once the cell has been.
+                (let ((aborted exc-calc--aborted))
+                  (setq exc-calc--aborted nil exc-calc--undoing nil)
+                  (dolist (step aborted)
+                    (exc-calc--note-cycle (car step) (cdr step) nil)
+                    (exc-calc--set-pass-state
+                     (exc-calc--pass-of (car step)) (cdr step) nil)
+                    (cl-pushnew step exc-calc--again :test #'equal))))))))
        (unless (eq (exc-calc--pass-state pass index) 'done)
          (exc-calc--compute-own-cell model index cell pass))))))
 
@@ -398,6 +451,16 @@ PASS is MODEL's state in the recalculation in progress."
   (when (and exc-calc--put-off
              (> exc-calc--depth (+ exc-calc--put-off exc-calc--deepest)))
     (signal 'exc-calc-put-off (cons model index)))
+  (if (and exc-calc--any-cycle (exc-calc--on-cycle-p model index))
+      (progn
+        (exc-calc--spill-retract model index)
+        (set-exc-cell-computed-value cell "#CYCLE!")
+        (exc-calc--set-pass-state pass index 'done))
+    (exc-calc--compute-own-cell-1 model index cell pass)))
+
+(defun exc-calc--compute-own-cell-1 (model index cell pass)
+  "Compute CELL, the cell at INDEX of MODEL, which is on no cycle yet.
+PASS is MODEL's state in the recalculation in progress."
   (exc-calc--set-pass-state pass index 'visiting)
        (let ((raw (exc-cell-raw-input cell))
              cycle-head)
@@ -436,8 +499,12 @@ PASS is MODEL's state in the recalculation in progress."
                       (exc-calc--spill model index value))
                      (t (exc-calc--spill-retract model index)
                         (if raw-value (exc-calc--store value) value))))
-                (exc-calc-cycle (exc-calc--spill-retract model index)
-                                 (setq cycle-head (cdr err)) "#CYCLE!")
+                (exc-calc-cycle (exc-calc--note-cycle model index t)
+                                (when exc-calc--undoing
+                                  (cl-pushnew (cons model index)
+                                              exc-calc--aborted :test #'equal))
+                                (exc-calc--spill-retract model index)
+                                (setq cycle-head (cdr err)) "#CYCLE!")
                 ;; Computed again once what it waits on is
                 (exc-calc-put-off
                  (exc-calc--set-pass-state pass index (cons 'waiting (cdr err)))
@@ -635,16 +702,34 @@ across, and a cell past the values shows #N/A, as in a spreadsheet."
                   (exc-calc-err "#N/A"))))))
     (exc-calc-array--make rows cols data)))
 
+(defun exc-calc--spill-holds-p (index source)
+  "Return non-nil when the spill of SOURCE keeps the cell INDEX would take."
+  (< source index))
+
 (defun exc-calc--spill-taken-p (model index cells state)
   "Return non-nil when a spill from INDEX of MODEL over CELLS is in the way.
 A cell holding something, one another formula spills into, or a merged
-cell is; so is a merge at INDEX itself.  STATE is MODEL's spill state."
+cell is; so is a merge at INDEX itself.  STATE is MODEL's spill state.
+Two formulas may each want a cell: the one earlier on the sheet keeps
+it, and the later shows #SPILL!.  One earlier that is not computed yet
+may spill nothing, so the cell stands as taken for now, and both are
+computed again once the pass has been."
   (let ((width (exc-data-model-cols model))
-        (all-cells (exc-data-model-cells model)))
+        (all-cells (exc-data-model-cells model))
+        (pass (and exc-calc--pass (gethash model exc-calc--pass))))
     (or (cl-some (lambda (at)
                    (or (not (equal (exc-cell-raw-input (aref all-cells at)) ""))
                        (let ((source (gethash at (aref state 1))))
-                         (and source (/= source index)))
+                         (and source (/= source index)
+                              (exc-calc--spill-holds-p index source)
+                              (progn
+                                (unless (eq (exc-calc--pass-state pass source)
+                                            'done)
+                                  (cl-pushnew (cons model source)
+                                              exc-calc--again :test #'equal)
+                                  (cl-pushnew (cons model index)
+                                              exc-calc--again :test #'equal))
+                                t)))
                        (exc-model-find-merge model (/ at width) (% at width))))
                  cells)
         (and (exc-model-find-merge model (/ index width) (% index width)) t))))
@@ -689,12 +774,12 @@ the cells of ARRAY's size that hold nothing and is never blocked."
          (cells (exc-calc--spill-cells model index rows cols))
          (all-cells (exc-data-model-cells model))
          (old (gethash index (aref state 0)))
+         (pass (exc-calc--pass-of model))
          (blocked
-          (and
-           (not fixed)
-           (or (> (+ top rows) (exc-data-model-rows model))
-              (> (+ left cols) width)
-              (exc-calc--spill-taken-p model index cells state))))
+          (and (not fixed)
+               (or (> (+ top rows) (exc-data-model-rows model))
+                   (> (+ left cols) width)
+                   (exc-calc--spill-taken-p model index cells state))))
          (new (list rows cols (and blocked t))))
     (if (and (= rows 1) (= cols 1) (not fixed))
         (progn (exc-calc--spill-retract model index)
@@ -707,22 +792,26 @@ the cells of ARRAY's size that hold nothing and is never blocked."
         (cl-pushnew index (gethash at (aref state 2))))
       (if blocked
           "#SPILL!"
-        (let ((pass (exc-calc--pass-of model)))
-          (dolist (at cells)
-            (let* ((cell (aref all-cells at))
-                   (taken (or (not (equal (exc-cell-raw-input cell) ""))
-                              (let ((source (gethash at (aref state 1))))
-                                (and source (/= source index)))))
-                   (value (exc-calc--store
-                           (exc-calc-aref array (- (/ at width) top)
-                                           (- (% at width) left)))))
-              (unless taken
-                (when (and (eq (exc-calc--pass-state pass at) 'done)
-                           (not (equal value (exc-cell-computed-value cell))))
-                  (setq exc-calc--spill-changed t))
-                (puthash at index (aref state 1))
-                (set-exc-cell-computed-value cell value)
-                (exc-calc--set-pass-state pass at 'done)))))
+        (dolist (at cells)
+          (let* ((cell (aref all-cells at))
+                 (source (gethash at (aref state 1)))
+                 (taken (or (not (equal (exc-cell-raw-input cell) ""))
+                            (and source (/= source index)
+                                 (exc-calc--spill-holds-p index source))))
+                 (value (exc-calc--store
+                         (exc-calc-aref array (- (/ at width) top)
+                                         (- (% at width) left)))))
+            ;; The formula that had the cell shows #SPILL! now: compute
+            ;; it again to show it.
+            (when (and source (/= source index) (not taken))
+              (cl-pushnew (cons model source) exc-calc--again :test #'equal))
+            (unless taken
+              (when (and (eq (exc-calc--pass-state pass at) 'done)
+                         (not (equal value (exc-cell-computed-value cell))))
+                (setq exc-calc--spill-changed t))
+              (puthash at index (aref state 1))
+              (set-exc-cell-computed-value cell value)
+              (exc-calc--set-pass-state pass at 'done))))
         (exc-calc--store (exc-calc-aref array 0 0))))))
 
 ;;;----------------------------------------------------------------------
@@ -1065,11 +1154,48 @@ would take longer than computing them all."
         (pcase-dolist (`(,model . ,state) states)
           (let (indices)
             (maphash (lambda (index _state) (push index indices)) state)
-            (dolist (index indices)
+            ;; In sheet order, as computing every cell does, so that the
+            ;; spills found are those that order finds.
+            (dolist (index (sort indices #'<))
               (exc-calc--compute-cell model index))))
-        ;; A spill that moved may cover cells whose readers were not
-        ;; computed: compute everything.
-        (not exc-calc--spill-changed)))))
+        ;; A formula whose spill gave a cell to one earlier on the sheet
+        ;; shows #SPILL! now, and one a cycle stopped shows what it is
+        ;; worth now that the cell it read has been computed: compute
+        ;; each again.  Cells still to compute after that many rounds
+        ;; are not kept as they were: this returns nil, and every cell
+        ;; is computed.
+        (and (exc-calc--compute-again)
+             ;; A spill that moved may cover cells whose readers were not
+             ;; computed: compute everything.
+             (not exc-calc--spill-changed))))))
+
+(defvar exc-calc--again nil
+  "The formulas the recalculation in progress computes again at its end.
+A list of (MODEL . INDEX): one whose spill gave a cell to a formula
+earlier on the sheet, and one a cycle stopped while filling a blank
+cell.  Their cells may be behind what the pass has already computed.")
+
+(defvar exc-calc--again-limit 100
+  "How many times the recalculation computes again the cells it put off.
+Past it, it computes every cell instead: what it left as it was may not
+be what computing every cell gives.")
+
+(defun exc-calc--compute-again ()
+  "Compute again the cells of `exc-calc--again', in sheet order.
+Each may put more there, one after another, up to
+`exc-calc--again-limit' times.  Return nil when they are past that, with
+cells still to compute, for whoever called to compute every cell."
+  (let ((rounds 0))
+    (while (and exc-calc--again (< rounds exc-calc--again-limit))
+      (setq rounds (1+ rounds))
+      (dolist (cell (sort (prog1 (nreverse exc-calc--again)
+                            (setq exc-calc--again nil))
+                          (lambda (one other) (< (cdr one) (cdr other)))))
+        (when-let* ((pass (gethash (car cell) exc-calc--pass)))
+          (exc-calc--set-pass-state pass (cdr cell) nil)
+          (exc-calc--compute-cell (car cell) (cdr cell)))))
+    (prog1 (null exc-calc--again)
+      (setq exc-calc--again nil))))
 
 (defvar exc-calc--exact-indexes)
 
@@ -1083,21 +1209,32 @@ every cell is, once."
   (let ((exc-calc--pass (make-hash-table :test 'eq))
         (exc-calc--depth 0)
         (exc-calc--spill-changed nil)
+        (exc-calc--again nil)
+        (exc-calc--aborted nil)
+        (exc-calc--cycles (make-hash-table :test 'eq))
+        (exc-calc--any-cycle nil)
         (exc-calc--exact-indexes (make-hash-table :test 'eq :weakness 'key)))
     (unless (and exc-calc-incremental (not everything)
                  (exc-calc--evaluate-dirty models))
       ;; A cell read before a spill reached it is computed again, with
       ;; the spills now known; twice is enough unless spills chase each
-      ;; other.
-      (let ((passes 0))
+      ;; other, or the pass keeps putting cells off.
+      (let ((passes 0)
+            (put-off nil))
         (while (progn
-                 (setq exc-calc--spill-changed nil)
+                 (setq exc-calc--spill-changed nil
+                       exc-calc--again nil)
                  (clrhash exc-calc--pass)
                  (clrhash exc-calc--exact-indexes)
                  (dolist (model models)
                    (dotimes (i (length (exc-data-model-cells model)))
                      (exc-calc--compute-cell model i)))
-                 (and exc-calc--spill-changed (< (cl-incf passes) 3)))))
+                 ;; Cells it left to compute again make this pass not one
+                 ;; that computed every cell to the end: compute every
+                 ;; cell once more.
+                 (setq put-off (not (exc-calc--compute-again)))
+                 (and (or exc-calc--spill-changed put-off)
+                      (< (cl-incf passes) 3)))))
       (if exc-calc-incremental
           (exc-calc--build-graphs models)
         (mapc #'exc-calc-forget models)))))

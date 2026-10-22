@@ -675,7 +675,8 @@ own row or column, as from any range."
   (let* ((model (exc-calc-ref-model reference))
          (row (exc-calc-ref-top reference))
          (col (exc-calc-ref-left reference))
-         (raw (exc-calc--raw-at reference)))
+         (raw (exc-calc--raw-at reference))
+         (index (+ (* row (exc-data-model-cols model)) col)))
     (or (and (= (exc-calc-ref-rows reference) 1)
              (= (exc-calc-ref-cols reference) 1)
              (exc-calc--array-range-reference model row col))
@@ -683,19 +684,18 @@ own row or column, as from any range."
         ;; A formula whose values cannot spill names no cells.
         (if (not (and (= (exc-calc-ref-rows reference) 1)
                       (= (exc-calc-ref-cols reference) 1)
-                      (exc-calc--formula-p raw)
-                      (not (exc-calc--spill-blocked-p
-                            model (+ (* row (exc-data-model-cols model)) col)))))
+                      (exc-calc--formula-p raw)))
             (exc-calc-err "#REF!")
-          (let* ((value (let ((exc-calc--here (list model row col))
-                              (exc-calc--array-context t)
-                              (exc-calc--locals nil)
-                              (exc-calc--names-open nil))
-                          (exc-calc--deref
-                           (exc-calc--eval model (exc-parser-parse (substring raw 1))))))
-                 (rows (if (exc-calc-array-p value) (exc-calc-array-rows value) 1))
-                 (cols (if (exc-calc-array-p value) (exc-calc-array-cols value) 1)))
-            (exc-calc-ref--make model row col (+ row rows -1) (+ col cols -1)))))))
+          ;; The formula is computed first, as reading its cell would:
+          ;; what it spills is what the cells show, whichever of them a
+          ;; formula reached first.
+          (when exc-calc--pass
+            (exc-calc--compute-cell model index))
+          (pcase (and (gethash model exc-calc--spills)
+                      (gethash index (aref (exc-calc--spill-state model) 0)))
+            (`(,rows ,cols nil)
+             (exc-calc-ref--make model row col (+ row rows -1) (+ col cols -1)))
+            (_ (exc-calc-err "#REF!")))))))
 
 (exc-calc-define anchorarray ((reference ref))
   "All the values the formula at REFERENCE gives, as A1# names them."
