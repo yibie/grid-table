@@ -96,6 +96,50 @@ Compile again after every pull, so a stale `.elc` file is not loaded in
 place of the new source.  If `ecss`, `ebox` or `etaf` is missing, opening
 a grid says which one.
 
+### With straight, Doom or elpaca
+
+These fetch and compile each package for you, so the clone, `load-path`
+and `make` steps above are not needed.  The plugins live in `plugins/`,
+which a default recipe leaves out, so give exc.el's recipe `:files`.
+
+straight.el:
+
+```elisp
+(straight-use-package '(ecss :host github :repo "emacs-taf/ecss"))
+(straight-use-package '(ebox :host github :repo "emacs-taf/ebox"))
+(straight-use-package '(etaf :host github :repo "emacs-taf/etaf"))
+(straight-use-package
+ '(exc :host github :repo "yibie/exc.el" :files (:defaults "plugins/*")))
+(require 'exc-xlsx)  ; optional
+```
+
+Doom, in `packages.el`, then `doom sync`:
+
+```elisp
+(package! ecss :recipe (:host github :repo "emacs-taf/ecss"))
+(package! ebox :recipe (:host github :repo "emacs-taf/ebox"))
+(package! etaf :recipe (:host github :repo "emacs-taf/etaf"))
+(package! exc :recipe (:host github :repo "yibie/exc.el"
+                       :files (:defaults "plugins/*")))
+```
+
+and in `config.el`:
+
+```elisp
+(use-package! exc
+  :config
+  (require 'exc-xlsx))  ; optional
+```
+
+elpaca:
+
+```elisp
+(elpaca (ecss :host github :repo "emacs-taf/ecss"))
+(elpaca (ebox :host github :repo "emacs-taf/ebox"))
+(elpaca (etaf :host github :repo "emacs-taf/etaf"))
+(elpaca (exc :host github :repo "yibie/exc.el" :files (:defaults "plugins/*")))
+```
+
 ### The xlsx module
 
 xlsx files are read and written by a dynamic module written in Rust

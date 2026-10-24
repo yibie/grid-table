@@ -87,6 +87,50 @@ make -C ~/src/exc.el compile ETAF_SRC=$HOME/src
 每次拉取新版本后都要重新编译，以免加载到过期的 `.elc` 而不是新的源码。
 缺少 `ecss`、`ebox` 或 `etaf` 时，打开表格会提示缺的是哪一个。
 
+### 用 straight、Doom 或 elpaca 安装
+
+它们会替你下载并编译每个包，上面的克隆、`load-path` 和 `make` 几步都不用做。
+插件在 `plugins/` 目录里，默认的 recipe 不会收进来，所以要给 exc.el 的 recipe
+加上 `:files`。
+
+straight.el：
+
+```elisp
+(straight-use-package '(ecss :host github :repo "emacs-taf/ecss"))
+(straight-use-package '(ebox :host github :repo "emacs-taf/ebox"))
+(straight-use-package '(etaf :host github :repo "emacs-taf/etaf"))
+(straight-use-package
+ '(exc :host github :repo "yibie/exc.el" :files (:defaults "plugins/*")))
+(require 'exc-xlsx)  ; 可选
+```
+
+Doom，写在 `packages.el` 里，然后运行 `doom sync`：
+
+```elisp
+(package! ecss :recipe (:host github :repo "emacs-taf/ecss"))
+(package! ebox :recipe (:host github :repo "emacs-taf/ebox"))
+(package! etaf :recipe (:host github :repo "emacs-taf/etaf"))
+(package! exc :recipe (:host github :repo "yibie/exc.el"
+                       :files (:defaults "plugins/*")))
+```
+
+`config.el` 里：
+
+```elisp
+(use-package! exc
+  :config
+  (require 'exc-xlsx))  ; 可选
+```
+
+elpaca：
+
+```elisp
+(elpaca (ecss :host github :repo "emacs-taf/ecss"))
+(elpaca (ebox :host github :repo "emacs-taf/ebox"))
+(elpaca (etaf :host github :repo "emacs-taf/etaf"))
+(elpaca (exc :host github :repo "yibie/exc.el" :files (:defaults "plugins/*")))
+```
+
 ### xlsx 模块
 
 xlsx 文件由一个用 Rust 写的动态模块读写（`plugins/xlsx/`），所以 Emacs 必须
