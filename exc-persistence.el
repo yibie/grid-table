@@ -4,6 +4,25 @@
 (require 'cl-lib)
 (require 'exc-chart-svg)
 
+;; The getters and setters of a data source are in exc.el, which loads
+;; this file: requiring it here would be a circular load.
+(declare-function exc-get-column-count "exc")
+(declare-function exc-get-row-count "exc")
+(declare-function exc-get-raw-value-at "exc")
+(declare-function exc-get-merges "exc")
+(declare-function exc-get-column-widths "exc")
+(declare-function exc-frozen "exc")
+(declare-function exc-hidden "exc")
+(declare-function exc-filters "exc")
+(declare-function exc-validations "exc")
+(declare-function exc-charts "exc")
+(declare-function exc-set-column-width "exc")
+(declare-function exc-set-frozen "exc")
+(declare-function exc-set-hidden "exc")
+(declare-function exc-set-filters "exc")
+(declare-function exc-set-validations "exc")
+(declare-function exc-set-charts "exc")
+
 ;;;----------------------------------------------------------------------
 ;;; The tag a saved file starts with
 ;;;----------------------------------------------------------------------

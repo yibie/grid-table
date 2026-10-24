@@ -98,7 +98,7 @@
                      (list (/ len 4) (/ len 2) (/ (* 3 len) 4))))
          (target (if (multibyte-string-p content)
                      content
-                   (string-make-multibyte (copy-sequence content))))
+                   (string-to-multibyte (copy-sequence content))))
          (grid-char (if (multibyte-string-p target) ?· ?.)))
     (dolist (pos positions target)
       (when (and (> pos 0) (< pos len))
@@ -124,7 +124,7 @@
 ;;;----------------------------------------------------------------------
 
 (defun exc-chart--nice-number (x round-p)
-  "Return a 'nice' number close to X. If ROUND-P, round; else ceiling."
+  "Return a \\='nice\\=' number close to X. If ROUND-P, round; else ceiling."
   (let* ((exp (floor (log x 10)))
          (f (/ x (expt 10.0 exp)))
          (nf (cond
@@ -411,7 +411,8 @@ If CROP-BOUNDS is non-nil, crop to actual content bounds."
    (t (list 0))))
 
 (defun exc-chart--format-number (num)
-  "Format number for axis labels. Uses integer format if it's effectively an integer."
+  "Format number for axis labels.
+Uses integer format if it's effectively an integer."
   (if (= num (truncate num))
       (number-to-string (truncate num))
     (format "%.1f" num)))
@@ -449,7 +450,7 @@ Returns the final width including padding."
   (let ((result (copy-sequence line-content))
         (positions (list (/ width 4) (/ width 2) (/ (* 3 width) 4))))
     (unless (multibyte-string-p result)
-      (setq result (string-make-multibyte result)))
+      (setq result (string-to-multibyte result)))
     (when (and (not (multibyte-string-p result)) (> grid-char 255))
       (setq grid-char ?.))
     (dolist (pos positions)
@@ -474,7 +475,7 @@ Returns (y-tick-labels y-label-width grid-rows)."
                               y-ticks)))
       (list y-tick-labels y-label-width grid-rows))))
 
-(defun exc-chart--build-chart-body-line (i content-lines height width padding y-label-width
+(defun exc-chart--build-chart-body-line (i content-lines _height width padding y-label-width
                                            y-tick-labels grid-rows custom-y-labels
                                            draw-grid border-style border-type)
   "Build a single chart body line with axis."
@@ -661,7 +662,6 @@ Uses ASCII character (#) for bars to ensure perfect alignment."
          (max-val (if vals (apply #'max vals) 0))
          ;; Use Unicode Dark Shade character for better visual appearance
          (bar-char ?▓)
-         (labels-str (mapcar (lambda (x) (format "%s" x)) labels))
          (val-strs (mapcar (lambda (v) (exc-chart--format-number v)) vals))
          (val-col-width (+ 1 (apply #'max 0 (mapcar #'length val-strs))))
          (bar-area-width (max 5 (- total-width val-col-width)))
@@ -715,10 +715,8 @@ CHART-HEIGHT: Total height of the chart.
 FILL-CHAR: Character to use for bars.
 COLORS: Optional list of colors for each column.
 Returns a list of strings (from top to bottom)."
-  (let* ((content-width (* count (+ col-width spacing)))
-         (lines '())
-         (bar-char (if (characterp fill-char) fill-char ?█))
-         (cell-width (+ col-width spacing)))
+  (let* ((lines '())
+         (bar-char (if (characterp fill-char) fill-char ?█)))
     ;; Generate lines from top (y = chart-height-1) to bottom (y = 0)
     (dotimes (y chart-height)
       (let* ((row-from-bottom (- chart-height 1 y))
@@ -1086,7 +1084,6 @@ Uses Kernel Density Estimation with Gaussian kernel."
              (max-density (max 0.0001 (apply #'max density-values)))
              ;; Create Braille canvas
              (canvas (make-hash-table :test 'equal))
-             (pixel-w (* width 2))
              (pixel-h (* height 4)))
         ;; Draw the density curve
         (cl-loop for i from 0 below width
@@ -1187,7 +1184,8 @@ Uses Kernel Density Estimation with Gaussian kernel."
 (exc-calc-defun BOXPLOT (&rest args)
   "Formula to create a Boxplot chart object.
 Usage: =BOXPLOT(series1, series2, ..., [title], [width])
-All list/range arguments before the first string (title) or number (width) are treated as data series."
+All list/range arguments before the first string (title) or number
+(width) are treated as data series."
   (ignore model)
   (when (< (length args) 1)
     (error "BOXPLOT requires at least one series"))
@@ -1219,7 +1217,8 @@ All list/range arguments before the first string (title) or number (width) are t
 (exc-calc-defun MULTILINE (&rest args)
   "Formula to create a multi-series line chart.
 Usage: =MULTILINE(x-data, series1, series2, ..., [title], [width], [height])
-First arg is x-data, then multiple series (lists/ranges), then optional title/width/height."
+First arg is x-data, then multiple series (lists/ranges), then optional
+title/width/height."
   (ignore model)
   (when (< (length args) 2)
     (error "MULTILINE requires at least x-data and one series"))

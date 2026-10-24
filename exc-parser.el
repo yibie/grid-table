@@ -4,6 +4,10 @@
 (require 'cl-lib)
 (require 'exc-obsolete)
 
+;; The formula evaluator is in exc-calc.el, which loads this file:
+;; requiring it here would be a circular load.
+(declare-function exc-calc-eval-ast "exc-calc")
+
 ;;;----------------------------------------------------------------------
 ;;; Token Definitions
 ;;;----------------------------------------------------------------------
@@ -39,7 +43,7 @@ stands for one; group 3 is a name written bare.  Either may be two
 names joined by a colon, a reference through the sheets from the one to
 the other (Sheet1:Sheet3!A1); group 4 is then the second bare name.
 A bare name may follow the number of another workbook, as [1]Sheet4!A1.
-Two names each in apostrophes, as LibreOffice writes 'a b':'c d'!A1,
+Two names each in apostrophes, as LibreOffice writes \\='a b\\=':\\='c d\\='!A1,
 put the second in group 2.")
 
 (defconst exc-parser--cells-regexp
@@ -590,7 +594,8 @@ token; elsewhere it separates tokens and is dropped."
     (cons left remaining-tokens)))
 
 (defun exc-parser-parse-equality-expression (tokens)
-  "Parses equality expressions (=, <>, <, >, <=, >=). Returns (ast . remaining-tokens)."
+  "Parses equality expressions (=, <>, <, >, <=, >=).
+Returns (ast . remaining-tokens)."
   (let* ((result (exc-parser-parse-comparison-expression tokens))
          (left (car result))
          (remaining-tokens (cdr result)))
@@ -801,7 +806,8 @@ Returns (ast . remaining-tokens).  See `exc-parser--starts'."
     result))
 
 (defun exc-parser--parse-primary (tokens)
-  "Parses primary expressions (numbers, strings, cell references, function calls, parenthesized expressions)."
+  "Parses primary expressions (numbers, strings, cell references,
+function calls, parenthesized expressions)."
   (when (null tokens)
     (error "Unexpected end of expression"))
 

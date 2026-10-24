@@ -4,15 +4,21 @@
 (require 'exc-data-model)
 (require 'exc-obsolete)
 
+;; Declared here, set beside the workbooks below: the data source
+;; functions a change to a sheet rewrites the formulas of the others for.
+(defvar exc-workbook--changing-keys)
+
 ;;;----------------------------------------------------------------------
 ;;; Default Data Source Implementation (using a function bundle)
 ;;;----------------------------------------------------------------------
 
 (defun make-exc-default-data-source (headers initial-data &optional title merges)
   "Create a default data source instance.
-This data source is a hash-table containing functions for the exc to call.
+This data source is a hash-table containing functions for the exc to
+call.
 HEADERS is a list of strings.
-INITIAL-DATA is a list of lists of strings. The HEADERS will be prepended to INITIAL-DATA. The HEADERS are now the first data row.
+INITIAL-DATA is a list of lists of strings.  The HEADERS will be
+prepended to INITIAL-DATA.  The HEADERS are now the first data row.
 TITLE is an optional string for the grid title."
   (let* ((rows (length initial-data))
          (cols (length headers))

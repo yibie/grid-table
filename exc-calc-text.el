@@ -325,10 +325,11 @@ WANTED may hold wildcards: * for any characters and ? for any one."
 MODE 1 ignores case; MODE other than 0 or 1 is #VALUE!.
 INSTANCE is 1 when nil; a negative one counts from the end, and one with
 a fraction is taken down to the whole number below it.  One given that
-counts past where the shortest DELIMITER could stand in TEXT is #VALUE!.  END 1 takes the end of TEXT
-for a delimiter after the last, or its start before the first when
-INSTANCE is negative.  MISSING, a lazy argument, is given when there is
-no such delimiter, an empty one as empty text; #N/A without it."
+counts past where the shortest DELIMITER could stand in TEXT is
+#VALUE!.  END 1 takes the end of TEXT for a delimiter after the last,
+or its start before the first when INSTANCE is negative.  MISSING, a
+lazy argument, is given when there is no such delimiter, an empty one as
+empty text; #N/A without it."
   (let* ((delimiters (exc-calc--texts (list delimiter)))
          (given instance)
          (instance (if instance (floor instance) 1))

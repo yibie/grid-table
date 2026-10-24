@@ -4,6 +4,19 @@
 (require 'exc-plugins)
 (require 'exc-obsolete)
 
+;; The grid buffer itself is in exc.el, the default data source in
+;; exc-data-source.el and the CSV one in the exc-csv plugin: this file
+;; is what those load, so requiring them here would close the circle.
+(declare-function exc--show-grid-in-current-buffer "exc")
+(declare-function make-exc-default-data-source "exc-data-source")
+(declare-function exc-csv-create-data-source "exc-csv")
+
+;; The grid's state, buffer-local in exc.el, where the grid itself is;
+;; declared here so that reading or setting it is not a free one.
+(defvar exc--data-source)
+(defvar exc--title)
+(defvar exc--file-path)
+
 ;;;----------------------------------------------------------------------
 ;;; API Configuration
 ;;;----------------------------------------------------------------------
@@ -90,7 +103,7 @@ Supported arguments:
     ;; Create the grid
     (exc--create-grid data-source columns key-bindings title file-path)))
 
-(defun exc--create-grid (data-source columns key-bindings title file-path)
+(defun exc--create-grid (data-source _columns key-bindings title file-path)
   "Internal function to create a grid buffer."
   (let ((buffer (generate-new-buffer "*Exc*")))
     (with-current-buffer buffer
@@ -119,8 +132,7 @@ not overridden this way."
   (use-local-map (make-composed-keymap (make-sparse-keymap)
                                        (current-local-map)))
   (dolist (category bindings)
-    (let ((category-name (car category))
-          (key-bindings (cdr category)))
+    (let ((key-bindings (cdr category)))
       (dolist (binding key-bindings)
         (let ((key (car binding))
               (command (cdr binding)))
@@ -189,7 +201,7 @@ Without a file to save to, ask for one, as `exc-save-as' does."
 (defun exc-example-csv (file-path)
   "Example of CSV grid usage."
   (interactive "fCSV file: ")
-  (when-let ((data-source (exc-csv-create-data-source file-path)))
+  (when-let* ((data-source (exc-csv-create-data-source file-path)))
     (exc-api-create
      :data-source data-source
      :plugins '("csv")

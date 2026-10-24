@@ -29,7 +29,8 @@ PLUGIN should be a symbol representing the plugin name."
 (defun exc-register-cell-renderer (type renderer-func)
   "Register a cell renderer for a specific type.
 TYPE is a symbol representing the cell type.
-RENDERER-FUNC is a function that takes (value cell-props) and returns formatted text."
+RENDERER-FUNC is a function that takes (value cell-props) and returns
+formatted text."
   (puthash type renderer-func exc-cell-renderers)
   (message "Cell renderer registered for type: %s" type))
 
@@ -66,17 +67,17 @@ CELL-PROPS are optional cell properties."
 ;;; Built-in Cell Renderers
 ;;;----------------------------------------------------------------------
 
-(defun exc-text-renderer (value &optional cell-props)
+(defun exc-text-renderer (value &optional _cell-props)
   "Default text renderer."
   (format "%s" value))
 
-(defun exc-number-renderer (value &optional cell-props)
+(defun exc-number-renderer (value &optional _cell-props)
   "Number renderer with formatting."
   (if (numberp value)
       (format "%.2f" value)
     (format "%s" value)))
 
-(defun exc-image-renderer (value &optional cell-props)
+(defun exc-image-renderer (value &optional _cell-props)
   "Image renderer for image paths."
   (if (and value (file-exists-p value))
       (format "[Image: %s]" (file-name-nondirectory value))

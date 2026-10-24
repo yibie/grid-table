@@ -793,10 +793,9 @@ With five arguments, merge TOP LEFT BOTTOM RIGHT."
 
 (defun exc-model-recalculate-all (model)
   "Recalculate all formula cells in the model by simple iteration.
-This is inefficient but guaranteed to terminate. Includes a circuit breaker."
+This is inefficient but guaranteed to terminate."
   (let* ((cells-vec (exc-data-model-cells model))
-         (total-cells (length cells-vec))
-         (max-iterations (* total-cells 2))) ; Circuit breaker: max iterations = 2 * total cells
+         (total-cells (length cells-vec)))
     ;; Use exc-calc to evaluate all formulas
     (exc-calc-evaluate model)
     (let (cell-list)
@@ -875,7 +874,7 @@ both directions."
 
 (defun exc-model-sort-by-column (model col-idx sort-order &optional whole)
   "Sorts the model's data rows based on the values in COL-IDX.
-SORT-ORDER can be 'ascending or 'descending.
+SORT-ORDER can be \\='ascending or \\='descending.
 Returns a new model instance with sorted data.
 
 COL-IDX can also be a list of keys, (COL . ORDER) each: rows that the
@@ -1064,7 +1063,8 @@ Returns a new model instance."
 
 (defun exc-model-delete-row (model row-idx)
   "Deletes the row at ROW-IDX (0-based) from the model.
-Returns a new model instance. Errors if ROW-IDX is invalid or only one row remains."
+Returns a new model instance.  Errors if ROW-IDX is invalid or only one
+row remains."
   (let* ((current-rows (exc-data-model-rows model))
          (current-cols (exc-data-model-cols model))
          (all-raw-values (exc-model-get-all-raw-values model))
@@ -1225,7 +1225,8 @@ Returns a new model instance."
 
 (defun exc-model-delete-column (model col-idx)
   "Deletes the column at COL-IDX (0-based) from the model.
-Returns a new model instance. Errors if COL-IDX is invalid or only one column remains."
+Returns a new model instance.  Errors if COL-IDX is invalid or only one
+column remains."
   (let* ((current-rows (exc-data-model-rows model))
          (current-cols (exc-data-model-cols model))
          (raw-rows (exc-model-get-all-raw-values model)))

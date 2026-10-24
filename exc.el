@@ -208,7 +208,8 @@ See `exc-read-entry' for how dates and percentages are read."
     (exc-set-raw-value-at source row col (car entry))))
 
 (defun exc-recalculate (source &optional everything)
-  "Bring the formulas of SOURCE, and of the sheets it shares a book with, up to date.
+  "Bring the formulas of SOURCE, and of the sheets it shares a book
+with, up to date.
 Only what changed and what reads it is computed, unless EVERYTHING is
 non-nil."
   (let ((workbook (exc-workbook-of source))
@@ -476,7 +477,8 @@ winning.  RULES, when given, saves fetching the rules for every cell."
   :group 'exc)
 
 (defcustom exc-title-decoration 'none
-  "Title decoration style above the table. When 'rule, draw a horizontal rule under the title."
+  "Title decoration style above the table.
+When \\='rule, draw a horizontal rule under the title."
   :type '(choice (const :tag "None" none)
                  (const :tag "Rule" rule))
   :group 'exc)
@@ -485,8 +487,11 @@ winning.  RULES, when given, saves fetching the rules for every cell."
 (defvar-local exc-allow-elisp nil
   "Buffer-local variable to enable elisp evaluation in table cells.
 
-If this is nil, elisp formulas are ignored. Set it to non-nil to enable evaluation of elisp formulas in tables.
-Warning: Only set this in trusted files! I am not responsible for any issues, damages, or bug reports caused by using this feature, and will not handle related issues.")
+If this is nil, elisp formulas are ignored.  Set it to non-nil to
+enable evaluation of elisp formulas in tables.
+Warning: Only set this in trusted files!  I am not responsible for any
+issues, damages, or bug reports caused by using this feature, and will
+not handle related issues.")
 (put 'exc-allow-elisp 'risky-local-variable t)
 
 
@@ -769,7 +774,7 @@ column ends the list."
 (defun exc-add-row (&optional row-idx)
   "Add a new row at ROW-IDX, or at the end if ROW-IDX is nil.
 If called interactively, adds a row below the current cell."
-  (interactive (list (when-let ((coords (exc-get-cell-at-point)))
+  (interactive (list (when-let* ((coords (exc-get-cell-at-point)))
                        (plist-get coords :slice-row))))
   (when exc--data-source
     (cl-block exc-add-row
@@ -796,7 +801,7 @@ If called interactively, adds a row below the current cell."
 (defun exc-delete-row (&optional row-idx)
   "Delete the row at ROW-IDX.
 If called interactively, deletes the current row."
-  (interactive (list (when-let ((coords (exc-get-cell-at-point)))
+  (interactive (list (when-let* ((coords (exc-get-cell-at-point)))
                        (plist-get coords :slice-row))))
   (when exc--data-source
     (cl-block exc-delete-row
@@ -836,7 +841,7 @@ If called interactively, deletes the current row."
 (defun exc-add-column (&optional col-idx)
   "Add a new column at COL-IDX, or at the end if COL-IDX is nil.
 If called interactively, adds a column to the right of the current cell."
-  (interactive (list (when-let ((coords (exc-get-cell-at-point)))
+  (interactive (list (when-let* ((coords (exc-get-cell-at-point)))
                        (plist-get coords :slice-col))))
   (when exc--data-source
     (cl-block exc-add-column
@@ -863,7 +868,7 @@ If called interactively, adds a column to the right of the current cell."
 (defun exc-delete-column (&optional col-idx)
   "Delete the column at COL-IDX.
 If called interactively, deletes the current column."
-  (interactive (list (when-let ((coords (exc-get-cell-at-point)))
+  (interactive (list (when-let* ((coords (exc-get-cell-at-point)))
                        (plist-get coords :slice-col))))
   (when exc--data-source
     (cl-block exc-delete-column
@@ -889,13 +894,13 @@ If called interactively, deletes the current column."
   "Insert a new row above the current row.
 In a sheet with a header row, nothing goes above that row."
   (interactive)
-  (when-let ((coords (exc-get-cell-at-point)))
+  (when-let* ((coords (exc-get-cell-at-point)))
     (exc-add-row (1- (plist-get coords :slice-row)))))
 
 (defun exc-insert-column-left ()
   "Insert a new column to the left of the current column."
   (interactive)
-  (when-let ((coords (exc-get-cell-at-point)))
+  (when-let* ((coords (exc-get-cell-at-point)))
     ;; To insert to the left of the current column, reuse the implementation of "insert to the right":
     ;; Pass (display-col-idx - 1), which is equivalent to the left of the current column.
     (let* ((display-col (plist-get coords :slice-col))

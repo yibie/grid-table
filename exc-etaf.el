@@ -319,7 +319,6 @@ FORMAT is the format the value is shown with."
 (defun exc-etaf--row-lines (state row cols merges)
   "Estimate the height of ROW over COLS in STATE, in lines."
   (let ((source (exc-etaf--source state))
-        (widths (exc-etaf--state-widths state))
         (lines 1))
     (dolist (col cols)
       (unless (and merges (exc--merge-at merges row col))
@@ -3334,7 +3333,8 @@ hold them, in the same step.  Return the number of cells that changed."
        (length applied)))))
 
 (defun exc-etaf--grow-to-hold (state cells)
-  "Grow STATE's sheet to hold CELLS, a list of (ROW COL ...), when they lie past it.
+  "Grow STATE's sheet to hold CELLS, a list of (ROW COL ...), when they
+lie past it.
 A spreadsheet's cursor writes on the empty cells past the last row and
 column: the sheet then takes in the rows and columns up to them, in the
 step the writing is.  Return non-nil when the sheet grew."

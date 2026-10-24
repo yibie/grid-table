@@ -12,10 +12,19 @@
 
 (defvar exc-cell--parsed)
 (defvar exc-cell--reads)
+;; The model and its cells are in exc-data-model.el, which requires this
+;; file: requiring it here would be a circular load.
 (declare-function exc-data-model-styles "exc-data-model")
 (declare-function exc-data-model-cols "exc-data-model")
+(declare-function exc-data-model-rows "exc-data-model")
+(declare-function exc-data-model-cells "exc-data-model")
 (declare-function exc-model-legacy-at "exc-data-model")
 (declare-function exc-model-array-at "exc-data-model")
+(declare-function exc-model-get-cell "exc-data-model")
+(declare-function exc-cell-raw-input "exc-data-model")
+(declare-function set-exc-cell-raw-input "exc-data-model")
+(declare-function exc-cell-computed-value "exc-data-model")
+(declare-function set-exc-cell-computed-value "exc-data-model")
 
 ;;;----------------------------------------------------------------------
 ;;; Main Calculation Entry Point
@@ -112,6 +121,8 @@ without it every such reference is #REF!.")
 (defvar exc-calc--here)
 (defvar exc-calc-legacy-arrays)
 (defvar exc-calc--array-formula)
+;; Defvared below, beside the pass that empties it.
+(defvar exc-calc--again)
 
 (defun exc-calc--name-ast (name &optional sheet model)
   "Return the parsed definition of NAME, or nil when it is not defined.
@@ -348,6 +359,9 @@ that made it retracted and made again: these cells show #CYCLE! for the
 rest of the recalculation, so that the same spills give the same
 answers in any order the pass finds them.")
 
+(defvar exc-calc--any-cycle nil
+  "Non-nil once the recalculation in progress has found a cycle.")
+
 (defun exc-calc--on-cycle-p (model index)
   "Return non-nil when INDEX of MODEL is a cell the recalculation found
 on a cycle."
@@ -366,9 +380,6 @@ on a cycle."
                                      exc-calc--cycles))))
       (when-let* ((cells (gethash model exc-calc--cycles)))
         (remhash index cells)))))
-
-(defvar exc-calc--any-cycle nil
-  "Non-nil once the recalculation in progress has found a cycle.")
 
 (defvar exc-calc--aborted nil
   "The formulas a cycle stopped while a blank cell was being filled.

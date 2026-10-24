@@ -10,6 +10,15 @@
 
 (require 'exc-calc)
 
+;; The model is in exc-data-model.el, which loads exc-calc, which loads
+;; this file: requiring it here would be a circular load.
+(declare-function exc-data-model-rows "exc-data-model")
+(declare-function exc-data-model-cols "exc-data-model")
+(declare-function exc-data-model-cells "exc-data-model")
+(declare-function exc-cell-raw-input "exc-data-model")
+(declare-function exc-model-array-at "exc-data-model")
+(declare-function exc-model-legacy-at "exc-data-model")
+
 ;;;----------------------------------------------------------------------
 ;;; Choosing
 ;;;----------------------------------------------------------------------

@@ -43,7 +43,6 @@
   "Generate and return an rST-formatted table string from a DATA-SOURCE."
   (let* ((get-col-count-fn (gethash :get-column-count data-source))
          (get-row-count-fn (gethash :get-row-count data-source))
-         (get-computed-fn (gethash :get-computed-value-at data-source))
          (get-header-fn (gethash :get-header-value data-source))
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
@@ -72,7 +71,7 @@
   (interactive)
   (unless (derived-mode-p 'exc-mode)
     (error "Not in an exc buffer"))
-  (when-let ((data-source exc--data-source))
+  (when-let* ((data-source exc--data-source))
     (let ((file-path (read-file-name "Export as rST to: " nil nil nil ".rst")))
       (when file-path
         (with-temp-buffer

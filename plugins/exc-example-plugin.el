@@ -7,7 +7,7 @@
 ;;; Example Plugin: Enhanced Text Rendering
 ;;;----------------------------------------------------------------------
 
-(defun exc-example-text-renderer (value &optional cell-props)
+(defun exc-example-text-renderer (value &optional _cell-props)
   "Enhanced text renderer with syntax highlighting."
   (if (and value (stringp value))
       (let ((rendered value))
@@ -36,7 +36,7 @@
 ;;; Example Plugin: Currency Renderer
 ;;;----------------------------------------------------------------------
 
-(defun exc-currency-renderer (value &optional cell-props)
+(defun exc-currency-renderer (value &optional _cell-props)
   "Render currency values with proper formatting."
   (if (and value (stringp value))
       (let ((amount (string-to-number value)))
@@ -49,7 +49,7 @@
 ;;; Example Plugin: Progress Bar Renderer
 ;;;----------------------------------------------------------------------
 
-(defun exc-progress-renderer (value &optional cell-props)
+(defun exc-progress-renderer (value &optional _cell-props)
   "Render progress values as visual bars."
   (if (and value (stringp value))
       (let* ((percentage (string-to-number value))

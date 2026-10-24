@@ -69,8 +69,6 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
   "Convert all image cells in DATA-SOURCE to Org-mode [[file:]] links."
   (let* ((get-row-count-fn (gethash :get-row-count data-source))
          (get-col-count-fn (gethash :get-column-count data-source))
-         (get-computed-fn (gethash :get-computed-value-at data-source))
-         (get-header-fn (gethash :get-header-value data-source)) ; Get header function
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
          (all-rows (cl-loop for r from 0 below num-rows
@@ -85,17 +83,16 @@ ORG-FILE-DIR is the directory of the org file for relative link generation."
                          (or actual-headers (make-list num-cols "")) all-data-rows))
          (buffer-content ""))
     (with-temp-buffer
-      (let ((first-row t))
-        ;; Insert actual headers if available
-        (when actual-headers
-          (let ((processed-header-row (exc-org--process-row actual-headers column-widths image-base-dir org-file-dir)))
-            (insert "| " (string-join processed-header-row " | ") " |\n")
-            (insert "|-" (string-join (cl-loop for w in column-widths collect (make-string w ?-) ) "-+-") "-|\n")))
+      ;; Insert actual headers if available
+      (when actual-headers
+        (let ((processed-header-row (exc-org--process-row actual-headers column-widths image-base-dir org-file-dir)))
+          (insert "| " (string-join processed-header-row " | ") " |\n")
+          (insert "|-" (string-join (cl-loop for w in column-widths collect (make-string w ?-) ) "-+-") "-|\n")))
 
-        (cl-loop for r from 0 below num-rows do
-                 (let* ((row-values (nth r all-data-rows)) ; Use already fetched all-data-rows
-                        (processed-row (exc-org--process-row row-values column-widths image-base-dir org-file-dir)))
-                   (insert "| " (string-join processed-row "\n| ") " |\n"))))
+      (cl-loop for r from 0 below num-rows do
+               (let* ((row-values (nth r all-data-rows)) ; Use already fetched all-data-rows
+                      (processed-row (exc-org--process-row row-values column-widths image-base-dir org-file-dir)))
+                 (insert "| " (string-join processed-row "\n| ") " |\n")))
       (setq buffer-content (buffer-string)))
     buffer-content))
 
@@ -121,7 +118,8 @@ Returns a list of strings, each representing a line of the Org table row."
     (nreverse row-lines)))
 
 (defun exc-org--process-single-cell-for-org-output (value image-base-dir org-file-dir width)
-  "Helper to process a single cell value for Org table output, handling image links and wrapping."
+  "Helper to process a single cell value for Org table output,
+handling image links and wrapping."
   (let* ((processed-value (if (stringp value) value (format "%s" value)))
          (org-link (if (exc-org--is-image-value processed-value)
                        (exc-org--format-org-link processed-value image-base-dir org-file-dir)

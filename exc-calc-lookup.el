@@ -12,6 +12,11 @@
 (require 'exc-parser)
 
 (declare-function exc-calc--regexp "exc-calc-text" (pattern))
+;; The model is in exc-data-model.el, which loads exc-calc, which loads
+;; this file: requiring it here would be a circular load.
+(declare-function exc-data-model-rows "exc-data-model")
+(declare-function exc-data-model-cols "exc-data-model")
+(declare-function exc-model-array-at "exc-data-model")
 
 ;;;----------------------------------------------------------------------
 ;;; Tables of values

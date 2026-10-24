@@ -169,7 +169,8 @@ Returns the valid, existing path if found, otherwise nil."
               expanded-path)))))))
 
 (defun exc--get-exact-line-height ()
-  "Get the exact line height (in pixels) for the current environment, including frame-level line-spacing."
+  "Get the exact line height (in pixels) for the current environment,
+including frame-level line-spacing."
   (let* ((char-height (frame-char-height))
          (buffer-line-spacing (or line-spacing 0))
          (frame-line-spacing (or (frame-parameter nil 'line-spacing) 0))
@@ -183,7 +184,6 @@ Returns the valid, existing path if found, otherwise nil."
   "Compute the total table width for DATA-SOURCE, for title alignment."
   (let* ((get-col-count-fn (gethash :get-column-count data-source))
          (get-row-count-fn (gethash :get-row-count data-source))
-         (get-computed-fn (gethash :get-computed-value-at data-source))
          (get-header-fn (gethash :get-header-value data-source))
          (num-rows (funcall get-row-count-fn data-source))
          (num-cols (funcall get-col-count-fn data-source))
@@ -200,15 +200,17 @@ Returns the valid, existing path if found, otherwise nil."
 
 (defun exc--get-loadable-image-source (file &optional force-conversion)
   "Find a loadable image source.
-It checks the original file, and if Emacs doesn't support it, it tries to convert it to PNG using 'sips' on macOS.
-Returns a list '(FILE-PATH TYPE)' on success, nil on failure.
+It checks the original file, and if Emacs doesn't support it, it tries
+to convert it to PNG using \\='sips\\=' on macOS.
+Returns a list \\='(FILE-PATH TYPE)\\=' on success, nil on failure.
 This version does not use condition-case for error handling."
   (let ((normalized-file (expand-file-name file)))
     (when (file-exists-p normalized-file)
       (or
        ;; Strategy 1: Check for native support (png, jpeg, etc.)
-       (let ((native-type (and (not force-conversion) (image-type-from-file-name normalized-file))))
-         (when (and native-type (image-type-available-p native-type))
+       (let ((native-type (and (not force-conversion)
+                               (image-supported-file-p normalized-file))))
+         (when native-type
            (list normalized-file native-type)))
        ;; Strategy 2: Check for ImageMagick support, which handles webp etc.
        (when (and (not force-conversion) (image-type-available-p 'imagemagick))
@@ -530,7 +532,8 @@ Nil denotes the outside of the table; row -1 is the ABC header."
     result))
 
 (defun exc--col-number-to-letter (col-num)
-  "Converts a 0-based column number to an Excel-style letter (e.g., 0 -> A, 25 -> Z, 26 -> AA)."
+  "Converts a 0-based column number to an Excel-style letter
+(e.g., 0 -> A, 25 -> Z, 26 -> AA)."
   (let ((result ""))
     (while (>= col-num 0)
       (setq result (concat (char-to-string (+ ?A (mod col-num 26))) result))

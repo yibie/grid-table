@@ -105,7 +105,7 @@ as CSV."
 (defun exc-csv-save (file-path)
   "Save the current exc data back to a CSV file."
   (interactive "FSave to CSV file: ")
-  (when-let ((data-source exc--data-source)
+  (when-let* ((data-source exc--data-source)
              (save-func (gethash :save-to-file data-source)))
     (funcall save-func data-source file-path)
     (message "CSV file saved to: %s" file-path)))
@@ -113,7 +113,7 @@ as CSV."
 (defun exc-csv-save-overwrite ()
   "Save the current exc data back to the original CSV file."
   (interactive)
-  (when-let ((data-source exc--data-source)
+  (when-let* ((data-source exc--data-source)
              (original-path (gethash :file-path data-source))
              (save-func (gethash :save-to-file data-source)))
     (funcall save-func data-source original-path)
@@ -131,7 +131,7 @@ as CSV."
   (exc-register-data-source-type 'csv #'exc-csv-create-data-source)
   ;; Register CSV-specific cell renderer if needed
   (exc-register-cell-renderer 'csv-text
-    (lambda (value &optional cell-props)
+    (lambda (value &optional _cell-props)
       (if (and value (stringp value))
           (format "%s" value)
         ""))))
